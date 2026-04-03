@@ -24,6 +24,7 @@ import {
   type ProjectType,
   type ProjectSummary,
 } from "./pricing/locationEngine";
+import { fetchAllSources, resolveFromSources } from "./pricing/sourceResolver";
 
 export { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 export { detectCategory } from "./pricing/categoryDetector";
