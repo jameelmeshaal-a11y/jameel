@@ -255,7 +255,7 @@ export async function exportBoQExcel(
     const mergesPreserved = wb.SheetNames.every(
       (sheetName) =>
         (!originalMerges.has(sheetName) || originalMerges.get(sheetName) ===
-        JSON.stringify((wb.Sheets[sheetName]["!merges"] || []).map((merge) => XLSX.utils.encode_range(merge)))
+        JSON.stringify((wb.Sheets[sheetName]["!merges"] || []).map((merge) => XLSX.utils.encode_range(merge))))
     );
     const originalSheetsPreserved = originalSheetNames.every((sheetName, index) => wb.SheetNames[index] === sheetName);
     const analysisSheet = wb.Sheets["Pricing Analysis"];
