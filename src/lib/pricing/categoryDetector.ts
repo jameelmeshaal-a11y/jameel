@@ -110,6 +110,7 @@ const RULES: CategoryRule[] = [
   { category: "steel_misc", keywords: ["حديد", "steel", "معدن", "metal", "درابزين", "railing", "handrail", "سلم حديد", "فتحة وصول"], priority: 70 },
 
   // External
+  // External
   { category: "asphalt", keywords: ["أسفلت", "asphalt", "إسفلت"], priority: 80 },
   { category: "curbs", keywords: ["بردورة", "curb", "كيرب", "رصيف", "sidewalk"], priority: 78 },
   { category: "landscaping", keywords: ["تنسيق موقع", "landscap", "زراعة", "حديقة", "garden"], priority: 76 },
