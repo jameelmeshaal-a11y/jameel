@@ -71,10 +71,14 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     }
   }, [activeFile, cities, qc]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (items.length === 0) return;
-    exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`);
-    toast.success("Excel file downloaded");
+    try {
+      await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, activeFile?.id);
+      toast.success("Excel file downloaded");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
   };
 
   const getStatusIcon = (status: string) => {
