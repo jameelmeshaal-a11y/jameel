@@ -153,10 +153,11 @@ export async function runPricingEngine(
   projectType: ProjectType = "government_civil"
 ): Promise<PricingResult> {
   // Fetch items, library, and location factors in parallel
-  const [itemsResult, libraryResult, locationFactors] = await Promise.all([
+  const [itemsResult, libraryResult, locationFactors, sourcesMap] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
+    fetchAllSources(),
   ]);
 
   if (itemsResult.error) throw new Error(`Failed to load items: ${itemsResult.error.message}`);
