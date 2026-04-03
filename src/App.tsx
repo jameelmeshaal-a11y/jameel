@@ -27,6 +27,7 @@ const App = () => (
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/rate-library" element={<RateLibraryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/validation" element={<ValidationPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

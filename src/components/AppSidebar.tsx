@@ -24,6 +24,7 @@ export default function AppSidebar() {
     { to: "/projects", icon: FolderOpen, label: t("projects") },
     { to: "/rate-library", icon: BookOpen, label: t("rateLibrary") },
     { to: "/settings", icon: Settings, label: t("settings") },
+    { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
   ];
 
   const isRTL = dir === "rtl";
