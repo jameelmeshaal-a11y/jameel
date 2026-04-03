@@ -5,8 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
 import { sampleRateLibrary, formatNumber } from "@/lib/mockData";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function RateLibraryPage() {
+  const { t } = useLanguage();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
 
@@ -23,11 +25,11 @@ export default function RateLibraryPage() {
       <div className="animate-fade-in">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Rate Library</h1>
-            <p className="page-subtitle">Standard rates and pricing database for consistent estimation</p>
+            <h1 className="page-title">{t("rateLibraryTitle")}</h1>
+            <p className="page-subtitle">{t("rateLibrarySubtitle")}</p>
           </div>
           <Button className="gap-2">
-            <Plus className="w-4 h-4" /> Add Rate
+            <Plus className="w-4 h-4" /> {t("addRate")}
           </Button>
         </div>
 
@@ -35,12 +37,12 @@ export default function RateLibraryPage() {
           <div className="flex items-center gap-3 mb-6">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search rates..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+              <Input placeholder={t("searchRates")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
             </div>
             <div className="flex gap-1 flex-wrap">
               {categories.map((c) => (
                 <Button key={c} variant={category === c ? "default" : "ghost"} size="sm" onClick={() => setCategory(c)} className="capitalize">
-                  {c}
+                  {c === "all" ? t("all") : c}
                 </Button>
               ))}
             </div>
@@ -53,16 +55,14 @@ export default function RateLibraryPage() {
               <BookOpen className="w-8 h-8 text-primary" />
             </div>
             <h2 className="text-xl font-semibold mb-2">
-              {sampleRateLibrary.length === 0 ? "Rate library is empty" : "No matching rates"}
+              {sampleRateLibrary.length === 0 ? t("rateLibraryEmpty") : t("noMatchingRates")}
             </h2>
             <p className="text-muted-foreground max-w-md mb-6">
-              {sampleRateLibrary.length === 0
-                ? "Add standard rates to build your pricing database. Rates will be reused across projects for consistent estimation."
-                : "Try adjusting your search or category filter."}
+              {sampleRateLibrary.length === 0 ? t("rateLibraryEmptyDesc") : t("noMatchingRatesDesc")}
             </p>
             {sampleRateLibrary.length === 0 && (
               <Button className="gap-2">
-                <Plus className="w-4 h-4" /> Add First Rate
+                <Plus className="w-4 h-4" /> {t("addFirstRate")}
               </Button>
             )}
           </div>
@@ -71,16 +71,16 @@ export default function RateLibraryPage() {
             <table className="boq-table">
               <thead>
                 <tr>
-                  <th>Code</th>
-                  <th>Description</th>
-                  <th className="min-w-[180px]">Arabic</th>
-                  <th>Unit</th>
-                  <th>Category</th>
-                  <th className="text-right">Base Rate</th>
-                  <th className="text-right">Materials</th>
-                  <th className="text-right">Labor</th>
-                  <th className="text-right">Equipment</th>
-                  <th className="text-right">Used</th>
+                  <th>{t("code")}</th>
+                  <th>{t("description")}</th>
+                  <th className="min-w-[180px]">{t("arabic")}</th>
+                  <th>{t("unit")}</th>
+                  <th>{t("category")}</th>
+                  <th className="text-right">{t("baseRate")}</th>
+                  <th className="text-right">{t("materials")}</th>
+                  <th className="text-right">{t("labor")}</th>
+                  <th className="text-right">{t("equipment")}</th>
+                  <th className="text-right">{t("used")}</th>
                 </tr>
               </thead>
               <tbody>

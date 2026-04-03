@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   FolderOpen,
@@ -13,55 +14,55 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
+import CreateProjectDialog from "@/components/CreateProjectDialog";
 import { sampleProjects, formatCurrency } from "@/lib/mockData";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
+  const [createOpen, setCreateOpen] = useState(false);
+
   const activeProjects = sampleProjects.filter(p => p.status !== 'archived');
   const hasProjects = sampleProjects.length > 0;
 
   const stats = hasProjects
     ? [
-        { label: "Active Projects", value: String(sampleProjects.filter(p => p.status === 'active').length), icon: FolderOpen, change: "Current" },
-        { label: "Total BoQ Items", value: String(sampleProjects.reduce((s, p) => s + p.boqCount, 0)), icon: FileText, change: "Across all projects" },
-        { label: "Draft Projects", value: String(sampleProjects.filter(p => p.status === 'draft').length), icon: Clock, change: "Pending" },
-        { label: "Archived", value: String(sampleProjects.filter(p => p.status === 'archived').length), icon: TrendingUp, change: "Completed" },
+        { label: t("activeProjects"), value: String(sampleProjects.filter(p => p.status === 'active').length), icon: FolderOpen, change: t("current") },
+        { label: t("totalBoQItems"), value: String(sampleProjects.reduce((s, p) => s + p.boqCount, 0)), icon: FileText, change: t("acrossAllProjects") },
+        { label: t("draftProjects"), value: String(sampleProjects.filter(p => p.status === 'draft').length), icon: Clock, change: t("pending") },
+        { label: t("archived"), value: String(sampleProjects.filter(p => p.status === 'archived').length), icon: TrendingUp, change: t("completed") },
       ]
     : [];
 
   return (
     <AppLayout>
       <div className="animate-fade-in">
-        {/* Header */}
         <div className="page-header">
           <div>
-            <h1 className="page-title">Dashboard</h1>
-            <p className="page-subtitle">Overview of your construction cost estimation projects</p>
+            <h1 className="page-title">{t("dashboardTitle")}</h1>
+            <p className="page-subtitle">{t("dashboardSubtitle")}</p>
           </div>
-          <Button onClick={() => navigate("/projects")} className="gap-2">
+          <Button onClick={() => setCreateOpen(true)} className="gap-2">
             <Plus className="w-4 h-4" />
-            New Project
+            {t("newProject")}
           </Button>
         </div>
 
         {!hasProjects ? (
-          /* Empty State */
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
               <Briefcase className="w-8 h-8 text-primary" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">No projects yet</h2>
-            <p className="text-muted-foreground max-w-md mb-6">
-              Get started by creating your first project. Upload your BoQ files and project documents to begin accurate cost estimation.
-            </p>
-            <Button onClick={() => navigate("/projects")} className="gap-2">
+            <h2 className="text-xl font-semibold mb-2">{t("noProjectsYet")}</h2>
+            <p className="text-muted-foreground max-w-md mb-6">{t("noProjectsDesc")}</p>
+            <Button onClick={() => setCreateOpen(true)} className="gap-2">
               <Plus className="w-4 h-4" />
-              Create First Project
+              {t("createFirstProject")}
             </Button>
           </div>
         ) : (
           <>
-            {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               {stats.map((stat) => (
                 <div key={stat.label} className="stat-card">
@@ -75,12 +76,11 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {/* Projects */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Recent Projects</h2>
+                <h2 className="text-lg font-semibold">{t("recentProjects")}</h2>
                 <Button variant="ghost" size="sm" onClick={() => navigate("/projects")} className="gap-1 text-muted-foreground">
-                  View all <ArrowRight className="w-3 h-3" />
+                  {t("viewAll")} <ArrowRight className="w-3 h-3" />
                 </Button>
               </div>
 
@@ -96,14 +96,14 @@ export default function Dashboard() {
                         <Building2 className="w-5 h-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-sm" dir="rtl">{project.name}</h3>
+                        <h3 className="font-semibold text-sm" dir="auto">{project.name}</h3>
                         <div className="flex items-center gap-3 mt-1">
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <MapPin className="w-3 h-3" />
                             {project.cities.join(", ")}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {project.boqCount} BoQ files
+                            {project.boqCount} {t("boqFiles")}
                           </span>
                         </div>
                       </div>
@@ -127,6 +127,8 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
     </AppLayout>
   );
 }
