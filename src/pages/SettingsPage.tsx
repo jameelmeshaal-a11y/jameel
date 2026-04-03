@@ -1,4 +1,5 @@
-import { Globe } from "lucide-react";
+import { Globe, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -6,6 +7,7 @@ import { sampleProjects, sampleRateLibrary } from "@/lib/mockData";
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useLanguage();
+  const navigate = useNavigate();
 
   return (
     <AppLayout>
@@ -15,6 +17,10 @@ export default function SettingsPage() {
             <h1 className="page-title">{t("settingsTitle")}</h1>
             <p className="page-subtitle">{t("settingsSubtitle")}</p>
           </div>
+          <Button variant="outline" onClick={() => navigate("/validation")} className="gap-2">
+            <ShieldCheck className="w-4 h-4" />
+            {lang === "ar" ? "فحص جاهزية النظام" : "Run System Validation"}
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

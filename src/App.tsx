@@ -9,6 +9,7 @@ import ProjectsPage from "./pages/ProjectsPage";
 import ProjectDetail from "./pages/ProjectDetail";
 import RateLibraryPage from "./pages/RateLibraryPage";
 import SettingsPage from "./pages/SettingsPage";
+import ValidationPage from "./pages/ValidationPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/projects/:id" element={<ProjectDetail />} />
             <Route path="/rate-library" element={<RateLibraryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/validation" element={<ValidationPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
