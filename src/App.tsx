@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ValidationPage from "./pages/ValidationPage";
 import QACenterPage from "./pages/QACenterPage";
 import SystemArchitecturePage from "./pages/SystemArchitecturePage";
+import QAHealthPage from "./pages/QAHealthPage";
 import NotFound from "./pages/NotFound";
 import DebugPanel from "./components/DebugPanel";
 
@@ -33,6 +34,8 @@ const App = () => (
             <Route path="/validation" element={<ValidationPage />} />
             <Route path="/qa-center" element={<QACenterPage />} />
             <Route path="/architecture" element={<SystemArchitecturePage />} />
+            <Route path="/qa" element={<QAHealthPage />} />
+            <Route path="/health" element={<QAHealthPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <DebugPanel />
