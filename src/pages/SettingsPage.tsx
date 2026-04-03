@@ -1,4 +1,5 @@
-import { Globe } from "lucide-react";
+import { Globe, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
