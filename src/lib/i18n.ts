@@ -90,6 +90,7 @@ export const translations = {
     coreDocuments: "Core Documents",
     technicalDocuments: "Technical Documents",
     otherDocuments: "Other Documents",
+    documentUploaded: "Document uploaded successfully",
 
     // Rate Library
     rateLibraryTitle: "Rate Library",
