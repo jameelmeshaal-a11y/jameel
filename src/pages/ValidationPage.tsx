@@ -97,12 +97,20 @@ export default function ValidationPage() {
                 : "Comprehensive system diagnostic and readiness report"}
             </p>
           </div>
-          <Button onClick={handleRun} disabled={running} className="gap-2">
-            {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {running
-              ? (isAr ? "جاري الفحص..." : "Running...")
-              : (isAr ? "تشغيل الفحص الشامل" : "Run Full Validation")}
-          </Button>
+          <div className="flex gap-2">
+            {report && !running && (
+              <Button variant="outline" onClick={() => downloadValidationPDF(report, lang)} className="gap-2">
+                <Download className="w-4 h-4" />
+                {isAr ? "تنزيل PDF" : "Download PDF"}
+              </Button>
+            )}
+            <Button onClick={handleRun} disabled={running} className="gap-2">
+              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {running
+                ? (isAr ? "جاري الفحص..." : "Running...")
+                : (isAr ? "تشغيل الفحص الشامل" : "Run Full Validation")}
+            </Button>
+          </div>
         </div>
 
         {/* Progress */}
