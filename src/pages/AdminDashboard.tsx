@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield, CheckCircle, AlertTriangle } from "lucide-react";
+import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield, CheckCircle, AlertTriangle, Layers } from "lucide-react";
+import RateSourcesPanel from "@/components/RateSourcesPanel";
 
 const CATEGORIES = [
   "Earthworks", "Concrete", "Finishing", "Waterproofing",
@@ -53,6 +54,7 @@ export default function AdminDashboard() {
   const [catFilter, setCatFilter] = useState("all");
   const [editItem, setEditItem] = useState<RateItem | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [sourcesItem, setSourcesItem] = useState<RateItem | null>(null);
 
   const { data: rates = [], isLoading } = useQuery({
     queryKey: ["rate_library"],
@@ -169,17 +171,18 @@ export default function AdminDashboard() {
 
         {/* Library info */}
         <div className="flex items-center gap-2 mb-4 text-sm">
-          <Badge variant="outline">V1 — BaseDatasetV1</Badge>
+          <Badge variant="outline">V2 — Multi-Source</Badge>
           <Badge variant="outline">{uniqueCategories.length} فئات</Badge>
           <Badge variant="outline">{rates.length} بنود</Badge>
-          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم المكتبة افتراضياً ✓</Badge>
+          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم مصادر متعددة ✓</Badge>
         </div>
 
         {/* Rate Library */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <CardTitle>مكتبة الأسعار — السوق السعودي V1</CardTitle>
+              <CardTitle>مكتبة الأسعار — السوق السعودي V2</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">نظام تسعير متعدد المصادر: مورّد | تاريخي | معتمد</p>
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -264,6 +267,10 @@ export default function AdminDashboard() {
                             onClick={() => toggleLock.mutate({ id: item.id, locked: !item.is_locked })}>
                             {item.is_locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7"
+                            onClick={() => setSourcesItem(item)} title="مصادر التسعير">
+                            <Layers className="w-3.5 h-3.5" />
+                          </Button>
                           <RateFormDialog
                             item={item}
                             open={editItem?.id === item.id}
@@ -292,6 +299,23 @@ export default function AdminDashboard() {
             <p className="text-xs text-muted-foreground mt-2">إجمالي: {filtered.length} بند | الفئات: {uniqueCategories.length}</p>
           </CardContent>
         </Card>
+
+        {/* Sources Dialog */}
+        <Dialog open={!!sourcesItem} onOpenChange={(open) => !open && setSourcesItem(null)}>
+          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>مصادر التسعير</DialogTitle>
+            </DialogHeader>
+            {sourcesItem && (
+              <RateSourcesPanel
+                rateLibraryId={sourcesItem.id}
+                rateNameAr={sourcesItem.standard_name_ar}
+                targetRate={sourcesItem.target_rate}
+                isAdmin={isAdmin}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </AppLayout>
   );
