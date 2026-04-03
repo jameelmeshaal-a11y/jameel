@@ -115,7 +115,7 @@ export default function SettingsPage() {
             <div className="space-y-2 text-sm text-muted-foreground">
               <div className="flex justify-between">
                 <span>{t("rateLibraryItems")}</span>
-                <span className="font-medium text-foreground">{sampleRateLibrary.length}</span>
+                <span className="font-medium text-foreground">0</span>
               </div>
               <div className="flex justify-between">
                 <span>{t("totalProjects")}</span>
