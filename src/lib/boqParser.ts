@@ -305,6 +305,30 @@ export async function exportBoQExcel(
   }
 }
 
+/** Write pricing values for a single item into the worksheet. Returns count of cells written. */
+function writeItemPricing(
+  ws: XLSX.WorkSheet,
+  item: any,
+  rowIdx: number,
+  startCol: number,
+  pricingCols: { header: string; key: string }[]
+): number {
+  let count = 0;
+  for (let ci = 0; ci < pricingCols.length; ci++) {
+    const val = item[pricingCols[ci].key];
+    if (val == null || val === "") continue;
+    const addr = XLSX.utils.encode_cell({ r: rowIdx, c: startCol + ci });
+    const numVal = typeof val === "number" ? val : parseFloat(val);
+    if (!isNaN(numVal) && pricingCols[ci].key !== "notes" && pricingCols[ci].key !== "category") {
+      ws[addr] = { t: "n", v: numVal };
+    } else {
+      ws[addr] = { t: "s", v: String(val) };
+    }
+    count++;
+  }
+  return count;
+}
+
 /** Find the header row index within an existing worksheet */
 function findHeaderRowInSheet(ws: XLSX.WorkSheet, range: XLSX.Range): number {
   const keywords = ["item", "بند", "description", "وصف", "unit", "وحدة", "qty", "quantity", "كمية", "no", "رقم"];
