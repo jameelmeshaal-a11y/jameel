@@ -35,6 +35,9 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
   let updatedCount = 0;
   const unitRate = getUnitRate(req.newValues);
 
+  const statusValue = req.editType === "master_update" ? "approved" : "review";
+  const noteValue = req.reason?.trim() || "Pricing logic updated";
+
   // 1. Update the source item
   const { error: srcErr } = await supabase
     .from("boq_items")
@@ -46,7 +49,10 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
       risk: req.newValues.risk,
       profit: req.newValues.profit,
       unit_rate: unitRate,
+      total_price: 0,
       source: req.editType === "project_override" ? "project_override" : "master_update",
+      status: statusValue,
+      notes: noteValue,
       override_type: req.editType,
       override_reason: req.reason,
       override_at: new Date().toISOString(),
@@ -57,7 +63,6 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
     errors.push(`Source item: ${srcErr.message}`);
   } else {
     updatedCount++;
-    // Recalculate total_price for source
     const { data: srcItem } = await supabase
       .from("boq_items")
       .select("quantity")
@@ -74,10 +79,6 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
   // 2. Propagate to similar items if scope > item_only
   if (req.scope !== "item_only" && req.targetItems.length > 0) {
     for (const target of req.targetItems) {
-      // Calculate ratios from source to apply proportionally
-      const oldRate = target.unit_rate || 0;
-      const ratio = oldRate > 0 ? unitRate / oldRate : 1;
-
       const newTargetRate = unitRate;
       const newTotalPrice = +(newTargetRate * target.quantity).toFixed(2);
 
@@ -93,6 +94,8 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
           unit_rate: newTargetRate,
           total_price: newTotalPrice,
           source: req.editType === "project_override" ? "project_override" : "master_update",
+          status: statusValue,
+          notes: noteValue,
           override_type: req.editType,
           override_reason: req.reason,
           override_at: new Date().toISOString(),

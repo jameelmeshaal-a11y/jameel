@@ -126,6 +126,8 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
           profit: values.profit,
           unit_rate: unitRate,
           total_price: totalPrice,
+          status: (item.status === "approved" ? "approved" : "review"),
+          notes: item.notes || "Manual pricing adjustment",
           manual_overrides: overridesObj,
           override_at: new Date().toISOString(),
         })
