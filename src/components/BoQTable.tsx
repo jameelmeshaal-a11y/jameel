@@ -256,7 +256,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </table>
       </div>
 
-      {selectedItem && <PriceBreakdownModal item={selectedItem} onClose={() => setSelectedItem(null)} onUpdated={() => {
+      {selectedItem && <PriceBreakdownModal item={selectedItem} projectId={projectId} onClose={() => setSelectedItem(null)} onUpdated={() => {
         if (activeFile) qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
         qc.invalidateQueries({ queryKey: ["projects"] });
       }} />}
