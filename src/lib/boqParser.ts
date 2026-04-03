@@ -290,19 +290,18 @@ export async function exportBoQExcel(
 
 function getExportFieldConfigs() {
   return [
-    { key: "unit_rate", header: "Unit Rate (SAR)", type: "number", patterns: ["unit rate", "rate", "سعر الوحدة", "unit price"] },
-    { key: "total_price", header: "Total Price (SAR)", type: "number", patterns: ["total price", "amount", "الإجمالي", "total amount", "السعر الإجمالي"] },
-    { key: "materials", header: "Materials", type: "number", patterns: ["materials", "material", "مواد"] },
-    { key: "labor", header: "Labor", type: "number", patterns: ["labor", "labour", "عمالة"] },
-    { key: "equipment", header: "Equipment", type: "number", patterns: ["equipment", "معدات"] },
-    { key: "logistics", header: "Logistics", type: "number", patterns: ["logistics", "transport", "لوجستيات", "نقل"] },
-    { key: "risk", header: "Risk %", type: "number", patterns: ["risk", "مخاطر"] },
-    { key: "profit", header: "Profit %", type: "number", patterns: ["profit", "ربح"] },
-    { key: "notes", header: "Notes", type: "text", patterns: ["notes", "note", "ملاحظات", "ملاحظة"] },
-    { key: "confidence", header: "Confidence %", type: "number", patterns: ["confidence", "الثقة"] },
-    { key: "location_factor", header: "Location Factor", type: "number", patterns: ["location factor", "معامل الموقع"] },
-    { key: "category", header: "Category", type: "text", patterns: ["category", "التصنيف", "الفئة"] },
-    { key: "status", header: "Review / Approval", type: "text", patterns: ["status", "approval", "review", "الحالة", "اعتماد", "مراجعة"] },
+    { key: "unit_rate", header: "سعر الوحدة / Unit Price", type: "number", patterns: ["unit rate", "rate", "سعر الوحدة", "unit price"] },
+    { key: "total_price", header: "السعر الإجمالي / Total Amount", type: "number", patterns: ["total price", "amount", "الإجمالي", "total amount", "السعر الإجمالي"] },
+    { key: "materials", header: "مواد / Materials", type: "number", patterns: ["materials", "material", "مواد"] },
+    { key: "labor", header: "عمالة / Labor", type: "number", patterns: ["labor", "labour", "عمالة"] },
+    { key: "equipment", header: "معدات / Equipment", type: "number", patterns: ["equipment", "معدات"] },
+    { key: "logistics", header: "نقل / Logistics", type: "number", patterns: ["logistics", "transport", "لوجستيات", "نقل"] },
+    { key: "risk", header: "مخاطر / Risk %", type: "number", patterns: ["risk", "مخاطر"] },
+    { key: "profit", header: "ربح / Profit %", type: "number", patterns: ["profit", "ربح"] },
+    { key: "confidence", header: "الثقة / Confidence %", type: "number", patterns: ["confidence", "الثقة"] },
+    { key: "notes", header: "ملاحظات / Notes", type: "text", patterns: ["notes", "note", "ملاحظات", "ملاحظة"] },
+    { key: "location_factor", header: "معامل الموقع / Location Factor", type: "number", patterns: ["location factor", "معامل الموقع"] },
+    { key: "status", header: "الحالة / Status", type: "text", patterns: ["status", "approval", "review", "الحالة", "اعتماد", "مراجعة"] },
   ] as const;
 }
 
@@ -331,12 +330,12 @@ function resolveExportColumns(
   fieldConfigs: ReadonlyArray<{ key: string; header: string; patterns: readonly string[] }>
 ): Map<string, number> {
   const columnMap = new Map<string, number>();
-  let nextCol = range.e.c + 1;
+  let nextCol = findLastMeaningfulColumn(ws, range, headerRow) + 1;
 
   for (const field of fieldConfigs) {
     let foundCol = -1;
     for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r: headerRow, c })];
+      const cell = ws[XLSX.utils.encode_cell({ r: headerRow, c })] || ws[XLSX.utils.encode_cell({ r: Math.min(headerRow + 1, range.e.r), c })];
       const headerText = normalizeHeader(cell?.v);
       if (headerText && field.patterns.some((pattern) => headerText.includes(normalizeHeader(pattern)))) {
         foundCol = c;
@@ -356,7 +355,7 @@ function countExportableValues(
   fieldConfigs: ReadonlyArray<{ key: string }>
 ): number {
   return fieldConfigs.reduce((count, field) => {
-    const value = item[field.key];
+    const value = getExportValue(field.key, item[field.key]);
     return value == null || value === "" ? count : count + 1;
   }, 0);
 }
@@ -371,7 +370,7 @@ function writeExportRow(
   let count = 0;
 
   for (const field of fieldConfigs) {
-    const value = item[field.key];
+    const value = getExportValue(field.key, item[field.key]);
     if (value == null || value === "") continue;
 
     const colIdx = columnMap.get(field.key);
@@ -392,6 +391,39 @@ function writeExportRow(
   }
 
   return count;
+}
+
+function findLastMeaningfulColumn(ws: XLSX.WorkSheet, range: XLSX.Range, headerRow: number): number {
+  let lastCol = range.s.c;
+  const endRow = Math.min(range.e.r, headerRow + 1);
+
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    let hasValue = false;
+    for (let r = headerRow; r <= endRow; r++) {
+      const value = ws[XLSX.utils.encode_cell({ r, c })]?.v;
+      if (String(value ?? "").trim() !== "") {
+        hasValue = true;
+        break;
+      }
+    }
+    if (hasValue) lastCol = c;
+  }
+
+  return lastCol;
+}
+
+function getExportValue(fieldKey: string, rawValue: unknown): unknown {
+  if (rawValue == null || rawValue === "") return rawValue;
+
+  if (fieldKey === "status") {
+    const normalized = String(rawValue).trim().toLowerCase();
+    if (normalized === "approved") return "معتمد";
+    if (normalized === "review") return "تمت المراجعة";
+    if (normalized === "conflict") return "تعارض";
+    if (normalized === "pending") return "قيد الانتظار";
+  }
+
+  return rawValue;
 }
 
 function normalizeHeader(value: unknown): string {
