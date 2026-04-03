@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, ChevronDown, Info } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { sampleBoQItems, formatNumber, formatCurrency } from "@/lib/mockData";
@@ -29,6 +29,23 @@ export default function BoQTable() {
   };
 
   const totalValue = sampleBoQItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+
+  if (sampleBoQItems.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
+          <FileText className="w-7 h-7 text-primary" />
+        </div>
+        <h3 className="text-lg font-semibold mb-2">No BoQ files uploaded</h3>
+        <p className="text-muted-foreground max-w-sm mb-5">
+          Upload a Bill of Quantities file (Excel) to begin pricing. The system will preserve the original structure and add pricing columns.
+        </p>
+        <Button variant="outline" className="gap-2">
+          <Upload className="w-4 h-4" /> Upload BoQ File
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -131,7 +148,6 @@ export default function BoQTable() {
         </table>
       </div>
 
-      {/* Price Breakdown Modal */}
       {selectedItem && (
         <PriceBreakdownModal
           item={selectedItem}
