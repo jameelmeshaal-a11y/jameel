@@ -44,10 +44,16 @@ export default function Dashboard() {
             <h1 className="page-title">{t("dashboardTitle")}</h1>
             <p className="page-subtitle">{t("dashboardSubtitle")}</p>
           </div>
-          <Button onClick={() => setCreateOpen(true)} className="gap-2">
-            <Plus className="w-4 h-4" />
-            {t("newProject")}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate("/validation")} className="gap-2">
+              <ShieldCheck className="w-4 h-4" />
+              {t("dashboard") === "لوحة التحكم" ? "فحص النظام" : "Validate"}
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+              <Plus className="w-4 h-4" />
+              {t("newProject")}
+            </Button>
+          </div>
         </div>
 
         {!hasProjects ? (
