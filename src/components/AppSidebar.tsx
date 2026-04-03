@@ -37,7 +37,6 @@ export default function AppSidebar() {
     { to: "/architecture", icon: Blocks, label: isRTL ? "هيكل النظام" : "Architecture" },
     ...(isAdmin ? [{ to: "/admin", icon: Shield, label: isRTL ? "لوحة الأدمن" : "Admin" }] : []),
   ];
-  ];
 
   return (
     <aside
