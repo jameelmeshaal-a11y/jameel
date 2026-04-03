@@ -90,7 +90,9 @@ export function useUploadDocument() {
       file: File;
       category: "core" | "technical" | "other";
     }) => {
-      const filePath = `${input.projectId}/${Date.now()}-${input.file.name}`;
+      const fileExt = input.file.name.split(".").pop() || "bin";
+      const safeName = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${fileExt}`;
+      const filePath = `${input.projectId}/${safeName}`;
       const { error: uploadError } = await supabase.storage
         .from("documents")
         .upload(filePath, input.file);
