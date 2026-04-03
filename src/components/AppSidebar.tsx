@@ -99,6 +99,18 @@ export default function AppSidebar() {
         {!collapsed && <span className="text-xs">{lang === "en" ? "العربية" : "English"}</span>}
       </button>
 
+      {/* Sign out */}
+      <button
+        onClick={signOut}
+        className="mx-3 mb-2 p-2 rounded-lg transition-colors flex items-center gap-2 justify-center"
+        style={{ color: "hsl(var(--sidebar-fg))" }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(var(--sidebar-hover))")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      >
+        <LogOut className="w-4 h-4" />
+        {!collapsed && <span className="text-xs">{isRTL ? "خروج" : "Logout"}</span>}
+      </button>
+
       {/* Collapse toggle */}
       <button
         onClick={() => setCollapsed(!collapsed)}
