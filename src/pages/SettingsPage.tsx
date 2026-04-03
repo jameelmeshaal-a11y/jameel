@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { sampleProjects, sampleRateLibrary } from "@/lib/mockData";
+import { useProjects } from "@/hooks/useSupabase";
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useLanguage();
