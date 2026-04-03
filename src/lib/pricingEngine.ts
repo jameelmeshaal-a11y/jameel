@@ -84,7 +84,7 @@ export async function runPricingEngine(
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
 
     totalValue += cost.totalPrice;
-    pricedItems.push({ unitRate: cost.unitRate, category: cost.category, description: item.description });
+    pricedItems.push({ unitRate: cost.unitRate, category: cost.category, description: item.description, priceFlag: cost.priceFlag });
     onProgress?.(i + 1, items.length);
   }
 
