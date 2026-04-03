@@ -11,29 +11,22 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield } from "lucide-react";
+import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield, CheckCircle, AlertTriangle } from "lucide-react";
 
 const CATEGORIES = [
-  "excavation", "backfill", "blinding_concrete", "foundation_concrete",
-  "column_concrete", "beam_concrete", "slab_concrete", "shear_wall_concrete",
-  "general_concrete", "rebar", "formwork", "blockwork", "plastering",
-  "painting", "tiling", "ceiling", "cladding", "waterproofing",
-  "thermal_insulation", "electrical_conduit", "electrical_wiring",
-  "electrical_panels", "electrical_fixtures", "plumbing_pipes",
-  "plumbing_fixtures", "hvac_ductwork", "hvac_equipment", "fire_fighting",
-  "doors", "windows", "aluminum", "steel_structural", "steel_misc",
-  "asphalt", "curbs", "landscaping", "furniture", "general",
+  "Earthworks", "Concrete", "Finishing", "Waterproofing",
+  "Doors & Windows", "Plumbing", "Electrical", "Mechanical", "Firefighting",
 ];
 
 interface RateItem {
   id: string;
   category: string;
-  item_name_ar: string;
-  item_name_en: string;
+  standard_name_ar: string;
+  standard_name_en: string;
   unit: string;
   base_rate: number;
+  target_rate: number;
   min_rate: number;
   max_rate: number;
   materials_pct: number;
@@ -46,6 +39,11 @@ interface RateItem {
   is_locked: boolean;
   keywords: string[];
   notes: string | null;
+  base_city: string;
+  weight_class: string;
+  complexity: string;
+  source_type: string;
+  last_reviewed_at: string | null;
 }
 
 export default function AdminDashboard() {
@@ -64,7 +62,7 @@ export default function AdminDashboard() {
         .select("*")
         .order("category", { ascending: true });
       if (error) throw error;
-      return data as RateItem[];
+      return data as unknown as RateItem[];
     },
   });
 
@@ -80,17 +78,13 @@ export default function AdminDashboard() {
         projects: projects.count || 0,
         items: items.count || 0,
         users: users.count || 0,
-        rates: rates.length,
       };
     },
   });
 
   const toggleLock = useMutation({
     mutationFn: async ({ id, locked }: { id: string; locked: boolean }) => {
-      const { error } = await supabase
-        .from("rate_library")
-        .update({ is_locked: locked })
-        .eq("id", id);
+      const { error } = await supabase.from("rate_library").update({ is_locked: locked }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -111,10 +105,12 @@ export default function AdminDashboard() {
   });
 
   const filtered = rates.filter(r => {
-    const matchSearch = !search || r.item_name_ar.includes(search) || r.item_name_en.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = !search || r.standard_name_ar.includes(search) || r.standard_name_en.toLowerCase().includes(search.toLowerCase());
     const matchCat = catFilter === "all" || r.category === catFilter;
     return matchSearch && matchCat;
   });
+
+  const uniqueCategories = [...new Set(rates.map(r => r.category))];
 
   return (
     <AppLayout>
@@ -133,42 +129,57 @@ export default function AdminDashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card>
             <CardContent className="pt-4 text-center">
-              <Database className="w-8 h-8 mx-auto text-primary mb-2" />
+              <Database className="w-7 h-7 mx-auto text-primary mb-1" />
               <p className="text-2xl font-bold">{stats?.projects || 0}</p>
               <p className="text-xs text-muted-foreground">مشاريع</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
-              <DollarSign className="w-8 h-8 mx-auto text-emerald-500 mb-2" />
+              <DollarSign className="w-7 h-7 mx-auto text-emerald-500 mb-1" />
               <p className="text-2xl font-bold">{stats?.items || 0}</p>
               <p className="text-xs text-muted-foreground">بنود مسعّرة</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
-              <Users className="w-8 h-8 mx-auto text-blue-500 mb-2" />
+              <Users className="w-7 h-7 mx-auto text-blue-500 mb-1" />
               <p className="text-2xl font-bold">{stats?.users || 0}</p>
               <p className="text-xs text-muted-foreground">مستخدمون</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 text-center">
-              <Lock className="w-8 h-8 mx-auto text-amber-500 mb-2" />
-              <p className="text-2xl font-bold">{rates.filter(r => r.is_locked).length}</p>
-              <p className="text-xs text-muted-foreground">أسعار مقفلة</p>
+              <CheckCircle className="w-7 h-7 mx-auto text-primary mb-1" />
+              <p className="text-2xl font-bold">{rates.length}</p>
+              <p className="text-xs text-muted-foreground">بنود المكتبة</p>
             </CardContent>
           </Card>
+          <Card>
+            <CardContent className="pt-4 text-center">
+              <Lock className="w-7 h-7 mx-auto text-amber-500 mb-1" />
+              <p className="text-2xl font-bold">{rates.filter(r => r.is_locked).length}</p>
+              <p className="text-xs text-muted-foreground">مقفلة</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Library info */}
+        <div className="flex items-center gap-2 mb-4 text-sm">
+          <Badge variant="outline">V1 — BaseDatasetV1</Badge>
+          <Badge variant="outline">{uniqueCategories.length} فئات</Badge>
+          <Badge variant="outline">{rates.length} بنود</Badge>
+          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم المكتبة افتراضياً ✓</Badge>
         </div>
 
         {/* Rate Library */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <CardTitle>مكتبة الأسعار — السوق السعودي</CardTitle>
+              <CardTitle>مكتبة الأسعار — السوق السعودي V1</CardTitle>
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -182,7 +193,7 @@ export default function AdminDashboard() {
                   <SelectContent>
                     <SelectItem value="all">الكل</SelectItem>
                     {CATEGORIES.map(c => (
-                      <SelectItem key={c} value={c}>{c.replace(/_/g, " ")}</SelectItem>
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -205,12 +216,14 @@ export default function AdminDashboard() {
                     <TableHead className="text-right">البند</TableHead>
                     <TableHead>الفئة</TableHead>
                     <TableHead>الوحدة</TableHead>
-                    <TableHead className="text-center">الحد الأدنى</TableHead>
-                    <TableHead className="text-center">المتوسط</TableHead>
-                    <TableHead className="text-center">الحد الأعلى</TableHead>
-                    <TableHead className="text-center">مواد%</TableHead>
-                    <TableHead className="text-center">عمالة%</TableHead>
-                    <TableHead className="text-center">معدات%</TableHead>
+                    <TableHead className="text-center">أدنى</TableHead>
+                    <TableHead className="text-center font-bold">المستهدف</TableHead>
+                    <TableHead className="text-center">أعلى</TableHead>
+                    <TableHead className="text-center">مواد</TableHead>
+                    <TableHead className="text-center">عمالة</TableHead>
+                    <TableHead className="text-center">معدات</TableHead>
+                    <TableHead className="text-center">الوزن</TableHead>
+                    <TableHead className="text-center">المصدر</TableHead>
                     <TableHead className="text-center">حالة</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -218,31 +231,36 @@ export default function AdminDashboard() {
                 <TableBody>
                   {filtered.map(item => (
                     <TableRow key={item.id} className={item.is_locked ? "bg-amber-50/50 dark:bg-amber-950/10" : ""}>
-                      <TableCell className="text-right font-medium max-w-[200px] truncate" dir="auto">
-                        {item.item_name_ar}
-                        <br />
-                        <span className="text-xs text-muted-foreground">{item.item_name_en}</span>
+                      <TableCell className="text-right max-w-[200px]" dir="auto">
+                        <div className="font-medium text-sm truncate">{item.standard_name_ar}</div>
+                        <div className="text-xs text-muted-foreground truncate">{item.standard_name_en}</div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-xs">{item.category.replace(/_/g, " ")}</Badge>
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">{item.category}</Badge>
                       </TableCell>
-                      <TableCell>{item.unit}</TableCell>
-                      <TableCell className="text-center">{item.min_rate}</TableCell>
-                      <TableCell className="text-center font-semibold">{item.base_rate}</TableCell>
-                      <TableCell className="text-center">{item.max_rate}</TableCell>
-                      <TableCell className="text-center">{item.materials_pct}%</TableCell>
-                      <TableCell className="text-center">{item.labor_pct}%</TableCell>
-                      <TableCell className="text-center">{item.equipment_pct}%</TableCell>
+                      <TableCell className="text-xs">{item.unit}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground">{item.min_rate}</TableCell>
+                      <TableCell className="text-center font-semibold">{item.target_rate}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground">{item.max_rate}</TableCell>
+                      <TableCell className="text-center text-xs">{item.materials_pct}%</TableCell>
+                      <TableCell className="text-center text-xs">{item.labor_pct}%</TableCell>
+                      <TableCell className="text-center text-xs">{item.equipment_pct}%</TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="secondary" className="text-[10px]">{item.weight_class}</Badge>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="outline" className="text-[10px]">{item.source_type}</Badge>
+                      </TableCell>
                       <TableCell className="text-center">
                         {item.is_locked ? (
-                          <Badge className="bg-amber-500 text-white text-xs">مقفل</Badge>
+                          <Badge className="bg-amber-500 text-white text-[10px]">مقفل</Badge>
                         ) : (
-                          <Badge variant="secondary" className="text-xs">مفتوح</Badge>
+                          <Badge variant="secondary" className="text-[10px]">مفتوح</Badge>
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm"
+                        <div className="flex items-center gap-0.5">
+                          <Button variant="ghost" size="icon" className="h-7 w-7"
                             onClick={() => toggleLock.mutate({ id: item.id, locked: !item.is_locked })}>
                             {item.is_locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </Button>
@@ -255,7 +273,7 @@ export default function AdminDashboard() {
                               setEditItem(null);
                             }}
                           />
-                          <Button variant="ghost" size="sm" className="text-destructive"
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive"
                             onClick={() => { if (confirm("حذف؟")) deleteRate.mutate(item.id); }}>✕</Button>
                         </div>
                       </TableCell>
@@ -263,7 +281,7 @@ export default function AdminDashboard() {
                   ))}
                   {filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                         {isLoading ? "جاري التحميل..." : "لا توجد بنود"}
                       </TableCell>
                     </TableRow>
@@ -271,7 +289,7 @@ export default function AdminDashboard() {
                 </TableBody>
               </Table>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">إجمالي البنود: {filtered.length}</p>
+            <p className="text-xs text-muted-foreground mt-2">إجمالي: {filtered.length} بند | الفئات: {uniqueCategories.length}</p>
           </CardContent>
         </Card>
       </div>
@@ -279,7 +297,6 @@ export default function AdminDashboard() {
   );
 }
 
-// Rate Form Dialog (add/edit)
 function RateFormDialog({ item, open, onOpenChange, onSaved }: {
   item?: RateItem;
   open: boolean;
@@ -287,33 +304,38 @@ function RateFormDialog({ item, open, onOpenChange, onSaved }: {
   onSaved: () => void;
 }) {
   const [form, setForm] = useState({
-    category: item?.category || "general",
-    item_name_ar: item?.item_name_ar || "",
-    item_name_en: item?.item_name_en || "",
-    unit: item?.unit || "م2",
-    base_rate: item?.base_rate || 0,
+    category: item?.category || "Concrete",
+    standard_name_ar: item?.standard_name_ar || "",
+    standard_name_en: item?.standard_name_en || "",
+    unit: item?.unit || "m2",
+    target_rate: item?.target_rate || 0,
     min_rate: item?.min_rate || 0,
     max_rate: item?.max_rate || 0,
     materials_pct: item?.materials_pct || 50,
     labor_pct: item?.labor_pct || 25,
     equipment_pct: item?.equipment_pct || 15,
     logistics_pct: item?.logistics_pct || 10,
-    risk_pct: item?.risk_pct || 3,
+    risk_pct: item?.risk_pct || 5,
     profit_pct: item?.profit_pct || 5,
+    weight_class: item?.weight_class || "Medium",
+    complexity: item?.complexity || "Medium",
     keywords: item?.keywords?.join(", ") || "",
     notes: item?.notes || "",
   });
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    if (!form.item_name_ar || !form.base_rate) {
-      toast.error("أدخل اسم البند والسعر الأساسي");
+    if (!form.standard_name_ar || !form.target_rate) {
+      toast.error("أدخل اسم البند والسعر المستهدف");
       return;
     }
     setSaving(true);
     const payload = {
       ...form,
+      base_rate: form.target_rate,
       keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
+      source_type: item?.source_type || "Manual",
+      last_reviewed_at: new Date().toISOString(),
     };
 
     let error;
@@ -332,7 +354,7 @@ function RateFormDialog({ item, open, onOpenChange, onSaved }: {
   };
 
   const trigger = item
-    ? <Button variant="ghost" size="sm" onClick={() => onOpenChange(true)}>✎</Button>
+    ? <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(true)}>✎</Button>
     : <Button size="sm" className="gap-1" onClick={() => onOpenChange(true)}>
         <Plus className="w-4 h-4" /> إضافة بند
       </Button>;
@@ -348,26 +370,37 @@ function RateFormDialog({ item, open, onOpenChange, onSaved }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>الاسم بالعربية</Label>
-              <Input value={form.item_name_ar} onChange={e => setForm(f => ({ ...f, item_name_ar: e.target.value }))} dir="rtl" />
+              <Input value={form.standard_name_ar} onChange={e => setForm(f => ({ ...f, standard_name_ar: e.target.value }))} dir="rtl" />
             </div>
             <div>
               <Label>الاسم بالإنجليزية</Label>
-              <Input value={form.item_name_en} onChange={e => setForm(f => ({ ...f, item_name_en: e.target.value }))} dir="ltr" />
+              <Input value={form.standard_name_en} onChange={e => setForm(f => ({ ...f, standard_name_en: e.target.value }))} dir="ltr" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <Label>الفئة</Label>
               <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c.replace(/_/g, " ")}</SelectItem>)}
+                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>الوحدة</Label>
               <Input value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} />
+            </div>
+            <div>
+              <Label>درجة التعقيد</Label>
+              <Select value={form.complexity} onValueChange={v => setForm(f => ({ ...f, complexity: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Low">منخفض</SelectItem>
+                  <SelectItem value="Medium">متوسط</SelectItem>
+                  <SelectItem value="High">مرتفع</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -376,8 +409,8 @@ function RateFormDialog({ item, open, onOpenChange, onSaved }: {
               <Input type="number" value={form.min_rate} onChange={e => setForm(f => ({ ...f, min_rate: +e.target.value }))} />
             </div>
             <div>
-              <Label>المتوسط (SAR)</Label>
-              <Input type="number" value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: +e.target.value }))} />
+              <Label>المستهدف (SAR)</Label>
+              <Input type="number" value={form.target_rate} onChange={e => setForm(f => ({ ...f, target_rate: +e.target.value }))} />
             </div>
             <div>
               <Label>الحد الأعلى (SAR)</Label>
@@ -402,9 +435,22 @@ function RateFormDialog({ item, open, onOpenChange, onSaved }: {
               <Input type="number" value={form.logistics_pct} onChange={e => setForm(f => ({ ...f, logistics_pct: +e.target.value }))} />
             </div>
           </div>
-          <div>
-            <Label>كلمات مفتاحية (مفصولة بفاصلة)</Label>
-            <Input value={form.keywords} onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))} dir="rtl" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>فئة الوزن</Label>
+              <Select value={form.weight_class} onValueChange={v => setForm(f => ({ ...f, weight_class: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Light">خفيف</SelectItem>
+                  <SelectItem value="Medium">متوسط</SelectItem>
+                  <SelectItem value="Heavy">ثقيل</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>كلمات مفتاحية</Label>
+              <Input value={form.keywords} onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))} dir="rtl" placeholder="حفر, تربة" />
+            </div>
           </div>
           <Button onClick={handleSave} disabled={saving}>
             {item ? "حفظ التعديلات" : "إضافة"}
