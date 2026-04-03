@@ -7,6 +7,7 @@ import { sampleProjects, sampleRateLibrary } from "@/lib/mockData";
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useLanguage();
+  const navigate = useNavigate();
 
   return (
     <AppLayout>
