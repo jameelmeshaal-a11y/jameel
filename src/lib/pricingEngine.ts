@@ -185,21 +185,36 @@ export async function runPricingEngine(
 
     if (libraryMatch) {
       libraryHits++;
-      const libResult = priceFromLibrary(libraryMatch, item.quantity, locFactor);
+
+      // Multi-source resolution: check if sources exist for this library item
+      const itemSources = sourcesMap.get(libraryMatch.id) || [];
+      const sourceResolution = resolveFromSources(itemSources, libraryMatch.target_rate);
+      
+      // Use resolved rate instead of plain target_rate
+      const effectiveLibraryItem = { ...libraryMatch, target_rate: sourceResolution.resolvedRate };
+      const libResult = priceFromLibrary(effectiveLibraryItem, item.quantity, locFactor);
+      
+      const sourceLabel = sourceResolution.method === "approved" 
+        ? `✅ Approved (${sourceResolution.approvedRate} SAR)`
+        : sourceResolution.method === "weighted"
+        ? `⚖️ Weighted (S:${sourceResolution.supplierAvg ?? "—"} H:${sourceResolution.historicalAvg ?? "—"})`
+        : `📚 Library`;
+      
       cost = {
         ...libResult,
         category: detection.category,
         priceFlag: "normal" as const,
         explanation: [
-          `📚 Library V1.2: "${libraryMatch.standard_name_ar}"`,
-          `Target: ${libraryMatch.target_rate} SAR`,
+          `📚 Library V2: "${libraryMatch.standard_name_ar}"`,
+          sourceLabel,
+          `Sources: ${sourceResolution.sourceCount}`,
+          sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
           `Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate}`,
           `Region: ${locationMatch.region_ar} (×${locFactor})`,
           `Zone: ${locationMatch.zone_class}`,
           `Profit: ${libraryMatch.profit_pct}% | Risk: ${libraryItem_risk(libraryMatch)}%`,
           `${libraryMatch.is_locked ? "🔒 Locked" : "🔓 Open"}`,
-          `Source: ${libraryMatch.source_type}`,
-        ].join(" | "),
+        ].filter(Boolean).join(" | "),
       };
     } else {
       cost = calculateItemPrice(
