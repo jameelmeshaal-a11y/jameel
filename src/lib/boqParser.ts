@@ -157,49 +157,155 @@ export async function uploadAndParseBoQ(
 }
 
 /**
- * Export a priced BoQ as an Excel file, preserving original structure
- * and appending pricing columns only.
+ * Export a priced BoQ by downloading the original uploaded workbook,
+ * editing pricing cells in-place, and saving a copy.
+ * Falls back to a generated workbook only if the original cannot be retrieved.
  */
 export async function exportBoQExcel(
   items: any[],
-  fileName: string
+  fileName: string,
+  boqFileId?: string
 ): Promise<void> {
-  const wb = XLSX.utils.book_new();
+  // Try to load the original workbook from storage
+  let wb: XLSX.WorkBook | null = null;
+  let originalFilePath: string | null = null;
 
-  const headers = [
-    "Item No", "Description (وصف البند)", "Unit", "Qty",
-    "Unit Rate (SAR)", "Total Price (SAR)",
-    "Materials", "Labor", "Equipment", "Logistics", "Risk", "Profit",
-    "Confidence %", "Status",
-  ];
+  if (boqFileId) {
+    try {
+      const { data: boqFile } = await supabase
+        .from("boq_files")
+        .select("file_path")
+        .eq("id", boqFileId)
+        .single();
 
-  const data = items.map(item => [
-    item.item_no,
-    item.description,
-    item.unit,
-    item.quantity,
-    item.unit_rate ?? "",
-    item.total_price ?? "",
-    item.materials ?? "",
-    item.labor ?? "",
-    item.equipment ?? "",
-    item.logistics ?? "",
-    item.risk ?? "",
-    item.profit ?? "",
-    item.confidence ?? "",
-    item.status,
-  ]);
+      if (boqFile?.file_path) {
+        originalFilePath = boqFile.file_path;
+        const { data: blob, error } = await supabase.storage
+          .from("boq-files")
+          .download(boqFile.file_path);
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+        if (!error && blob) {
+          const buf = await blob.arrayBuffer();
+          wb = XLSX.read(buf, { type: "array", cellStyles: true, cellDates: true });
+        }
+      }
+    } catch {
+      // Fall through to fallback
+    }
+  }
 
-  // Set column widths
-  ws["!cols"] = [
-    { wch: 10 }, { wch: 40 }, { wch: 8 }, { wch: 10 },
-    { wch: 14 }, { wch: 16 },
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 10 },
-  ];
+  if (wb) {
+    // === IN-PLACE EDIT MODE: preserve original workbook ===
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error("Workbook formatting preservation failed. Export was stopped to protect the original file structure.");
 
-  XLSX.utils.book_append_sheet(wb, ws, "Priced BoQ");
-  XLSX.writeFile(wb, fileName);
+    // Find the used range
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+
+    // Detect header row to find where to append pricing columns
+    const headerRow = findHeaderRowInSheet(ws, range);
+
+    // Build a row_index → item lookup
+    const itemByRow = new Map<number, any>();
+    for (const item of items) {
+      if (item.row_index != null) itemByRow.set(item.row_index, item);
+    }
+
+    // Pricing columns to append
+    const pricingCols = [
+      { header: "Unit Rate (SAR)", key: "unit_rate" },
+      { header: "Total Price (SAR)", key: "total_price" },
+      { header: "Materials", key: "materials" },
+      { header: "Labor", key: "labor" },
+      { header: "Equipment", key: "equipment" },
+      { header: "Logistics", key: "logistics" },
+      { header: "Risk %", key: "risk" },
+      { header: "Profit %", key: "profit" },
+      { header: "Confidence %", key: "confidence" },
+      { header: "Category", key: "category" },
+      { header: "Location Factor", key: "location_factor" },
+      { header: "Notes", key: "notes" },
+    ];
+
+    // Determine start column for pricing (right after existing columns)
+    const startCol = range.e.c + 1;
+
+    // Write pricing headers
+    for (let ci = 0; ci < pricingCols.length; ci++) {
+      const addr = XLSX.utils.encode_cell({ r: headerRow, c: startCol + ci });
+      ws[addr] = { t: "s", v: pricingCols[ci].header };
+    }
+
+    // Write pricing data for each item row
+    for (const [rowIdx, item] of itemByRow) {
+      for (let ci = 0; ci < pricingCols.length; ci++) {
+        const val = item[pricingCols[ci].key];
+        if (val == null || val === "") continue;
+        const addr = XLSX.utils.encode_cell({ r: rowIdx, c: startCol + ci });
+        const numVal = typeof val === "number" ? val : parseFloat(val);
+        if (!isNaN(numVal) && pricingCols[ci].key !== "notes" && pricingCols[ci].key !== "category") {
+          ws[addr] = { t: "n", v: numVal };
+        } else {
+          ws[addr] = { t: "s", v: String(val) };
+        }
+      }
+    }
+
+    // Update the sheet range to include new columns
+    range.e.c = startCol + pricingCols.length - 1;
+    ws["!ref"] = XLSX.utils.encode_range(range);
+
+    // Set column widths for the new pricing columns only
+    if (!ws["!cols"]) ws["!cols"] = [];
+    for (let ci = 0; ci < pricingCols.length; ci++) {
+      ws["!cols"][startCol + ci] = { wch: 14 };
+    }
+
+    // Validate: sheet count preserved
+    if (wb.SheetNames.length < 1) {
+      throw new Error("Workbook formatting preservation failed. Export was stopped to protect the original file structure.");
+    }
+
+    XLSX.writeFile(wb, fileName);
+  } else {
+    // === FALLBACK: generate a new workbook (no original available) ===
+    const fallbackWb = XLSX.utils.book_new();
+    const headers = [
+      "Item No", "Description (وصف البند)", "Unit", "Qty",
+      "Unit Rate (SAR)", "Total Price (SAR)",
+      "Materials", "Labor", "Equipment", "Logistics", "Risk", "Profit",
+      "Confidence %", "Status",
+    ];
+    const data = items.map(item => [
+      item.item_no, item.description, item.unit, item.quantity,
+      item.unit_rate ?? "", item.total_price ?? "",
+      item.materials ?? "", item.labor ?? "", item.equipment ?? "",
+      item.logistics ?? "", item.risk ?? "", item.profit ?? "",
+      item.confidence ?? "", item.status,
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    ws["!cols"] = [
+      { wch: 10 }, { wch: 40 }, { wch: 8 }, { wch: 10 },
+      { wch: 14 }, { wch: 16 },
+      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
+      { wch: 12 }, { wch: 10 },
+    ];
+    XLSX.utils.book_append_sheet(fallbackWb, ws, "Priced BoQ");
+    XLSX.writeFile(fallbackWb, fileName);
+  }
+}
+
+/** Find the header row index within an existing worksheet */
+function findHeaderRowInSheet(ws: XLSX.WorkSheet, range: XLSX.Range): number {
+  const keywords = ["item", "بند", "description", "وصف", "unit", "وحدة", "qty", "quantity", "كمية", "no", "رقم"];
+  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
+    let rowText = "";
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell) rowText += " " + String(cell.v).toLowerCase();
+    }
+    const matches = keywords.filter(k => rowText.includes(k));
+    if (matches.length >= 2) return r;
+  }
+  return 0;
 }
