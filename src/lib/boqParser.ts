@@ -166,180 +166,255 @@ export async function exportBoQExcel(
   fileName: string,
   boqFileId?: string
 ): Promise<void> {
-  // Try to load the original workbook from storage
-  let wb: XLSX.WorkBook | null = null;
-  let originalFilePath: string | null = null;
+  if (!boqFileId) {
+    throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+  }
 
-  if (boqFileId) {
-    try {
-      const { data: boqFile } = await supabase
+  try {
+    const [{ data: boqFile, error: boqFileError }, { data: latestItems, error: itemsError }] = await Promise.all([
+      supabase
         .from("boq_files")
         .select("file_path")
         .eq("id", boqFileId)
-        .single();
+        .single(),
+      supabase
+        .from("boq_items")
+        .select("*")
+        .eq("boq_file_id", boqFileId)
+        .order("row_index", { ascending: true }),
+    ]);
 
-      if (boqFile?.file_path) {
-        originalFilePath = boqFile.file_path;
-        const { data: blob, error } = await supabase.storage
-          .from("boq-files")
-          .download(boqFile.file_path);
+    if (boqFileError || !boqFile?.file_path || itemsError) {
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+    }
 
-        if (!error && blob) {
-          const buf = await blob.arrayBuffer();
-          wb = XLSX.read(buf, { type: "array", cellStyles: true, cellDates: true });
-        }
+    const exportItems = latestItems?.length ? latestItems : items;
+    if (!exportItems.length) {
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+    }
+
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from("boq-files")
+      .download(boqFile.file_path);
+
+    if (downloadError || !blob) {
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+    }
+
+    const buf = await blob.arrayBuffer();
+    const wb = XLSX.read(buf, {
+      type: "array",
+      cellStyles: true,
+      cellDates: true,
+      cellNF: true,
+      sheetStubs: true,
+    });
+
+    const originalSheetNames = [...wb.SheetNames];
+    const originalMerges = new Map(
+      wb.SheetNames.map((sheetName) => [
+        sheetName,
+        JSON.stringify((wb.Sheets[sheetName]["!merges"] || []).map((range) => XLSX.utils.encode_range(range))),
+      ])
+    );
+
+    const targetSheet = findBestPricingSheet(wb);
+    if (!targetSheet) {
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+    }
+
+    const { ws, range, headerRow } = targetSheet;
+    const fieldConfigs = getExportFieldConfigs();
+    const columnMap = resolveExportColumns(ws, range, headerRow, fieldConfigs);
+
+    let headerWrites = 0;
+    for (const field of fieldConfigs) {
+      const colIndex = columnMap.get(field.key);
+      if (colIndex == null) continue;
+      const addr = XLSX.utils.encode_cell({ r: headerRow, c: colIndex });
+      const existingHeader = ws[addr]?.v == null ? "" : String(ws[addr].v).trim();
+      if (!existingHeader) {
+        ws[addr] = { t: "s", v: field.header };
+        headerWrites++;
       }
-    } catch {
-      // Fall through to fallback
-    }
-  }
-
-  if (wb) {
-    // === IN-PLACE EDIT MODE: preserve original workbook ===
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    if (!ws) throw new Error("Workbook formatting preservation failed. Export was stopped to protect the original file structure.");
-
-    // Find the used range
-    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
-
-    // Detect header row to find where to append pricing columns
-    const headerRow = findHeaderRowInSheet(ws, range);
-
-    // Build a row_index → item lookup
-    const itemByRow = new Map<number, any>();
-    for (const item of items) {
-      if (item.row_index != null) itemByRow.set(item.row_index, item);
     }
 
-    // Pricing columns to append
-    const pricingCols = [
-      { header: "Unit Rate (SAR)", key: "unit_rate" },
-      { header: "Total Price (SAR)", key: "total_price" },
-      { header: "Materials", key: "materials" },
-      { header: "Labor", key: "labor" },
-      { header: "Equipment", key: "equipment" },
-      { header: "Logistics", key: "logistics" },
-      { header: "Risk %", key: "risk" },
-      { header: "Profit %", key: "profit" },
-      { header: "Confidence %", key: "confidence" },
-      { header: "Category", key: "category" },
-      { header: "Location Factor", key: "location_factor" },
-      { header: "Notes", key: "notes" },
-    ];
-
-    // Determine start column for pricing (right after existing columns)
-    const startCol = range.e.c + 1;
-
-    // Write pricing headers
-    for (let ci = 0; ci < pricingCols.length; ci++) {
-      const addr = XLSX.utils.encode_cell({ r: headerRow, c: startCol + ci });
-      ws[addr] = { t: "s", v: pricingCols[ci].header };
-    }
-
-    // Write pricing data for each item row
-    // If items don't have row_index, fall back to sequential mapping after header
     let writtenCells = 0;
-    
-    if (itemByRow.size > 0) {
-      // Use row_index mapping
-      for (const [rowIdx, item] of itemByRow) {
-        writtenCells += writeItemPricing(ws, item, rowIdx, startCol, pricingCols);
-      }
-    } else {
-      // Fallback: write items sequentially starting after header row
-      for (let i = 0; i < items.length; i++) {
-        const targetRow = headerRow + 1 + i;
-        writtenCells += writeItemPricing(ws, items[i], targetRow, startCol, pricingCols);
-      }
+    let expectedWrites = 0;
+    let maxRow = range.e.r;
+
+    for (let i = 0; i < exportItems.length; i++) {
+      const item = exportItems[i];
+      const targetRow = typeof item.row_index === "number" && item.row_index > headerRow
+        ? item.row_index
+        : headerRow + 1 + i;
+      maxRow = Math.max(maxRow, targetRow);
+      expectedWrites += countExportableValues(item, fieldConfigs);
+      writtenCells += writeExportRow(ws, item, targetRow, fieldConfigs, columnMap);
     }
 
-    // Update the sheet range to include new columns and all data rows
-    const lastDataRow = itemByRow.size > 0
-      ? Math.max(range.e.r, ...Array.from(itemByRow.keys()))
-      : Math.max(range.e.r, headerRow + items.length);
-    range.e.c = startCol + pricingCols.length - 1;
-    range.e.r = lastDataRow;
+    range.e.r = maxRow;
+    range.e.c = Math.max(range.e.c, ...Array.from(columnMap.values()));
     ws["!ref"] = XLSX.utils.encode_range(range);
 
-    // Set column widths for the new pricing columns only
     if (!ws["!cols"]) ws["!cols"] = [];
-    for (let ci = 0; ci < pricingCols.length; ci++) {
-      ws["!cols"][startCol + ci] = { wch: 14 };
+    for (const field of fieldConfigs) {
+      const colIndex = columnMap.get(field.key);
+      if (colIndex != null && !ws["!cols"][colIndex]) {
+        ws["!cols"][colIndex] = { wch: 14 };
+      }
     }
 
-    // Validate: structure preserved AND pricing data written
-    if (wb.SheetNames.length < 1) {
-      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
-    }
-    if (writtenCells === 0) {
+    const mergesPreserved = wb.SheetNames.every(
+      (sheetName) =>
+        originalMerges.get(sheetName) ===
+        JSON.stringify((wb.Sheets[sheetName]["!merges"] || []).map((merge) => XLSX.utils.encode_range(merge)))
+    );
+    const workbookPreserved =
+      wb.SheetNames.length === originalSheetNames.length &&
+      wb.SheetNames.every((sheetName, index) => sheetName === originalSheetNames[index]) &&
+      mergesPreserved;
+    const writeBackComplete = expectedWrites > 0 && writtenCells > 0 && writtenCells === expectedWrites;
+
+    if (!workbookPreserved || !writeBackComplete) {
       throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
     }
 
-    console.log(`[BoQ Export] In-place edit complete: ${writtenCells} pricing cells written across ${itemByRow.size || items.length} items`);
+    console.log(`[BoQ Export] headers=${headerWrites} expected=${expectedWrites} written=${writtenCells} file=${boqFileId}`);
     XLSX.writeFile(wb, fileName);
-  } else {
-    // === FALLBACK: generate a new workbook (no original available) ===
-    const fallbackWb = XLSX.utils.book_new();
-    const headers = [
-      "Item No", "Description (وصف البند)", "Unit", "Qty",
-      "Unit Rate (SAR)", "Total Price (SAR)",
-      "Materials", "Labor", "Equipment", "Logistics", "Risk", "Profit",
-      "Confidence %", "Status",
-    ];
-    const data = items.map(item => [
-      item.item_no, item.description, item.unit, item.quantity,
-      item.unit_rate ?? "", item.total_price ?? "",
-      item.materials ?? "", item.labor ?? "", item.equipment ?? "",
-      item.logistics ?? "", item.risk ?? "", item.profit ?? "",
-      item.confidence ?? "", item.status,
-    ]);
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
-    ws["!cols"] = [
-      { wch: 10 }, { wch: 40 }, { wch: 8 }, { wch: 10 },
-      { wch: 14 }, { wch: 16 },
-      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-      { wch: 12 }, { wch: 10 },
-    ];
-    XLSX.utils.book_append_sheet(fallbackWb, ws, "Priced BoQ");
-    XLSX.writeFile(fallbackWb, fileName);
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
   }
 }
 
-/** Write pricing values for a single item into the worksheet. Returns count of cells written. */
-function writeItemPricing(
+function getExportFieldConfigs() {
+  return [
+    { key: "unit_rate", header: "Unit Rate (SAR)", type: "number", patterns: ["unit rate", "rate", "سعر الوحدة", "unit price"] },
+    { key: "total_price", header: "Total Price (SAR)", type: "number", patterns: ["total price", "amount", "الإجمالي", "total amount", "السعر الإجمالي"] },
+    { key: "materials", header: "Materials", type: "number", patterns: ["materials", "material", "مواد"] },
+    { key: "labor", header: "Labor", type: "number", patterns: ["labor", "labour", "عمالة"] },
+    { key: "equipment", header: "Equipment", type: "number", patterns: ["equipment", "معدات"] },
+    { key: "logistics", header: "Logistics", type: "number", patterns: ["logistics", "transport", "لوجستيات", "نقل"] },
+    { key: "risk", header: "Risk %", type: "number", patterns: ["risk", "مخاطر"] },
+    { key: "profit", header: "Profit %", type: "number", patterns: ["profit", "ربح"] },
+    { key: "notes", header: "Notes", type: "text", patterns: ["notes", "note", "ملاحظات", "ملاحظة"] },
+    { key: "confidence", header: "Confidence %", type: "number", patterns: ["confidence", "الثقة"] },
+    { key: "location_factor", header: "Location Factor", type: "number", patterns: ["location factor", "معامل الموقع"] },
+    { key: "category", header: "Category", type: "text", patterns: ["category", "التصنيف", "الفئة"] },
+    { key: "status", header: "Review / Approval", type: "text", patterns: ["status", "approval", "review", "الحالة", "اعتماد", "مراجعة"] },
+  ] as const;
+}
+
+function findBestPricingSheet(wb: XLSX.WorkBook): { ws: XLSX.WorkSheet; range: XLSX.Range; headerRow: number } | null {
+  let bestMatch: { ws: XLSX.WorkSheet; range: XLSX.Range; headerRow: number; score: number } | null = null;
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws?.["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    const match = findHeaderRowInSheet(ws, range);
+    if (!bestMatch || match.score > bestMatch.score) {
+      bestMatch = { ws, range, headerRow: match.row, score: match.score };
+    }
+  }
+
+  return bestMatch && bestMatch.score >= 2
+    ? { ws: bestMatch.ws, range: bestMatch.range, headerRow: bestMatch.headerRow }
+    : null;
+}
+
+function resolveExportColumns(
+  ws: XLSX.WorkSheet,
+  range: XLSX.Range,
+  headerRow: number,
+  fieldConfigs: ReadonlyArray<{ key: string; header: string; patterns: readonly string[] }>
+): Map<string, number> {
+  const columnMap = new Map<string, number>();
+  let nextCol = range.e.c + 1;
+
+  for (const field of fieldConfigs) {
+    let foundCol = -1;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: headerRow, c })];
+      const headerText = normalizeHeader(cell?.v);
+      if (headerText && field.patterns.some((pattern) => headerText.includes(normalizeHeader(pattern)))) {
+        foundCol = c;
+        break;
+      }
+    }
+
+    if (foundCol === -1) foundCol = nextCol++;
+    columnMap.set(field.key, foundCol);
+  }
+
+  return columnMap;
+}
+
+function countExportableValues(
+  item: any,
+  fieldConfigs: ReadonlyArray<{ key: string }>
+): number {
+  return fieldConfigs.reduce((count, field) => {
+    const value = item[field.key];
+    return value == null || value === "" ? count : count + 1;
+  }, 0);
+}
+
+function writeExportRow(
   ws: XLSX.WorkSheet,
   item: any,
   rowIdx: number,
-  startCol: number,
-  pricingCols: { header: string; key: string }[]
+  fieldConfigs: ReadonlyArray<{ key: string; type: string }>,
+  columnMap: Map<string, number>
 ): number {
   let count = 0;
-  for (let ci = 0; ci < pricingCols.length; ci++) {
-    const val = item[pricingCols[ci].key];
-    if (val == null || val === "") continue;
-    const addr = XLSX.utils.encode_cell({ r: rowIdx, c: startCol + ci });
-    const numVal = typeof val === "number" ? val : parseFloat(val);
-    if (!isNaN(numVal) && pricingCols[ci].key !== "notes" && pricingCols[ci].key !== "category") {
-      ws[addr] = { t: "n", v: numVal };
-    } else {
-      ws[addr] = { t: "s", v: String(val) };
+
+  for (const field of fieldConfigs) {
+    const value = item[field.key];
+    if (value == null || value === "") continue;
+
+    const colIdx = columnMap.get(field.key);
+    if (colIdx == null) continue;
+
+    const addr = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+    if (field.type === "number") {
+      const numericValue = typeof value === "number" ? value : parseFloat(String(value));
+      if (!Number.isNaN(numericValue)) {
+        ws[addr] = { ...(ws[addr] || {}), t: "n", v: numericValue };
+        count++;
+        continue;
+      }
     }
+
+    ws[addr] = { ...(ws[addr] || {}), t: "s", v: String(value) };
     count++;
   }
+
   return count;
 }
 
+function normalizeHeader(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 /** Find the header row index within an existing worksheet */
-function findHeaderRowInSheet(ws: XLSX.WorkSheet, range: XLSX.Range): number {
+function findHeaderRowInSheet(ws: XLSX.WorkSheet, range: XLSX.Range): { row: number; score: number } {
   const keywords = ["item", "بند", "description", "وصف", "unit", "وحدة", "qty", "quantity", "كمية", "no", "رقم"];
+  let best = { row: 0, score: 0 };
+
   for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
     let rowText = "";
     for (let c = range.s.c; c <= range.e.c; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell) rowText += " " + String(cell.v).toLowerCase();
+      if (cell) rowText += ` ${String(cell.v).toLowerCase()}`;
     }
-    const matches = keywords.filter(k => rowText.includes(k));
-    if (matches.length >= 2) return r;
+    const score = keywords.filter((k) => rowText.includes(k)).length;
+    if (score > best.score) best = { row: r, score };
   }
-  return 0;
+
+  return best;
 }
