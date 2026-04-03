@@ -70,11 +70,18 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
   const detected = detectCategory(item.description, item.description_en);
 
   const handleFieldChange = useCallback((field: BreakdownField, newValue: number) => {
+    if (newValue < 0) return; // prevent negative values
     setManualFields(prev => new Set([...prev, field]));
 
     if (autoRebalance) {
       const recalculated = recalculateBreakdown(values, field, newValue, detected.category, false);
+      console.log(`[SmartRecalc] Field: ${field}, New: ${newValue}, Category: ${detected.category}`, {
+        previous: { ...values },
+        recalculated,
+        unitRate: getUnitRate(recalculated),
+      });
       setValues(recalculated);
+      toast.info("Cost breakdown recalculated based on new " + field.charAt(0).toUpperCase() + field.slice(1) + " value", { duration: 2000 });
     } else {
       setValues(prev => ({ ...prev, [field]: newValue }));
     }
