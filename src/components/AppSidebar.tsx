@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  FlaskConical,
+  Blocks,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
