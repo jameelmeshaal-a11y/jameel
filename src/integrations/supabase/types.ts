@@ -238,17 +238,18 @@ export type Database = {
       }
       rate_library: {
         Row: {
+          base_city: string
           base_rate: number
           category: string
+          complexity: string
           created_at: string
           created_by: string | null
           equipment_pct: number
           id: string
           is_locked: boolean
-          item_name_ar: string
-          item_name_en: string
           keywords: string[]
           labor_pct: number
+          last_reviewed_at: string | null
           logistics_pct: number
           market_level: string
           materials_pct: number
@@ -257,21 +258,27 @@ export type Database = {
           notes: string | null
           profit_pct: number
           risk_pct: number
+          source_type: string
+          standard_name_ar: string
+          standard_name_en: string
+          target_rate: number
           unit: string
           updated_at: string
+          weight_class: string
         }
         Insert: {
+          base_city?: string
           base_rate: number
           category: string
+          complexity?: string
           created_at?: string
           created_by?: string | null
           equipment_pct?: number
           id?: string
           is_locked?: boolean
-          item_name_ar: string
-          item_name_en?: string
           keywords?: string[]
           labor_pct?: number
+          last_reviewed_at?: string | null
           logistics_pct?: number
           market_level?: string
           materials_pct?: number
@@ -280,21 +287,27 @@ export type Database = {
           notes?: string | null
           profit_pct?: number
           risk_pct?: number
+          source_type?: string
+          standard_name_ar: string
+          standard_name_en?: string
+          target_rate?: number
           unit: string
           updated_at?: string
+          weight_class?: string
         }
         Update: {
+          base_city?: string
           base_rate?: number
           category?: string
+          complexity?: string
           created_at?: string
           created_by?: string | null
           equipment_pct?: number
           id?: string
           is_locked?: boolean
-          item_name_ar?: string
-          item_name_en?: string
           keywords?: string[]
           labor_pct?: number
+          last_reviewed_at?: string | null
           logistics_pct?: number
           market_level?: string
           materials_pct?: number
@@ -303,8 +316,13 @@ export type Database = {
           notes?: string | null
           profit_pct?: number
           risk_pct?: number
+          source_type?: string
+          standard_name_ar?: string
+          standard_name_en?: string
+          target_rate?: number
           unit?: string
           updated_at?: string
+          weight_class?: string
         }
         Relationships: []
       }
