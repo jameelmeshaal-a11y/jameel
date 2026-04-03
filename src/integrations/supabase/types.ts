@@ -395,6 +395,62 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_sources: {
+        Row: {
+          city: string
+          created_at: string
+          created_by: string | null
+          date: string
+          id: string
+          is_verified: boolean
+          notes: string | null
+          project_name: string | null
+          rate: number
+          rate_library_id: string
+          source_name: string
+          source_type: string
+          updated_at: string
+        }
+        Insert: {
+          city?: string
+          created_at?: string
+          created_by?: string | null
+          date?: string
+          id?: string
+          is_verified?: boolean
+          notes?: string | null
+          project_name?: string | null
+          rate: number
+          rate_library_id: string
+          source_name?: string
+          source_type?: string
+          updated_at?: string
+        }
+        Update: {
+          city?: string
+          created_at?: string
+          created_by?: string | null
+          date?: string
+          id?: string
+          is_verified?: boolean
+          notes?: string | null
+          project_name?: string | null
+          rate?: number
+          rate_library_id?: string
+          source_name?: string
+          source_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rate_sources_rate_library_id_fkey"
+            columns: ["rate_library_id"]
+            isOneToOne: false
+            referencedRelation: "rate_library"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           id: string
