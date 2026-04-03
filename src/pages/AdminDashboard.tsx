@@ -54,6 +54,7 @@ export default function AdminDashboard() {
   const [catFilter, setCatFilter] = useState("all");
   const [editItem, setEditItem] = useState<RateItem | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [sourcesItem, setSourcesItem] = useState<RateItem | null>(null);
 
   const { data: rates = [], isLoading } = useQuery({
     queryKey: ["rate_library"],
