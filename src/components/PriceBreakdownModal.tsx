@@ -102,14 +102,18 @@ export default function PriceBreakdownModal({ item, onClose }: Props) {
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Pricing Explanation */}
           {item.notes && (
-            <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
+            <div className="p-3 rounded-lg bg-info/10 border border-info/20">
               <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+                <Cpu className="w-4 h-4 text-info flex-shrink-0 mt-0.5" />
                 <div>
-                  <div className="text-xs font-medium text-warning">Note</div>
-                  <div className="text-sm mt-0.5">{item.notes}</div>
+                  <div className="text-xs font-medium text-info">Price Explanation</div>
+                  <div className="text-xs mt-1 font-mono text-muted-foreground leading-relaxed">
+                    {item.notes.split(" | ").map((part, i) => (
+                      <div key={i}>{part}</div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
