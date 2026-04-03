@@ -171,10 +171,10 @@ export default function AdminDashboard() {
 
         {/* Library info */}
         <div className="flex items-center gap-2 mb-4 text-sm">
-          <Badge variant="outline">V1 — BaseDatasetV1</Badge>
+          <Badge variant="outline">V2 — Multi-Source</Badge>
           <Badge variant="outline">{uniqueCategories.length} فئات</Badge>
           <Badge variant="outline">{rates.length} بنود</Badge>
-          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم المكتبة افتراضياً ✓</Badge>
+          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم مصادر متعددة ✓</Badge>
         </div>
 
         {/* Rate Library */}
