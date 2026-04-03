@@ -4,6 +4,7 @@ import {
   FolderOpen,
   BookOpen,
   Settings,
+  ShieldCheck,
   Building2,
   ChevronLeft,
   ChevronRight,
