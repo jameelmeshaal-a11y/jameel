@@ -4,6 +4,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LanguageProvider } from "@/contexts/LanguageContext";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute, AdminRoute } from "@/components/ProtectedRoute";
 import Dashboard from "./pages/Dashboard";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectDetail from "./pages/ProjectDetail";
@@ -13,6 +15,8 @@ import ValidationPage from "./pages/ValidationPage";
 import QACenterPage from "./pages/QACenterPage";
 import SystemArchitecturePage from "./pages/SystemArchitecturePage";
 import QAHealthPage from "./pages/QAHealthPage";
+import LoginPage from "./pages/LoginPage";
+import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
 import DebugPanel from "./components/DebugPanel";
 
@@ -20,28 +24,32 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <LanguageProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:id" element={<ProjectDetail />} />
-            <Route path="/rate-library" element={<RateLibraryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/validation" element={<ValidationPage />} />
-            <Route path="/qa-center" element={<QACenterPage />} />
-            <Route path="/architecture" element={<SystemArchitecturePage />} />
-            <Route path="/qa" element={<QAHealthPage />} />
-            <Route path="/health" element={<QAHealthPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-          <DebugPanel />
-        </BrowserRouter>
-      </TooltipProvider>
-    </LanguageProvider>
+    <AuthProvider>
+      <LanguageProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/qa" element={<QAHealthPage />} />
+              <Route path="/health" element={<QAHealthPage />} />
+              <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/projects" element={<ProtectedRoute><ProjectsPage /></ProtectedRoute>} />
+              <Route path="/projects/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
+              <Route path="/rate-library" element={<ProtectedRoute><RateLibraryPage /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+              <Route path="/validation" element={<ProtectedRoute><ValidationPage /></ProtectedRoute>} />
+              <Route path="/qa-center" element={<ProtectedRoute><QACenterPage /></ProtectedRoute>} />
+              <Route path="/architecture" element={<ProtectedRoute><SystemArchitecturePage /></ProtectedRoute>} />
+              <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+            <DebugPanel />
+          </BrowserRouter>
+        </TooltipProvider>
+      </LanguageProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 
