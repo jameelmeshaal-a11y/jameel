@@ -195,6 +195,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
               <th className="protected-col w-16">{t("unit")}</th>
               <th className="protected-col w-24 text-right">{t("qty")}</th>
+              <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
               <th className="pricing-col w-20 text-right">{t("mat")}</th>
