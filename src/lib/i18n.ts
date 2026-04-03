@@ -235,6 +235,7 @@ export const translations = {
     coreDocuments: "المستندات الأساسية",
     technicalDocuments: "المستندات الفنية",
     otherDocuments: "مستندات أخرى",
+    documentUploaded: "تم رفع المستند بنجاح",
 
     // Rate Library
     rateLibraryTitle: "مكتبة الأسعار",
