@@ -135,6 +135,51 @@ export type Database = {
           },
         ]
       }
+      location_factors: {
+        Row: {
+          accommodation_adder: number
+          created_at: string
+          id: string
+          labor_adder: number
+          location_factor: number
+          logistics_adder: number
+          notes: string | null
+          region: string
+          region_ar: string
+          risk_adder: number
+          updated_at: string
+          zone_class: string
+        }
+        Insert: {
+          accommodation_adder?: number
+          created_at?: string
+          id?: string
+          labor_adder?: number
+          location_factor?: number
+          logistics_adder?: number
+          notes?: string | null
+          region: string
+          region_ar: string
+          risk_adder?: number
+          updated_at?: string
+          zone_class?: string
+        }
+        Update: {
+          accommodation_adder?: number
+          created_at?: string
+          id?: string
+          labor_adder?: number
+          location_factor?: number
+          logistics_adder?: number
+          notes?: string | null
+          region?: string
+          region_ar?: string
+          risk_adder?: number
+          updated_at?: string
+          zone_class?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -246,10 +291,15 @@ export type Database = {
           created_by: string | null
           equipment_pct: number
           id: string
+          includes_install: boolean
+          includes_supply: boolean
+          includes_testing: boolean
+          includes_transport_to_site: boolean
           is_locked: boolean
           keywords: string[]
           labor_pct: number
           last_reviewed_at: string | null
+          location_factor_required: boolean
           logistics_pct: number
           market_level: string
           materials_pct: number
@@ -264,6 +314,9 @@ export type Database = {
           target_rate: number
           unit: string
           updated_at: string
+          vat_applicable: boolean
+          vat_rate: number
+          warranty_period_months: number
           weight_class: string
         }
         Insert: {
@@ -275,10 +328,15 @@ export type Database = {
           created_by?: string | null
           equipment_pct?: number
           id?: string
+          includes_install?: boolean
+          includes_supply?: boolean
+          includes_testing?: boolean
+          includes_transport_to_site?: boolean
           is_locked?: boolean
           keywords?: string[]
           labor_pct?: number
           last_reviewed_at?: string | null
+          location_factor_required?: boolean
           logistics_pct?: number
           market_level?: string
           materials_pct?: number
@@ -293,6 +351,9 @@ export type Database = {
           target_rate?: number
           unit: string
           updated_at?: string
+          vat_applicable?: boolean
+          vat_rate?: number
+          warranty_period_months?: number
           weight_class?: string
         }
         Update: {
@@ -304,10 +365,15 @@ export type Database = {
           created_by?: string | null
           equipment_pct?: number
           id?: string
+          includes_install?: boolean
+          includes_supply?: boolean
+          includes_testing?: boolean
+          includes_transport_to_site?: boolean
           is_locked?: boolean
           keywords?: string[]
           labor_pct?: number
           last_reviewed_at?: string | null
+          location_factor_required?: boolean
           logistics_pct?: number
           market_level?: string
           materials_pct?: number
@@ -322,6 +388,9 @@ export type Database = {
           target_rate?: number
           unit?: string
           updated_at?: string
+          vat_applicable?: boolean
+          vat_rate?: number
+          warranty_period_months?: number
           weight_class?: string
         }
         Relationships: []
