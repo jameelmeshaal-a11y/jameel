@@ -1,6 +1,7 @@
 /**
  * Dynamic rate calculator - produces unique, realistic rates per item.
  * Uses seeded pseudo-randomness from item properties for deterministic but varied output.
+ * Implements weight-based logistics, category-aware location factors, and price range validation.
  */
 
 import type { ItemCategory } from "./categoryDetector";
@@ -11,10 +12,22 @@ const LOCATION_BASE_FACTORS: Record<string, number> = {
   riyadh: 1.0, "الرياض": 1.0,
   makkah: 1.05, "مكة": 1.05, "مكة المكرمة": 1.05,
   jeddah: 1.03, "جدة": 1.03,
-  aseer: 1.15, "عسير": 1.15,
-  tabuk: 1.12, "تبوك": 1.12,
+  aseer: 1.18, "عسير": 1.18,
+  tabuk: 1.14, "تبوك": 1.14,
   dammam: 1.02, "الدمام": 1.02,
   madinah: 1.04, "المدينة": 1.04, "المدينة المنورة": 1.04,
+  abha: 1.16, "أبها": 1.16,
+  najran: 1.12, "نجران": 1.12,
+  jazan: 1.10, "جازان": 1.10,
+  hail: 1.08, "حائل": 1.08,
+};
+
+// Logistics multiplier based on weight class — heavier items cost more to transport
+const LOGISTICS_WEIGHT_MULTIPLIERS: Record<string, number> = {
+  light: 0.65,
+  medium: 1.0,
+  heavy: 1.45,
+  bulk: 1.75,
 };
 
 /** Simple hash for deterministic variation from description text */
@@ -26,9 +39,10 @@ function hashString(s: string): number {
   return Math.abs(h);
 }
 
-/** Seeded pseudo-random in [0,1) */
+/** Seeded pseudo-random in [0,1) — uses multiple rounds for better distribution */
 function seededRandom(seed: number, offset: number = 0): number {
-  const x = Math.sin((seed + offset) * 9301 + 49297) * 49297;
+  let x = Math.sin((seed + offset) * 9301 + 49297) * 49297;
+  x = Math.sin(x * 2137 + 13) * 49297;
   return x - Math.floor(x);
 }
 
@@ -60,6 +74,7 @@ export interface PricedResult {
   locationFactor: number;
   category: ItemCategory;
   explanation: string;
+  priceFlag: "normal" | "low" | "high";
 }
 
 export interface PricingContext {
@@ -90,7 +105,7 @@ export function calculateItemPrice(
   const rateT = seededRandom(seed, 2);
   let baseRate = lerp(model.rateRange[0], model.rateRange[1], rateT);
 
-  // 3. Unit adjustment - some items priced per ton, per m3, per piece, etc.
+  // 3. Unit adjustment
   baseRate = adjustForUnit(baseRate, unit, category);
 
   // 4. Apply complexity
@@ -100,12 +115,15 @@ export function calculateItemPrice(
   const scaleFactor = getScaleFactor(model, quantity);
   baseRate *= scaleFactor;
 
-  // 6. Location factor - category-sensitive
-  const effectiveLocationDelta = (baseLocationFactor - 1.0) * model.locationSensitivity;
+  // 6. Category-aware location factor
+  // Heavy/bulk items are much more affected by remote locations
+  const logisticsMultiplier = LOGISTICS_WEIGHT_MULTIPLIERS[model.logisticsWeight] || 1.0;
+  const rawLocationDelta = baseLocationFactor - 1.0;
+  const effectiveLocationDelta = rawLocationDelta * model.locationSensitivity * (0.7 + 0.3 * logisticsMultiplier);
   const locationFactor = 1.0 + effectiveLocationDelta;
   baseRate *= locationFactor;
 
-  // 7. Dynamic breakdown ratios - each item gets slightly different ratios
+  // 7. Dynamic breakdown ratios - each item gets unique ratios within category bounds
   const matT = seededRandom(seed, 3);
   const labT = seededRandom(seed, 4);
   const eqT = seededRandom(seed, 5);
@@ -115,6 +133,9 @@ export function calculateItemPrice(
   let labRatio = lerp(model.breakdown.labor[0], model.breakdown.labor[1], labT);
   let eqRatio = lerp(model.breakdown.equipment[0], model.breakdown.equipment[1], eqT);
   let logRatio = lerp(model.breakdown.logistics[0], model.breakdown.logistics[1], logT);
+
+  // Apply logistics weight class to the logistics ratio
+  logRatio *= logisticsMultiplier;
 
   // Normalize to sum to 1.0
   const ratioSum = matRatio + labRatio + eqRatio + logRatio;
@@ -137,8 +158,11 @@ export function calculateItemPrice(
   // Confidence based on category detection + model quality
   const confidence = Math.min(95, Math.round(categoryConfidence * 0.7 + (category !== "general" ? 25 : 10)));
 
-  // Build explanation
-  const explanation = buildExplanation(category, complexity, scaleFactor, locationFactor, model, baseRate);
+  // Price range validation
+  const priceFlag = validatePriceRange(unitRate, model);
+
+  // Build detailed explanation
+  const explanation = buildExplanation(category, complexity, scaleFactor, locationFactor, model, baseRate, matRatio, labRatio, eqRatio, logRatio, priceFlag);
 
   return {
     materials, labor, equipment, logistics, risk, profit,
@@ -146,23 +170,27 @@ export function calculateItemPrice(
     locationFactor: +locationFactor.toFixed(4),
     category,
     explanation,
+    priceFlag,
   };
+}
+
+function validatePriceRange(unitRate: number, model: CostModel): "normal" | "low" | "high" {
+  if (unitRate < model.validRange[0] * 0.8) return "low";
+  if (unitRate > model.validRange[1] * 1.2) return "high";
+  return "normal";
 }
 
 function adjustForUnit(baseRate: number, unit: string, category: ItemCategory): number {
   const u = unit.toLowerCase();
-  // Per-ton items
   if (u.includes("طن") || u.includes("ton")) {
     if (["rebar", "steel_structural", "steel_misc"].includes(category)) return baseRate;
-    return baseRate * 10; // heavy items
+    return baseRate * 10;
   }
-  // Per-piece items (doors, fixtures, equipment)
   if (u.includes("عدد") || u.includes("no") || u.includes("pcs") || u.includes("حبة")) {
-    return baseRate; // already calibrated per piece for these categories
+    return baseRate;
   }
-  // Linear meter
   if (u.includes("م.ط") || u.includes("m.l") || u.includes("l.m") || u.includes("متر طولي")) {
-    if (baseRate > 200) return baseRate * 0.3; // reduce for linear items
+    if (baseRate > 200) return baseRate * 0.3;
   }
   return baseRate;
 }
@@ -182,13 +210,29 @@ function buildExplanation(
   locationFactor: number,
   model: CostModel,
   computedRate: number,
+  matR: number,
+  labR: number,
+  eqR: number,
+  logR: number,
+  priceFlag: string,
 ): string {
   const parts: string[] = [];
   parts.push(`Category: ${category.replace(/_/g, " ")}`);
-  parts.push(`Base range: ${model.rateRange[0]}–${model.rateRange[1]} SAR`);
+  parts.push(`Range: ${model.rateRange[0]}–${model.rateRange[1]} SAR`);
   parts.push(`Complexity: ×${complexity.toFixed(2)}`);
-  if (scaleFactor < 1) parts.push(`Scale discount: ×${scaleFactor.toFixed(2)}`);
-  if (locationFactor !== 1) parts.push(`Location: ×${locationFactor.toFixed(3)}`);
-  parts.push(`Computed base: ${computedRate.toFixed(2)} SAR`);
+
+  // Show dominant cost driver
+  const drivers = [
+    { name: "Materials", ratio: matR },
+    { name: "Labor", ratio: labR },
+    { name: "Equipment", ratio: eqR },
+    { name: "Logistics", ratio: logR },
+  ].sort((a, b) => b.ratio - a.ratio);
+  parts.push(`Cost driver: ${drivers[0].name} (${(drivers[0].ratio * 100).toFixed(0)}%)`);
+
+  if (scaleFactor < 1) parts.push(`Scale: ×${scaleFactor.toFixed(2)}`);
+  if (locationFactor !== 1) parts.push(`Location: ×${locationFactor.toFixed(3)} [${model.logisticsWeight}]`);
+  parts.push(`Base: ${computedRate.toFixed(2)} SAR`);
+  if (priceFlag !== "normal") parts.push(`⚠ Price ${priceFlag}`);
   return parts.join(" | ");
 }
