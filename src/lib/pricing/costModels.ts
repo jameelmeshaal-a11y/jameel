@@ -596,6 +596,23 @@ const MODELS: Record<ItemCategory, CostModel> = {
     complexityRange: [0.80, 1.30],
   },
 
+  // === FURNITURE & EQUIPMENT ===
+  furniture: {
+    rateRange: [150, 2500],
+    breakdown: {
+      materials: [0.65, 0.80],
+      labor: [0.08, 0.15],
+      equipment: [0.02, 0.05],
+      logistics: [0.05, 0.12],
+    },
+    scaleFactors: [
+      { threshold: 20, factor: 0.96 },
+      { threshold: 100, factor: 0.92 },
+    ],
+    locationSensitivity: 0.3,
+    complexityRange: [0.70, 1.50],
+  },
+
   // === GENERAL FALLBACK ===
   general: {
     rateRange: [50, 400],
