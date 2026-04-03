@@ -63,10 +63,16 @@ export type Database = {
           id: string
           item_no: string
           labor: number | null
+          linked_rate_id: string | null
           location_factor: number | null
           logistics: number | null
+          manual_overrides: Json | null
           materials: number | null
           notes: string | null
+          override_at: string | null
+          override_by: string | null
+          override_reason: string | null
+          override_type: string | null
           profit: number | null
           quantity: number
           risk: number | null
@@ -87,10 +93,16 @@ export type Database = {
           id?: string
           item_no?: string
           labor?: number | null
+          linked_rate_id?: string | null
           location_factor?: number | null
           logistics?: number | null
+          manual_overrides?: Json | null
           materials?: number | null
           notes?: string | null
+          override_at?: string | null
+          override_by?: string | null
+          override_reason?: string | null
+          override_type?: string | null
           profit?: number | null
           quantity?: number
           risk?: number | null
@@ -111,10 +123,16 @@ export type Database = {
           id?: string
           item_no?: string
           labor?: number | null
+          linked_rate_id?: string | null
           location_factor?: number | null
           logistics?: number | null
+          manual_overrides?: Json | null
           materials?: number | null
           notes?: string | null
+          override_at?: string | null
+          override_by?: string | null
+          override_reason?: string | null
+          override_type?: string | null
           profit?: number | null
           quantity?: number
           risk?: number | null
@@ -131,6 +149,13 @@ export type Database = {
             columns: ["boq_file_id"]
             isOneToOne: false
             referencedRelation: "boq_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "boq_items_linked_rate_id_fkey"
+            columns: ["linked_rate_id"]
+            isOneToOne: false
+            referencedRelation: "rate_library"
             referencedColumns: ["id"]
           },
         ]
@@ -179,6 +204,82 @@ export type Database = {
           zone_class?: string
         }
         Relationships: []
+      }
+      pricing_audit_log: {
+        Row: {
+          action_type: string
+          affected_items_count: number
+          change_scope: string
+          changed_by: string | null
+          changed_fields: Json
+          created_at: string
+          edit_type: string
+          id: string
+          item_id: string | null
+          master_rate_updated: boolean
+          new_values: Json
+          old_values: Json
+          project_id: string | null
+          rate_library_id: string | null
+          reason: string | null
+        }
+        Insert: {
+          action_type?: string
+          affected_items_count?: number
+          change_scope?: string
+          changed_by?: string | null
+          changed_fields?: Json
+          created_at?: string
+          edit_type?: string
+          id?: string
+          item_id?: string | null
+          master_rate_updated?: boolean
+          new_values?: Json
+          old_values?: Json
+          project_id?: string | null
+          rate_library_id?: string | null
+          reason?: string | null
+        }
+        Update: {
+          action_type?: string
+          affected_items_count?: number
+          change_scope?: string
+          changed_by?: string | null
+          changed_fields?: Json
+          created_at?: string
+          edit_type?: string
+          id?: string
+          item_id?: string | null
+          master_rate_updated?: boolean
+          new_values?: Json
+          old_values?: Json
+          project_id?: string | null
+          rate_library_id?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_audit_log_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "boq_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pricing_audit_log_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pricing_audit_log_rate_library_id_fkey"
+            columns: ["rate_library_id"]
+            isOneToOne: false
+            referencedRelation: "rate_library"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
