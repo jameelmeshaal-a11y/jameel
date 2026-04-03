@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { X, CheckCircle, MapPin, BookOpen, Cpu, Pencil, RotateCcw, Shield, AlertTriangle, Lock } from "lucide-react";
+import { X, CheckCircle, MapPin, BookOpen, Cpu, Pencil, RotateCcw, Shield, AlertTriangle, Lock, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -104,7 +104,51 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
     { key: "profit", label: "Profit", color: "hsl(var(--success))" },
   ];
 
-  const handleSave = () => {
+  // Quick save — just this item, no propagation modal
+  const handleQuickSave = async () => {
+    if (!hasChanges) return;
+    setSaving(true);
+    try {
+      const unitRate = getUnitRate(values);
+      const totalPrice = +(unitRate * item.quantity).toFixed(2);
+
+      const overridesObj: Record<string, boolean> = {};
+      manualFields.forEach(f => { overridesObj[f] = true; });
+
+      const { error } = await supabase
+        .from("boq_items")
+        .update({
+          materials: values.materials,
+          labor: values.labor,
+          equipment: values.equipment,
+          logistics: values.logistics,
+          risk: values.risk,
+          profit: values.profit,
+          unit_rate: unitRate,
+          total_price: totalPrice,
+          manual_overrides: overridesObj,
+          override_at: new Date().toISOString(),
+        })
+        .eq("id", item.id);
+
+      if (error) {
+        console.error("[QuickSave] Error:", error);
+        toast.error("فشل حفظ التعديل: " + error.message);
+      } else {
+        toast.success(`تم تعديل البند — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+        setEditing(false);
+        onUpdated?.();
+        onClose();
+      }
+    } catch (err: any) {
+      console.error("[QuickSave] Exception:", err);
+      toast.error("خطأ: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveWithScope = () => {
     if (!hasChanges) return;
     setShowPropagation(true);
   };
@@ -340,18 +384,25 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
             )}
 
             {/* Actions */}
-            <div className="flex gap-2 pt-2">
+            <div className="flex flex-col gap-2 pt-2">
               {editing ? (
                 <>
-                  <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
-                    <CheckCircle className="w-4 h-4" /> {saving ? "Saving..." : "Save & Choose Scope"}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleResetAuto} className="gap-1">
-                    <RotateCcw className="w-3 h-3" /> Reset
-                  </Button>
-                  <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
-                    Cancel
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button className="flex-1 gap-2" onClick={handleQuickSave} disabled={saving || !hasChanges}>
+                      <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ التعديل"}
+                    </Button>
+                    <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
+                      إلغاء
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" size="sm" className="flex-1 gap-1 text-xs" onClick={handleSaveWithScope} disabled={saving || !hasChanges}>
+                      <Globe className="w-3 h-3" /> حفظ مع نشر التعديل
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={handleResetAuto} className="gap-1 text-xs">
+                      <RotateCcw className="w-3 h-3" /> إعادة تعيين
+                    </Button>
+                  </div>
                 </>
               ) : (
                 <>
