@@ -42,7 +42,7 @@ export async function runPricingEngine(
   };
 
   let totalValue = 0;
-  const pricedItems: { unitRate: number; category: string; description: string }[] = [];
+  const pricedItems: { unitRate: number; category: string; description: string; priceFlag?: string }[] = [];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
