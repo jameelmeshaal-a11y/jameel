@@ -16,9 +16,9 @@ interface Props {
     description: string;
     description_en: string;
     unit: string;
-    unit_rate: number | null;
+    unit_rate?: number | null;
     status: string;
-    source: string | null;
+    source?: string | null;
     linked_rate_id?: string | null;
   };
   newValues: BreakdownValues;
