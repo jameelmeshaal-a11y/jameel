@@ -181,7 +181,8 @@ export default function AdminDashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <CardTitle>مكتبة الأسعار — السوق السعودي V1</CardTitle>
+              <CardTitle>مكتبة الأسعار — السوق السعودي V2</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">نظام تسعير متعدد المصادر: مورّد | تاريخي | معتمد</p>
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
