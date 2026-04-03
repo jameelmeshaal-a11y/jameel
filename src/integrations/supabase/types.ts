@@ -14,7 +14,201 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      boq_files: {
+        Row: {
+          created_at: string
+          file_path: string
+          id: string
+          name: string
+          project_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          file_path: string
+          id?: string
+          name: string
+          project_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          file_path?: string
+          id?: string
+          name?: string
+          project_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "boq_files_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      boq_items: {
+        Row: {
+          boq_file_id: string
+          confidence: number | null
+          created_at: string
+          description: string
+          description_en: string
+          equipment: number | null
+          id: string
+          item_no: string
+          labor: number | null
+          location_factor: number | null
+          logistics: number | null
+          materials: number | null
+          notes: string | null
+          profit: number | null
+          quantity: number
+          risk: number | null
+          row_index: number
+          source: string | null
+          status: string
+          total_price: number | null
+          unit: string
+          unit_rate: number | null
+        }
+        Insert: {
+          boq_file_id: string
+          confidence?: number | null
+          created_at?: string
+          description?: string
+          description_en?: string
+          equipment?: number | null
+          id?: string
+          item_no?: string
+          labor?: number | null
+          location_factor?: number | null
+          logistics?: number | null
+          materials?: number | null
+          notes?: string | null
+          profit?: number | null
+          quantity?: number
+          risk?: number | null
+          row_index?: number
+          source?: string | null
+          status?: string
+          total_price?: number | null
+          unit?: string
+          unit_rate?: number | null
+        }
+        Update: {
+          boq_file_id?: string
+          confidence?: number | null
+          created_at?: string
+          description?: string
+          description_en?: string
+          equipment?: number | null
+          id?: string
+          item_no?: string
+          labor?: number | null
+          location_factor?: number | null
+          logistics?: number | null
+          materials?: number | null
+          notes?: string | null
+          profit?: number | null
+          quantity?: number
+          risk?: number | null
+          row_index?: number
+          source?: string | null
+          status?: string
+          total_price?: number | null
+          unit?: string
+          unit_rate?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "boq_items_boq_file_id_fkey"
+            columns: ["boq_file_id"]
+            isOneToOne: false
+            referencedRelation: "boq_files"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_documents: {
+        Row: {
+          created_at: string
+          doc_category: string
+          file_path: string
+          file_type: string
+          id: string
+          name: string
+          project_id: string
+          size: string
+        }
+        Insert: {
+          created_at?: string
+          doc_category?: string
+          file_path: string
+          file_type?: string
+          id?: string
+          name: string
+          project_id: string
+          size?: string
+        }
+        Update: {
+          created_at?: string
+          doc_category?: string
+          file_path?: string
+          file_type?: string
+          id?: string
+          name?: string
+          project_id?: string
+          size?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          boq_count: number
+          cities: string[]
+          created_at: string
+          id: string
+          name: string
+          status: string
+          total_value: number
+          updated_at: string
+        }
+        Insert: {
+          boq_count?: number
+          cities?: string[]
+          created_at?: string
+          id?: string
+          name: string
+          status?: string
+          total_value?: number
+          updated_at?: string
+        }
+        Update: {
+          boq_count?: number
+          cities?: string[]
+          created_at?: string
+          id?: string
+          name?: string
+          status?: string
+          total_value?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
