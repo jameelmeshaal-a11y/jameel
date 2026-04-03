@@ -23,6 +23,7 @@ export default function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const { t, lang, setLang, dir } = useLanguage();
+  const { isAdmin, signOut } = useAuth();
 
   const isRTL = dir === "rtl";
 
@@ -34,6 +35,8 @@ export default function AppSidebar() {
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
     { to: "/qa-center", icon: FlaskConical, label: isRTL ? "مركز QA" : "QA Center" },
     { to: "/architecture", icon: Blocks, label: isRTL ? "هيكل النظام" : "Architecture" },
+    ...(isAdmin ? [{ to: "/admin", icon: Shield, label: isRTL ? "لوحة الأدمن" : "Admin" }] : []),
+  ];
   ];
 
   return (
