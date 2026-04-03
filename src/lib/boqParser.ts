@@ -91,8 +91,10 @@ export async function uploadAndParseBoQ(
   onProgress?: (msg: string) => void
 ): Promise<{ boqFileId: string; rowCount: number }> {
   onProgress?.("Uploading file...");
-  
-  const filePath = `${projectId}/${Date.now()}-${file.name}`;
+
+  const fileExt = file.name.split(".").pop()?.trim() || "xlsx";
+  const safeName = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${fileExt}`;
+  const filePath = `${projectId}/${safeName}`;
   const { error: uploadError } = await supabase.storage
     .from("boq-files")
     .upload(filePath, file);
