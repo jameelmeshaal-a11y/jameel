@@ -3,6 +3,7 @@ import {
   ShieldCheck, Play, CheckCircle2, XCircle, AlertTriangle,
   Clock, ChevronDown, ChevronRight, Loader2, BarChart3,
   FileCheck, Database, MousePointerClick, Cpu, Brain, AlertOctagon,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { runFullValidation, type ValidationReport, type TestResult, type TestStatus } from "@/lib/validationEngine";
+import { downloadValidationPDF } from "@/lib/validationPDF";
 import { cn } from "@/lib/utils";
 
 const categoryIcons: Record<string, any> = {
@@ -95,12 +97,20 @@ export default function ValidationPage() {
                 : "Comprehensive system diagnostic and readiness report"}
             </p>
           </div>
-          <Button onClick={handleRun} disabled={running} className="gap-2">
-            {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {running
-              ? (isAr ? "جاري الفحص..." : "Running...")
-              : (isAr ? "تشغيل الفحص الشامل" : "Run Full Validation")}
-          </Button>
+          <div className="flex gap-2">
+            {report && !running && (
+              <Button variant="outline" onClick={() => downloadValidationPDF(report, lang)} className="gap-2">
+                <Download className="w-4 h-4" />
+                {isAr ? "تنزيل PDF" : "Download PDF"}
+              </Button>
+            )}
+            <Button onClick={handleRun} disabled={running} className="gap-2">
+              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {running
+                ? (isAr ? "جاري الفحص..." : "Running...")
+                : (isAr ? "تشغيل الفحص الشامل" : "Run Full Validation")}
+            </Button>
+          </div>
         </div>
 
         {/* Progress */}
