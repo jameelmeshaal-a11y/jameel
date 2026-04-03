@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  FlaskConical,
+  Blocks,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -27,6 +29,8 @@ export default function AppSidebar() {
     { to: "/rate-library", icon: BookOpen, label: t("rateLibrary") },
     { to: "/settings", icon: Settings, label: t("settings") },
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
+    { to: "/qa-center", icon: FlaskConical, label: isRTL ? "مركز QA" : "QA Center" },
+    { to: "/architecture", icon: Blocks, label: isRTL ? "هيكل النظام" : "Architecture" },
   ];
 
   return (

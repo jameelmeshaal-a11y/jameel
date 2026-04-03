@@ -10,7 +10,10 @@ import ProjectDetail from "./pages/ProjectDetail";
 import RateLibraryPage from "./pages/RateLibraryPage";
 import SettingsPage from "./pages/SettingsPage";
 import ValidationPage from "./pages/ValidationPage";
+import QACenterPage from "./pages/QACenterPage";
+import SystemArchitecturePage from "./pages/SystemArchitecturePage";
 import NotFound from "./pages/NotFound";
+import DebugPanel from "./components/DebugPanel";
 
 const queryClient = new QueryClient();
 
@@ -28,8 +31,11 @@ const App = () => (
             <Route path="/rate-library" element={<RateLibraryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/validation" element={<ValidationPage />} />
+            <Route path="/qa-center" element={<QACenterPage />} />
+            <Route path="/architecture" element={<SystemArchitecturePage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <DebugPanel />
         </BrowserRouter>
       </TooltipProvider>
     </LanguageProvider>
