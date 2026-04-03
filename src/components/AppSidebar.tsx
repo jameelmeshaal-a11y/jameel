@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard,
   FolderOpen,
@@ -11,6 +12,8 @@ import {
   Globe,
   FlaskConical,
   Blocks,
+  Shield,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -20,6 +23,7 @@ export default function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const { t, lang, setLang, dir } = useLanguage();
+  const { isAdmin, signOut } = useAuth();
 
   const isRTL = dir === "rtl";
 
@@ -31,6 +35,7 @@ export default function AppSidebar() {
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
     { to: "/qa-center", icon: FlaskConical, label: isRTL ? "مركز QA" : "QA Center" },
     { to: "/architecture", icon: Blocks, label: isRTL ? "هيكل النظام" : "Architecture" },
+    ...(isAdmin ? [{ to: "/admin", icon: Shield, label: isRTL ? "لوحة الأدمن" : "Admin" }] : []),
   ];
 
   return (
@@ -92,6 +97,18 @@ export default function AppSidebar() {
       >
         <Globe className="w-4 h-4" />
         {!collapsed && <span className="text-xs">{lang === "en" ? "العربية" : "English"}</span>}
+      </button>
+
+      {/* Sign out */}
+      <button
+        onClick={signOut}
+        className="mx-3 mb-2 p-2 rounded-lg transition-colors flex items-center gap-2 justify-center"
+        style={{ color: "hsl(var(--sidebar-fg))" }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(var(--sidebar-hover))")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      >
+        <LogOut className="w-4 h-4" />
+        {!collapsed && <span className="text-xs">{isRTL ? "خروج" : "Logout"}</span>}
       </button>
 
       {/* Collapse toggle */}
