@@ -40,7 +40,7 @@ export type ItemCategory =
   | "landscaping"
   | "asphalt"
   | "curbs"
-  | "general";
+  | "furniture"
 
 interface CategoryRule {
   category: ItemCategory;
