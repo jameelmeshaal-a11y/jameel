@@ -296,9 +296,15 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
                 ))}
               </div>
               {editing && (
-                <div className="flex items-center justify-between mt-3 pt-3 border-t text-sm font-semibold">
-                  <span>Unit Rate</span>
-                  <span className="font-mono">SAR {formatNumber(total)}</span>
+                <div className="space-y-2 mt-3 pt-3 border-t">
+                  <div className="flex items-center justify-between text-sm font-semibold">
+                    <span>Unit Rate</span>
+                    <span className="font-mono">SAR {formatNumber(total)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm font-semibold text-primary">
+                    <span>Total Price (× {formatNumber(item.quantity, 0)})</span>
+                    <span className="font-mono">SAR {formatNumber(total * item.quantity)}</span>
+                  </div>
                 </div>
               )}
             </div>
