@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { runFullValidation, type ValidationReport, type TestResult, type TestStatus } from "@/lib/validationEngine";
+import { downloadValidationPDF } from "@/lib/validationPDF";
 import { cn } from "@/lib/utils";
 
 const categoryIcons: Record<string, any> = {
