@@ -34,6 +34,8 @@ const App = () => (
             <Route path="/validation" element={<ValidationPage />} />
             <Route path="/qa-center" element={<QACenterPage />} />
             <Route path="/architecture" element={<SystemArchitecturePage />} />
+            <Route path="/qa" element={<QAHealthPage />} />
+            <Route path="/health" element={<QAHealthPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <DebugPanel />
