@@ -237,22 +237,28 @@ export async function exportBoQExcel(
     }
 
     // Write pricing data for each item row
-    for (const [rowIdx, item] of itemByRow) {
-      for (let ci = 0; ci < pricingCols.length; ci++) {
-        const val = item[pricingCols[ci].key];
-        if (val == null || val === "") continue;
-        const addr = XLSX.utils.encode_cell({ r: rowIdx, c: startCol + ci });
-        const numVal = typeof val === "number" ? val : parseFloat(val);
-        if (!isNaN(numVal) && pricingCols[ci].key !== "notes" && pricingCols[ci].key !== "category") {
-          ws[addr] = { t: "n", v: numVal };
-        } else {
-          ws[addr] = { t: "s", v: String(val) };
-        }
+    // If items don't have row_index, fall back to sequential mapping after header
+    let writtenCells = 0;
+    
+    if (itemByRow.size > 0) {
+      // Use row_index mapping
+      for (const [rowIdx, item] of itemByRow) {
+        writtenCells += writeItemPricing(ws, item, rowIdx, startCol, pricingCols);
+      }
+    } else {
+      // Fallback: write items sequentially starting after header row
+      for (let i = 0; i < items.length; i++) {
+        const targetRow = headerRow + 1 + i;
+        writtenCells += writeItemPricing(ws, items[i], targetRow, startCol, pricingCols);
       }
     }
 
-    // Update the sheet range to include new columns
+    // Update the sheet range to include new columns and all data rows
+    const lastDataRow = itemByRow.size > 0
+      ? Math.max(range.e.r, ...Array.from(itemByRow.keys()))
+      : Math.max(range.e.r, headerRow + items.length);
     range.e.c = startCol + pricingCols.length - 1;
+    range.e.r = lastDataRow;
     ws["!ref"] = XLSX.utils.encode_range(range);
 
     // Set column widths for the new pricing columns only
@@ -261,11 +267,15 @@ export async function exportBoQExcel(
       ws["!cols"][startCol + ci] = { wch: 14 };
     }
 
-    // Validate: sheet count preserved
+    // Validate: structure preserved AND pricing data written
     if (wb.SheetNames.length < 1) {
-      throw new Error("Workbook formatting preservation failed. Export was stopped to protect the original file structure.");
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
+    }
+    if (writtenCells === 0) {
+      throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
     }
 
+    console.log(`[BoQ Export] In-place edit complete: ${writtenCells} pricing cells written across ${itemByRow.size || items.length} items`);
     XLSX.writeFile(wb, fileName);
   } else {
     // === FALLBACK: generate a new workbook (no original available) ===
@@ -293,6 +303,30 @@ export async function exportBoQExcel(
     XLSX.utils.book_append_sheet(fallbackWb, ws, "Priced BoQ");
     XLSX.writeFile(fallbackWb, fileName);
   }
+}
+
+/** Write pricing values for a single item into the worksheet. Returns count of cells written. */
+function writeItemPricing(
+  ws: XLSX.WorkSheet,
+  item: any,
+  rowIdx: number,
+  startCol: number,
+  pricingCols: { header: string; key: string }[]
+): number {
+  let count = 0;
+  for (let ci = 0; ci < pricingCols.length; ci++) {
+    const val = item[pricingCols[ci].key];
+    if (val == null || val === "") continue;
+    const addr = XLSX.utils.encode_cell({ r: rowIdx, c: startCol + ci });
+    const numVal = typeof val === "number" ? val : parseFloat(val);
+    if (!isNaN(numVal) && pricingCols[ci].key !== "notes" && pricingCols[ci].key !== "category") {
+      ws[addr] = { t: "n", v: numVal };
+    } else {
+      ws[addr] = { t: "s", v: String(val) };
+    }
+    count++;
+  }
+  return count;
 }
 
 /** Find the header row index within an existing worksheet */
