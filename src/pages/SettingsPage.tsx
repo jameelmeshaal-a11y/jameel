@@ -3,11 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import AppLayout from "@/components/AppLayout";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { sampleProjects, sampleRateLibrary } from "@/lib/mockData";
+import { useProjects } from "@/hooks/useSupabase";
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useLanguage();
   const navigate = useNavigate();
+  const { data: projects = [] } = useProjects();
 
   return (
     <AppLayout>
@@ -114,11 +115,11 @@ export default function SettingsPage() {
             <div className="space-y-2 text-sm text-muted-foreground">
               <div className="flex justify-between">
                 <span>{t("rateLibraryItems")}</span>
-                <span className="font-medium text-foreground">{sampleRateLibrary.length}</span>
+                <span className="font-medium text-foreground">0</span>
               </div>
               <div className="flex justify-between">
                 <span>{t("totalProjects")}</span>
-                <span className="font-medium text-foreground">{sampleProjects.length}</span>
+                <span className="font-medium text-foreground">{projects.length}</span>
               </div>
               <div className="flex justify-between">
                 <span>{t("aiEngine")}</span>

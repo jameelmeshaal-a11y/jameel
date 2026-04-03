@@ -1,38 +1,32 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  FolderOpen,
-  TrendingUp,
-  FileText,
-  Clock,
-  Plus,
-  ArrowRight,
-  Building2,
-  MapPin,
-  Briefcase,
-  ShieldCheck,
+  FolderOpen, TrendingUp, FileText, Clock, Plus,
+  ArrowRight, Building2, MapPin, Briefcase, ShieldCheck, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
 import CreateProjectDialog from "@/components/CreateProjectDialog";
-import { sampleProjects, formatCurrency } from "@/lib/mockData";
+import { useProjects } from "@/hooks/useSupabase";
+import { formatCurrency } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [createOpen, setCreateOpen] = useState(false);
+  const { data: projects = [], isLoading } = useProjects();
 
-  const activeProjects = sampleProjects.filter(p => p.status !== 'archived');
-  const hasProjects = sampleProjects.length > 0;
+  const activeProjects = projects.filter(p => p.status !== "archived");
+  const hasProjects = projects.length > 0;
 
   const stats = hasProjects
     ? [
-        { label: t("activeProjects"), value: String(sampleProjects.filter(p => p.status === 'active').length), icon: FolderOpen, change: t("current") },
-        { label: t("totalBoQItems"), value: String(sampleProjects.reduce((s, p) => s + p.boqCount, 0)), icon: FileText, change: t("acrossAllProjects") },
-        { label: t("draftProjects"), value: String(sampleProjects.filter(p => p.status === 'draft').length), icon: Clock, change: t("pending") },
-        { label: t("archived"), value: String(sampleProjects.filter(p => p.status === 'archived').length), icon: TrendingUp, change: t("completed") },
+        { label: t("activeProjects"), value: String(projects.filter(p => p.status === "active").length), icon: FolderOpen, change: t("current") },
+        { label: t("totalBoQItems"), value: String(projects.reduce((s, p) => s + (p.boq_count || 0), 0)), icon: FileText, change: t("acrossAllProjects") },
+        { label: t("draftProjects"), value: String(projects.filter(p => p.status === "draft").length), icon: Clock, change: t("pending") },
+        { label: t("archived"), value: String(projects.filter(p => p.status === "archived").length), icon: TrendingUp, change: t("completed") },
       ]
     : [];
 
@@ -56,7 +50,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {!hasProjects ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          </div>
+        ) : !hasProjects ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
               <Briefcase className="w-8 h-8 text-primary" />
@@ -107,21 +105,21 @@ export default function Dashboard() {
                         <div className="flex items-center gap-3 mt-1">
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <MapPin className="w-3 h-3" />
-                            {project.cities.join(", ")}
+                            {(project.cities || []).join(", ")}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {project.boqCount} {t("boqFiles")}
+                            {project.boq_count || 0} {t("boqFiles")}
                           </span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {project.totalValue > 0 && (
-                        <span className="text-sm font-semibold">{formatCurrency(project.totalValue)}</span>
+                      {(project.total_value || 0) > 0 && (
+                        <span className="text-sm font-semibold">{formatCurrency(project.total_value)}</span>
                       )}
                       <Badge
-                        variant={project.status === 'active' ? 'default' : 'secondary'}
-                        className={project.status === 'active' ? 'bg-success text-success-foreground' : ''}
+                        variant={project.status === "active" ? "default" : "secondary"}
+                        className={project.status === "active" ? "bg-emerald-500 text-white" : ""}
                       >
                         {project.status}
                       </Badge>
