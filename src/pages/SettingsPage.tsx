@@ -119,7 +119,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex justify-between">
                 <span>{t("totalProjects")}</span>
-                <span className="font-medium text-foreground">{sampleProjects.length}</span>
+                <span className="font-medium text-foreground">{projects.length}</span>
               </div>
               <div className="flex justify-between">
                 <span>{t("aiEngine")}</span>
