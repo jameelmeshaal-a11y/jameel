@@ -8,6 +8,7 @@ import { useProjects } from "@/hooks/useSupabase";
 export default function SettingsPage() {
   const { t, lang, setLang } = useLanguage();
   const navigate = useNavigate();
+  const { data: projects = [] } = useProjects();
 
   return (
     <AppLayout>
