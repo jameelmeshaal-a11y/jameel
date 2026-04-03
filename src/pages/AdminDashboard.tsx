@@ -267,6 +267,10 @@ export default function AdminDashboard() {
                             onClick={() => toggleLock.mutate({ id: item.id, locked: !item.is_locked })}>
                             {item.is_locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7"
+                            onClick={() => setSourcesItem(item)} title="مصادر التسعير">
+                            <Layers className="w-3.5 h-3.5" />
+                          </Button>
                           <RateFormDialog
                             item={item}
                             open={editItem?.id === item.id}
