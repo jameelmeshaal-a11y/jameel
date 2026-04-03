@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield, CheckCircle, AlertTriangle } from "lucide-react";
+import { Plus, Lock, Unlock, Search, Users, Database, DollarSign, Shield, CheckCircle, AlertTriangle, Layers } from "lucide-react";
+import RateSourcesPanel from "@/components/RateSourcesPanel";
 
 const CATEGORIES = [
   "Earthworks", "Concrete", "Finishing", "Waterproofing",
