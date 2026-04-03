@@ -19,6 +19,8 @@ export default function AppSidebar() {
   const location = useLocation();
   const { t, lang, setLang, dir } = useLanguage();
 
+  const isRTL = dir === "rtl";
+
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: t("dashboard") },
     { to: "/projects", icon: FolderOpen, label: t("projects") },
@@ -26,8 +28,6 @@ export default function AppSidebar() {
     { to: "/settings", icon: Settings, label: t("settings") },
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
   ];
-
-  const isRTL = dir === "rtl";
 
   return (
     <aside
