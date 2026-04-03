@@ -384,18 +384,25 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
             )}
 
             {/* Actions */}
-            <div className="flex gap-2 pt-2">
+            <div className="flex flex-col gap-2 pt-2">
               {editing ? (
                 <>
-                  <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
-                    <CheckCircle className="w-4 h-4" /> {saving ? "Saving..." : "Save & Choose Scope"}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleResetAuto} className="gap-1">
-                    <RotateCcw className="w-3 h-3" /> Reset
-                  </Button>
-                  <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
-                    Cancel
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button className="flex-1 gap-2" onClick={handleQuickSave} disabled={saving || !hasChanges}>
+                      <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ التعديل"}
+                    </Button>
+                    <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
+                      إلغاء
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" size="sm" className="flex-1 gap-1 text-xs" onClick={handleSaveWithScope} disabled={saving || !hasChanges}>
+                      <Globe className="w-3 h-3" /> حفظ مع نشر التعديل
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={handleResetAuto} className="gap-1 text-xs">
+                      <RotateCcw className="w-3 h-3" /> إعادة تعيين
+                    </Button>
+                  </div>
                 </>
               ) : (
                 <>
