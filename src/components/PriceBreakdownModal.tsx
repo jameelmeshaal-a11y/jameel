@@ -70,11 +70,18 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
   const detected = detectCategory(item.description, item.description_en);
 
   const handleFieldChange = useCallback((field: BreakdownField, newValue: number) => {
+    if (newValue < 0) return; // prevent negative values
     setManualFields(prev => new Set([...prev, field]));
 
     if (autoRebalance) {
       const recalculated = recalculateBreakdown(values, field, newValue, detected.category, false);
+      console.log(`[SmartRecalc] Field: ${field}, New: ${newValue}, Category: ${detected.category}`, {
+        previous: { ...values },
+        recalculated,
+        unitRate: getUnitRate(recalculated),
+      });
       setValues(recalculated);
+      toast.info("Cost breakdown recalculated based on new " + field.charAt(0).toUpperCase() + field.slice(1) + " value", { duration: 2000 });
     } else {
       setValues(prev => ({ ...prev, [field]: newValue }));
     }
@@ -289,9 +296,15 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
                 ))}
               </div>
               {editing && (
-                <div className="flex items-center justify-between mt-3 pt-3 border-t text-sm font-semibold">
-                  <span>Unit Rate</span>
-                  <span className="font-mono">SAR {formatNumber(total)}</span>
+                <div className="space-y-2 mt-3 pt-3 border-t">
+                  <div className="flex items-center justify-between text-sm font-semibold">
+                    <span>Unit Rate</span>
+                    <span className="font-mono">SAR {formatNumber(total)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm font-semibold text-primary">
+                    <span>Total Price (× {formatNumber(item.quantity, 0)})</span>
+                    <span className="font-mono">SAR {formatNumber(total * item.quantity)}</span>
+                  </div>
                 </div>
               )}
             </div>

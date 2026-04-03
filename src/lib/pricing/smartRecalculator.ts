@@ -1,7 +1,8 @@
 /**
  * Smart recalculation engine for price breakdown adjustments.
- * When a user edits one cost component, this engine rebalances others
- * using category-specific logic from cost models.
+ * When a user edits one cost component (e.g. Materials), this engine
+ * recalculates all other components using category-specific ratios
+ * from cost models. Materials DRIVES the cost — total is recalculated, not fixed.
  */
 
 import type { ItemCategory } from "./categoryDetector";
@@ -23,10 +24,14 @@ const OVERHEAD_FIELDS: BreakdownField[] = ["risk", "profit"];
 
 /**
  * Recalculates breakdown when a single field is edited.
- * - If a cost field (materials/labor/equipment/logistics) is edited:
- *   redistributes remaining cost proportionally among other cost fields
- * - If risk/profit is edited: only updates totals
- * - rebalanceAll: redistributes ALL fields proportionally to match new total
+ *
+ * CORE LOGIC — Materials as cost driver:
+ * When a cost field is edited, the OTHER cost fields are recalculated
+ * using category-specific ratios relative to the edited field's new value.
+ * Risk and Profit are then applied as percentages of the new cost subtotal.
+ * Total Price is NEVER held fixed — it is always recalculated.
+ *
+ * rebalanceAll: scales ALL fields proportionally (used for full rebalance).
  */
 export function recalculateBreakdown(
   original: BreakdownValues,
@@ -39,65 +44,90 @@ export function recalculateBreakdown(
   const result = { ...original };
   result[editedField] = newValue;
 
-  const originalTotal = sumFields(original, COST_FIELDS);
-  const originalOverhead = original.risk + original.profit;
-  const originalGrand = originalTotal + originalOverhead;
-
   if (rebalanceAll) {
-    // Full rebalance: treat the edited field's new value as anchor,
-    // scale everything else proportionally
+    // Full rebalance: scale everything proportionally
+    const originalGrand = sumFields(original, [...COST_FIELDS, ...OVERHEAD_FIELDS]);
     if (originalGrand === 0) return result;
     const ratio = newValue / (original[editedField] || 1);
     for (const f of [...COST_FIELDS, ...OVERHEAD_FIELDS]) {
       if (f !== editedField) {
-        result[f] = +(original[f] * ratio).toFixed(2);
+        result[f] = +Math.max(0, original[f] * ratio).toFixed(2);
       }
     }
     return result;
   }
 
   if (OVERHEAD_FIELDS.includes(editedField)) {
-    // Only overhead changed — keep cost fields, just update totals
+    // Only overhead changed — keep cost fields, just recalculate total
     return result;
   }
 
-  // Cost field changed — redistribute remaining cost among other cost fields
-  const delta = newValue - (original[editedField] || 0);
-  const otherCostFields = COST_FIELDS.filter(f => f !== editedField);
-  const otherTotal = sumFields(original, otherCostFields);
+  // === COST FIELD CHANGED — Use category ratios to derive other components ===
+  const breakdown = model.breakdown;
 
-  if (otherTotal === 0) {
-    // Can't redistribute if others are zero — use model ratios
-    const breakdown = model.breakdown;
-    const ratios: Record<string, number> = {};
-    let ratioSum = 0;
-    for (const f of otherCostFields) {
-      const mid = (breakdown[f as keyof typeof breakdown][0] + breakdown[f as keyof typeof breakdown][1]) / 2;
-      ratios[f] = mid;
-      ratioSum += mid;
-    }
-    const remaining = Math.max(0, originalTotal - newValue);
-    for (const f of otherCostFields) {
-      result[f] = +((ratios[f] / ratioSum) * remaining).toFixed(2);
-    }
-  } else {
-    // Proportionally absorb the delta from other cost fields
-    for (const f of otherCostFields) {
-      const share = original[f] / otherTotal;
-      result[f] = +Math.max(0, original[f] - delta * share).toFixed(2);
+  // Get midpoint ratios for all cost fields from the category model
+  const midRatios: Record<string, number> = {};
+  for (const f of COST_FIELDS) {
+    const range = breakdown[f as keyof typeof breakdown];
+    midRatios[f] = (range[0] + range[1]) / 2;
+  }
+
+  // The edited field's ratio tells us what fraction of cost it represents
+  const editedRatio = midRatios[editedField];
+
+  if (editedRatio > 0) {
+    // Derive the implied total cost from the edited field
+    // e.g., if Materials = 500 and materials ratio = 0.50, implied cost = 1000
+    const impliedCostTotal = newValue / editedRatio;
+
+    // Calculate other cost fields based on their category ratios
+    for (const f of COST_FIELDS) {
+      if (f !== editedField) {
+        result[f] = +Math.max(0, impliedCostTotal * midRatios[f]).toFixed(2);
+      }
     }
   }
 
-  // Recalculate risk and profit based on new cost subtotal
+  // Recalculate Risk and Profit based on new cost subtotal
   const newCostTotal = sumFields(result, COST_FIELDS);
-  const riskRate = originalGrand > 0 ? original.risk / originalGrand : 0.03;
-  const profitRate = originalGrand > 0 ? original.profit / originalGrand : 0.05;
+
+  // Use model's default risk/profit percentages (typically 3% and 5%)
+  const riskPct = model.breakdown.materials ? 0.03 : 0.03; // default
+  const profitPct = 0.05; // default
+
+  // Try to preserve original risk/profit ratios if they existed
+  const origCost = sumFields(original, COST_FIELDS);
+  const origGrand = origCost + original.risk + original.profit;
+
+  let effectiveRiskPct = riskPct;
+  let effectiveProfitPct = profitPct;
+
+  if (origGrand > 0 && origCost > 0) {
+    effectiveRiskPct = original.risk / origGrand;
+    effectiveProfitPct = original.profit / origGrand;
+  }
 
   if (editedField !== "risk") {
-    result.risk = +(newCostTotal * riskRate / (1 - riskRate - profitRate)).toFixed(2);
+    // Risk as % of total (cost / (1 - risk% - profit%))
+    const denominator = 1 - effectiveRiskPct - effectiveProfitPct;
+    if (denominator > 0) {
+      result.risk = +(newCostTotal * effectiveRiskPct / denominator).toFixed(2);
+    } else {
+      result.risk = +(newCostTotal * riskPct).toFixed(2);
+    }
   }
   if (editedField !== "profit") {
-    result.profit = +(newCostTotal * profitRate / (1 - riskRate - profitRate)).toFixed(2);
+    const denominator = 1 - effectiveRiskPct - effectiveProfitPct;
+    if (denominator > 0) {
+      result.profit = +(newCostTotal * effectiveProfitPct / denominator).toFixed(2);
+    } else {
+      result.profit = +(newCostTotal * profitPct).toFixed(2);
+    }
+  }
+
+  // Validation: ensure no field is negative
+  for (const f of [...COST_FIELDS, ...OVERHEAD_FIELDS]) {
+    if (result[f] < 0) result[f] = 0;
   }
 
   return result;
