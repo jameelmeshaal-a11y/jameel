@@ -104,7 +104,51 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
     { key: "profit", label: "Profit", color: "hsl(var(--success))" },
   ];
 
-  const handleSave = () => {
+  // Quick save — just this item, no propagation modal
+  const handleQuickSave = async () => {
+    if (!hasChanges) return;
+    setSaving(true);
+    try {
+      const unitRate = getUnitRate(values);
+      const totalPrice = +(unitRate * item.quantity).toFixed(2);
+
+      const overridesObj: Record<string, boolean> = {};
+      manualFields.forEach(f => { overridesObj[f] = true; });
+
+      const { error } = await supabase
+        .from("boq_items")
+        .update({
+          materials: values.materials,
+          labor: values.labor,
+          equipment: values.equipment,
+          logistics: values.logistics,
+          risk: values.risk,
+          profit: values.profit,
+          unit_rate: unitRate,
+          total_price: totalPrice,
+          manual_overrides: overridesObj,
+          override_at: new Date().toISOString(),
+        })
+        .eq("id", item.id);
+
+      if (error) {
+        console.error("[QuickSave] Error:", error);
+        toast.error("فشل حفظ التعديل: " + error.message);
+      } else {
+        toast.success(`تم تعديل البند — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+        setEditing(false);
+        onUpdated?.();
+        onClose();
+      }
+    } catch (err: any) {
+      console.error("[QuickSave] Exception:", err);
+      toast.error("خطأ: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveWithScope = () => {
     if (!hasChanges) return;
     setShowPropagation(true);
   };
