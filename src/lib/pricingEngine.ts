@@ -69,8 +69,14 @@ export interface PricingResult {
 function findRateLibraryMatch(
   description: string,
   category: string,
-  rateLibrary: RateLibraryItem[]
+  rateLibrary: RateLibraryItem[],
+  linkedRateId?: string | null,
 ): RateLibraryItem | null {
+  if (linkedRateId) {
+    const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
+    if (linked) return linked;
+  }
+
   const descLower = description.toLowerCase();
   const descAr = description;
 
@@ -180,7 +186,7 @@ export async function runPricingEngine(
     const item = items[i];
     const detection = detectCategory(item.description, item.description_en);
 
-    const libraryMatch = findRateLibraryMatch(item.description, detection.category, rateLibrary);
+    const libraryMatch = findRateLibraryMatch(item.description, detection.category, rateLibrary, item.linked_rate_id);
     let cost: PricedResult;
 
     if (libraryMatch) {
@@ -194,6 +200,7 @@ export async function runPricingEngine(
       const effectiveLibraryItem = { ...libraryMatch, target_rate: sourceResolution.resolvedRate };
       const libResult = priceFromLibrary(effectiveLibraryItem, item.quantity, locFactor);
       
+      const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
       const sourceLabel = sourceResolution.method === "approved" 
         ? `✅ Approved (${sourceResolution.approvedRate} SAR)`
         : sourceResolution.method === "weighted"
@@ -207,7 +214,7 @@ export async function runPricingEngine(
         explanation: [
           `📚 Library V2: "${libraryMatch.standard_name_ar}"`,
           sourceLabel,
-          `Sources: ${sourceResolution.sourceCount}`,
+          `Sources: ${displayedSourceCount}`,
           sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
           `Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate}`,
           `Region: ${locationMatch.region_ar} (×${locFactor})`,
