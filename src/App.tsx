@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ValidationPage from "./pages/ValidationPage";
 import QACenterPage from "./pages/QACenterPage";
 import SystemArchitecturePage from "./pages/SystemArchitecturePage";
+import QAHealthPage from "./pages/QAHealthPage";
 import NotFound from "./pages/NotFound";
 import DebugPanel from "./components/DebugPanel";
 
