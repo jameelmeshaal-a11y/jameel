@@ -2,6 +2,7 @@ import { FileText, Upload, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { sampleDocuments } from "@/lib/mockData";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const typeColors: Record<string, string> = {
   core: "bg-primary text-primary-foreground",
@@ -10,18 +11,24 @@ const typeColors: Record<string, string> = {
 };
 
 export default function DocumentsTab() {
+  const { t } = useLanguage();
+
+  const typeLabels: Record<string, string> = {
+    core: t("coreDocuments"),
+    technical: t("technicalDocuments"),
+    other: t("otherDocuments"),
+  };
+
   if (sampleDocuments.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
           <FolderOpen className="w-7 h-7 text-primary" />
         </div>
-        <h3 className="text-lg font-semibold mb-2">No documents uploaded</h3>
-        <p className="text-muted-foreground max-w-sm mb-5">
-          Upload tender documents, scope of work, contracts, and technical specs to improve pricing accuracy.
-        </p>
+        <h3 className="text-lg font-semibold mb-2">{t("noDocuments")}</h3>
+        <p className="text-muted-foreground max-w-sm mb-5">{t("noDocumentsDesc")}</p>
         <Button variant="outline" className="gap-2">
-          <Upload className="w-4 h-4" /> Upload Document
+          <Upload className="w-4 h-4" /> {t("uploadDocument")}
         </Button>
       </div>
     );
@@ -36,9 +43,9 @@ export default function DocumentsTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h3 className="font-semibold">Project Documents</h3>
+        <h3 className="font-semibold">{t("projectDocuments")}</h3>
         <Button variant="outline" className="gap-2">
-          <Upload className="w-4 h-4" /> Upload Document
+          <Upload className="w-4 h-4" /> {t("uploadDocument")}
         </Button>
       </div>
 
@@ -47,7 +54,7 @@ export default function DocumentsTab() {
           <div key={type} className="mb-6">
             <div className="flex items-center gap-2 mb-3">
               <FolderOpen className="w-4 h-4 text-muted-foreground" />
-              <h4 className="text-sm font-semibold capitalize">{type} Documents</h4>
+              <h4 className="text-sm font-semibold">{typeLabels[type]}</h4>
               <Badge variant="secondary" className="text-xs">{docs.length}</Badge>
             </div>
             <div className="space-y-2">
@@ -58,7 +65,7 @@ export default function DocumentsTab() {
                       <FileText className="w-4 h-4 text-muted-foreground" />
                     </div>
                     <div>
-                      <div className="text-sm font-medium" dir="rtl">{doc.name}</div>
+                      <div className="text-sm font-medium" dir="auto">{doc.name}</div>
                       <div className="text-xs text-muted-foreground">{doc.fileType} • {doc.size} • {doc.uploadedAt}</div>
                     </div>
                   </div>

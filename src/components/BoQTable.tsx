@@ -5,10 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { sampleBoQItems, formatNumber, formatCurrency } from "@/lib/mockData";
 import type { BoQItem } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 type PricingMode = "review" | "smart" | "auto";
 
 export default function BoQTable() {
+  const { t } = useLanguage();
   const [mode, setMode] = useState<PricingMode>("review");
   const [selectedItem, setSelectedItem] = useState<BoQItem | null>(null);
 
@@ -30,18 +32,22 @@ export default function BoQTable() {
 
   const totalValue = sampleBoQItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
 
+  const modeLabels: Record<PricingMode, string> = {
+    review: t("review"),
+    smart: t("smart"),
+    auto: t("auto"),
+  };
+
   if (sampleBoQItems.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
           <FileText className="w-7 h-7 text-primary" />
         </div>
-        <h3 className="text-lg font-semibold mb-2">No BoQ files uploaded</h3>
-        <p className="text-muted-foreground max-w-sm mb-5">
-          Upload a Bill of Quantities file (Excel) to begin pricing. The system will preserve the original structure and add pricing columns.
-        </p>
+        <h3 className="text-lg font-semibold mb-2">{t("noBoQFiles")}</h3>
+        <p className="text-muted-foreground max-w-sm mb-5">{t("noBoQDesc")}</p>
         <Button variant="outline" className="gap-2">
-          <Upload className="w-4 h-4" /> Upload BoQ File
+          <Upload className="w-4 h-4" /> {t("uploadBoQFile")}
         </Button>
       </div>
     );
@@ -49,59 +55,50 @@ export default function BoQTable() {
 
   return (
     <div>
-      {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-muted-foreground">Pricing Mode:</span>
+          <span className="text-sm font-medium text-muted-foreground">{t("pricingMode")}</span>
           {(["review", "smart", "auto"] as PricingMode[]).map((m) => (
-            <Button
-              key={m}
-              variant={mode === m ? "default" : "outline"}
-              size="sm"
-              onClick={() => setMode(m)}
-              className="capitalize"
-            >
-              {m}
+            <Button key={m} variant={mode === m ? "default" : "outline"} size="sm" onClick={() => setMode(m)}>
+              {modeLabels[m]}
             </Button>
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">Total: {formatCurrency(totalValue)}</span>
+          <span className="text-sm font-semibold">{t("total")} {formatCurrency(totalValue)}</span>
           <Button variant="outline" size="sm" className="gap-1">
-            <Download className="w-3 h-3" /> Export
+            <Download className="w-3 h-3" /> {t("export")}
           </Button>
         </div>
       </div>
 
-      {/* Legend */}
       <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> Original (Protected)</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> Pricing (System)</span>
-        <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> Approved</span>
-        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-warning" /> Review</span>
-        <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> Conflict</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
+        <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t("approved")}</span>
+        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-warning" /> {t("reviewNeeded")}</span>
+        <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> {t("conflict")}</span>
       </div>
 
-      {/* Table */}
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
         <table className="boq-table">
           <thead>
             <tr>
               <th className="w-8">#</th>
-              <th className="protected-col">Item No</th>
-              <th className="protected-col min-w-[280px]">Description (وصف البند)</th>
-              <th className="protected-col w-16">Unit</th>
-              <th className="protected-col w-24 text-right">Qty</th>
-              <th className="pricing-col w-24 text-right">Unit Rate</th>
-              <th className="pricing-col w-28 text-right">Total</th>
-              <th className="pricing-col w-20 text-right">Mat.</th>
-              <th className="pricing-col w-20 text-right">Labor</th>
-              <th className="pricing-col w-20 text-right">Equip.</th>
-              <th className="pricing-col w-20 text-right">Logis.</th>
-              <th className="pricing-col w-16 text-right">Risk</th>
-              <th className="pricing-col w-16 text-right">Profit</th>
-              <th className="w-20 text-center">Conf.</th>
-              <th className="w-12 text-center">Status</th>
+              <th className="protected-col">{t("itemNo")}</th>
+              <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
+              <th className="protected-col w-16">{t("unit")}</th>
+              <th className="protected-col w-24 text-right">{t("qty")}</th>
+              <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
+              <th className="pricing-col w-28 text-right">{t("total")}</th>
+              <th className="pricing-col w-20 text-right">{t("mat")}</th>
+              <th className="pricing-col w-20 text-right">{t("labor")}</th>
+              <th className="pricing-col w-20 text-right">{t("equip")}</th>
+              <th className="pricing-col w-20 text-right">{t("logis")}</th>
+              <th className="pricing-col w-16 text-right">{t("risk")}</th>
+              <th className="pricing-col w-16 text-right">{t("profit")}</th>
+              <th className="w-20 text-center">{t("conf")}</th>
+              <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
             </tr>
           </thead>
@@ -133,12 +130,7 @@ export default function BoQTable() {
                 </td>
                 <td className="text-center">{getStatusIcon(item.status)}</td>
                 <td>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => setSelectedItem(item)}
-                  >
+                  <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
                     <Eye className="w-3.5 h-3.5" />
                   </Button>
                 </td>
@@ -148,12 +140,7 @@ export default function BoQTable() {
         </table>
       </div>
 
-      {selectedItem && (
-        <PriceBreakdownModal
-          item={selectedItem}
-          onClose={() => setSelectedItem(null)}
-        />
-      )}
+      {selectedItem && <PriceBreakdownModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
     </div>
   );
 }

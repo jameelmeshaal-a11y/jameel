@@ -1,16 +1,27 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Building2, MapPin, ArrowRight, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
+import CreateProjectDialog from "@/components/CreateProjectDialog";
 import { sampleProjects, formatCurrency } from "@/lib/mockData";
-import { useState } from "react";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("all");
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const filterLabels: Record<string, string> = {
+    all: t("all"),
+    active: t("active"),
+    draft: t("draft"),
+    archived: t("archived"),
+  };
 
   const filtered = sampleProjects.filter((p) => {
     if (filter !== "all" && p.status !== filter) return false;
@@ -23,12 +34,12 @@ export default function ProjectsPage() {
       <div className="animate-fade-in">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Projects</h1>
-            <p className="page-subtitle">Manage your construction estimation projects</p>
+            <h1 className="page-title">{t("projectsTitle")}</h1>
+            <p className="page-subtitle">{t("projectsSubtitle")}</p>
           </div>
-          <Button className="gap-2">
+          <Button className="gap-2" onClick={() => setCreateOpen(true)}>
             <Plus className="w-4 h-4" />
-            New Project
+            {t("newProject")}
           </Button>
         </div>
 
@@ -37,22 +48,21 @@ export default function ProjectsPage() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search projects..."
+                placeholder={t("searchProjects")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
               />
             </div>
             <div className="flex gap-1">
-              {["all", "active", "draft", "archived"].map((f) => (
+              {Object.entries(filterLabels).map(([key, label]) => (
                 <Button
-                  key={f}
-                  variant={filter === f ? "default" : "ghost"}
+                  key={key}
+                  variant={filter === key ? "default" : "ghost"}
                   size="sm"
-                  onClick={() => setFilter(f)}
-                  className="capitalize"
+                  onClick={() => setFilter(key)}
                 >
-                  {f}
+                  {label}
                 </Button>
               ))}
             </div>
@@ -65,17 +75,15 @@ export default function ProjectsPage() {
               <FolderOpen className="w-8 h-8 text-primary" />
             </div>
             <h2 className="text-xl font-semibold mb-2">
-              {sampleProjects.length === 0 ? "No projects yet" : "No matching projects"}
+              {sampleProjects.length === 0 ? t("noProjectsYet") : t("noMatchingProjects")}
             </h2>
             <p className="text-muted-foreground max-w-md mb-6">
-              {sampleProjects.length === 0
-                ? "Create your first project to start estimating construction costs. Upload your BoQ files and tender documents to begin."
-                : "Try adjusting your search or filter criteria."}
+              {sampleProjects.length === 0 ? t("createFirstProjectDesc") : t("noMatchingProjectsDesc")}
             </p>
             {sampleProjects.length === 0 && (
-              <Button className="gap-2">
+              <Button className="gap-2" onClick={() => setCreateOpen(true)}>
                 <Plus className="w-4 h-4" />
-                Create First Project
+                {t("createFirstProject")}
               </Button>
             )}
           </div>
@@ -98,14 +106,14 @@ export default function ProjectsPage() {
                     {project.status}
                   </Badge>
                 </div>
-                <h3 className="font-semibold mb-2" dir="rtl">{project.name}</h3>
+                <h3 className="font-semibold mb-2" dir="auto">{project.name}</h3>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
                   <MapPin className="w-3 h-3" />
                   {project.cities.join(", ")}
                 </div>
                 <div className="flex items-center justify-between pt-3 border-t">
                   <div className="text-xs text-muted-foreground">
-                    {project.boqCount} BoQ files • Updated {project.lastUpdated}
+                    {project.boqCount} {t("boqFiles")} • {t("updated")} {project.lastUpdated}
                   </div>
                   {project.totalValue > 0 && (
                     <span className="text-sm font-bold">{formatCurrency(project.totalValue)}</span>
@@ -117,6 +125,8 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
+
+      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
     </AppLayout>
   );
 }
