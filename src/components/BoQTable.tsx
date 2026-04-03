@@ -210,7 +210,10 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
             </tr>
           </thead>
           <tbody>
-            {items.map((item, index) => (
+            {items.map((item, index) => {
+              const detected = detectCategory(item.description, item.description_en);
+              const catLabel = detected.category.replace(/_/g, " ");
+              return (
               <tr key={item.id} className="group">
                 <td className="text-muted-foreground">{index + 1}</td>
                 <td className="protected-col font-mono text-xs">{item.item_no}</td>
@@ -220,6 +223,11 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
+                <td className="pricing-col">
+                  <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
+                    {catLabel}
+                  </Badge>
+                </td>
                 <td className="pricing-col text-right font-mono text-xs font-medium">{item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-xs font-semibold">{item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-[11px]">{item.materials ? formatNumber(item.materials) : "—"}</td>
@@ -242,7 +250,8 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
                   </Button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
