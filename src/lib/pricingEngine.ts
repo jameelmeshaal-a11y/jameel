@@ -1,17 +1,35 @@
 /**
- * Main pricing engine - orchestrates category detection, rate calculation,
- * rate library lookup, and quality validation for BoQ items.
+ * Main pricing engine V1.2 — orchestrates category detection, rate library lookup,
+ * AI fallback calculation, location factors, VAT, and project overhead.
  *
  * Priority: Rate Library → AI Calculation → General Fallback
+ *
+ * V1.2 changes:
+ * - Location factors from DB (14 Saudi regions)
+ * - VAT 15% as separate line
+ * - Project overhead at summary level (8-15%)
+ * - Realistic profit/risk per category
  */
 
 import { supabase } from "@/integrations/supabase/client";
 import { detectCategory } from "./pricing/categoryDetector";
 import { calculateItemPrice, type PricingContext, type PricedResult } from "./pricing/rateCalculator";
 import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
+import {
+  fetchLocationFactors,
+  resolveLocationFactor,
+  calculateProjectOverhead,
+  VAT_RATE,
+  type LocationFactor,
+  type ProjectType,
+  type ProjectSummary,
+} from "./pricing/locationEngine";
 
 export { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 export { detectCategory } from "./pricing/categoryDetector";
+export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RateLibraryItem {
   id: string;
@@ -36,9 +54,17 @@ interface RateLibraryItem {
   source_type: string;
 }
 
-/**
- * Search the rate library for a matching item.
- */
+export interface PricingResult {
+  totalValue: number;
+  itemCount: number;
+  validation: ValidationResult;
+  libraryHits: number;
+  locationApplied: LocationFactor;
+  summary: ProjectSummary;
+}
+
+// ─── Rate Library Matching ──────────────────────────────────────────────────
+
 function findRateLibraryMatch(
   description: string,
   category: string,
@@ -47,7 +73,6 @@ function findRateLibraryMatch(
   const descLower = description.toLowerCase();
   const descAr = description;
 
-  // Score each library item
   let bestMatch: RateLibraryItem | null = null;
   let bestScore = 0;
 
@@ -58,13 +83,11 @@ function findRateLibraryMatch(
     );
     score += matchedKw.length * 10;
 
-    // Bonus for matching category
     if (rate.category.toLowerCase().includes(category.replace(/_/g, " ").split(" ")[0])) {
       score += 5;
     }
 
-    // Bonus for name match
-    if (descAr.includes(rate.standard_name_ar.substring(0, 10))) {
+    if (rate.standard_name_ar && descAr.includes(rate.standard_name_ar.substring(0, 10))) {
       score += 15;
     }
 
@@ -77,9 +100,8 @@ function findRateLibraryMatch(
   return bestMatch;
 }
 
-/**
- * Calculate price from rate library item with context adjustments.
- */
+// ─── Library Pricing ────────────────────────────────────────────────────────
+
 function priceFromLibrary(
   libraryItem: RateLibraryItem,
   quantity: number,
@@ -87,18 +109,21 @@ function priceFromLibrary(
 ): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
   let baseRate = libraryItem.target_rate;
 
-  // Economy of scale
-  if (quantity > 1000) baseRate *= 0.88;
-  else if (quantity > 500) baseRate *= 0.92;
-  else if (quantity > 100) baseRate *= 0.95;
+  // Complexity adjustment (V1.2 formula)
+  const complexityFactors: Record<string, number> = { Low: 1.00, Medium: 1.08, High: 1.18 };
+  baseRate *= complexityFactors[libraryItem.complexity] ?? 1.08;
 
-  // Location adjustment
+  // Economy of scale (V1.2 formula)
+  let qtyFactor = 1.00;
+  if (quantity > 500) qtyFactor = 0.94;
+  else if (quantity > 200) qtyFactor = 0.97;
+  else if (quantity < 20) qtyFactor = 1.06;
+  baseRate *= qtyFactor;
+
+  // Location adjustment from DB
   baseRate *= locationFactor;
 
-  // Complexity adjustment
-  if (libraryItem.complexity === "High") baseRate *= 1.08;
-  else if (libraryItem.complexity === "Low") baseRate *= 0.95;
-
+  // Breakdown
   const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
     libraryItem.equipment_pct + libraryItem.logistics_pct;
   const materials = +(baseRate * libraryItem.materials_pct / totalPct).toFixed(2);
@@ -118,17 +143,19 @@ function priceFromLibrary(
   };
 }
 
-/**
- * Run pricing on all items in a BoQ file.
- */
+// ─── Main Engine ────────────────────────────────────────────────────────────
+
 export async function runPricingEngine(
   boqFileId: string,
   cities: string[],
-  onProgress?: (current: number, total: number) => void
-): Promise<{ totalValue: number; itemCount: number; validation: ValidationResult; libraryHits: number }> {
-  const [itemsResult, libraryResult] = await Promise.all([
+  onProgress?: (current: number, total: number) => void,
+  projectType: ProjectType = "government_civil"
+): Promise<PricingResult> {
+  // Fetch items, library, and location factors in parallel
+  const [itemsResult, libraryResult, locationFactors] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
+    fetchLocationFactors(),
   ]);
 
   if (itemsResult.error) throw new Error(`Failed to load items: ${itemsResult.error.message}`);
@@ -137,12 +164,11 @@ export async function runPricingEngine(
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
 
-  const context: PricingContext = { cities, profitMargin: 0.05, riskFactor: 0.03 };
+  // Resolve location from DB table
+  const locationMatch = resolveLocationFactor(cities, locationFactors);
+  const locFactor = locationMatch.location_factor;
 
-  // Location factor
-  const remoteLocations = ["عسير", "تبوك", "أبها", "نجران", "جازان", "aseer", "tabuk", "abha"];
-  const isRemote = cities.some(c => remoteLocations.includes(c.trim().toLowerCase()) || remoteLocations.includes(c.trim()));
-  const locationFactor = isRemote ? 1.12 : 1.0;
+  const context: PricingContext = { cities, profitMargin: 0.05, riskFactor: 0.03 };
 
   let totalValue = 0;
   let libraryHits = 0;
@@ -157,18 +183,34 @@ export async function runPricingEngine(
 
     if (libraryMatch) {
       libraryHits++;
-      const libResult = priceFromLibrary(libraryMatch, item.quantity, locationFactor);
+      const libResult = priceFromLibrary(libraryMatch, item.quantity, locFactor);
       cost = {
         ...libResult,
         category: detection.category,
         priceFlag: "normal" as const,
-        explanation: `📚 Library V1: "${libraryMatch.standard_name_ar}" | Target: ${libraryMatch.target_rate} SAR | Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate} | ${libraryMatch.is_locked ? "🔒" : "🔓"} | Source: ${libraryMatch.source_type}`,
+        explanation: [
+          `📚 Library V1.2: "${libraryMatch.standard_name_ar}"`,
+          `Target: ${libraryMatch.target_rate} SAR`,
+          `Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate}`,
+          `Region: ${locationMatch.region_ar} (×${locFactor})`,
+          `Zone: ${locationMatch.zone_class}`,
+          `Profit: ${libraryMatch.profit_pct}% | Risk: ${libraryItem_risk(libraryMatch)}%`,
+          `${libraryMatch.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `Source: ${libraryMatch.source_type}`,
+        ].join(" | "),
       };
     } else {
       cost = calculateItemPrice(
         item.description, item.description_en, item.unit, item.quantity,
         detection.category, detection.confidence, context, item.row_index,
       );
+      // Apply DB location factor for AI-priced items too
+      if (locFactor !== 1.0) {
+        const adjustedRate = +(cost.unitRate * locFactor / (cost.locationFactor || 1)).toFixed(2);
+        const adjustedTotal = +(adjustedRate * item.quantity).toFixed(2);
+        cost = { ...cost, unitRate: adjustedRate, totalPrice: adjustedTotal, locationFactor: locFactor };
+        cost.explanation += ` | 📍 Region: ${locationMatch.region_ar} (×${locFactor})`;
+      }
     }
 
     const { error: updateError } = await supabase
@@ -194,6 +236,7 @@ export async function runPricingEngine(
   const validation = validatePricingQuality(pricedItems);
   await supabase.from("boq_files").update({ status: "priced" }).eq("id", boqFileId);
 
+  // Update project total
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
   if (boqFile) {
     const { data: allItems } = await supabase
@@ -204,5 +247,20 @@ export async function runPricingEngine(
     await supabase.from("projects").update({ total_value: projectTotal }).eq("id", boqFile.project_id);
   }
 
-  return { totalValue, itemCount: items.length, validation, libraryHits };
+  // Calculate project summary with overhead and VAT
+  const summary = calculateProjectOverhead(totalValue, projectType);
+
+  return {
+    totalValue,
+    itemCount: items.length,
+    validation,
+    libraryHits,
+    locationApplied: locationMatch,
+    summary,
+  };
+}
+
+/** Helper to get risk pct from library item */
+function libraryItem_risk(item: RateLibraryItem): number {
+  return item.risk_pct;
 }
