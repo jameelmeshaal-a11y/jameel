@@ -77,13 +77,14 @@ export default function QACenterPage() {
           break;
         }
         case "parse-boq": {
-          const { parseBoQFile } = await import("@/lib/boqParser");
-          const testData = "item,desc,unit,qty\n1,Test,m2,10";
-          const blob = new Blob([testData], { type: "text/csv" });
-          const file = new File([blob], "test.csv");
-          // Parser expects xlsx, so this may fail gracefully
+          const { parseBoQExcel } = await import("@/lib/boqParser");
           try {
-            const items = await parseBoQFile(file);
+            const XLSX = await import("xlsx");
+            const ws = XLSX.utils.aoa_to_sheet([["رقم البند","الوصف","الوحدة","الكمية"],["1","توريد خرسانة","م3","100"]]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "BoQ");
+            const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+            const items = parseBoQExcel(buf);
             updateTest(testId, { status: "pass", message: `Parsed ${items.length} items`, duration: Math.round(performance.now() - start) });
           } catch {
             updateTest(testId, { status: "pass", message: "Parser module loaded OK", duration: Math.round(performance.now() - start) });
