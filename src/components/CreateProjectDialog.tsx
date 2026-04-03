@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { sampleProjects } from "@/lib/mockData";
-import type { Project } from "@/lib/mockData";
+import { useCreateProject } from "@/hooks/useSupabase";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -19,27 +19,24 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [cities, setCities] = useState("");
+  const createProject = useCreateProject();
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!name.trim()) return;
 
-    const newProject: Project = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      cities: cities.split(",").map(c => c.trim()).filter(Boolean),
-      status: "draft",
-      boqCount: 0,
-      totalValue: 0,
-      lastUpdated: new Date().toISOString().split("T")[0],
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-
-    sampleProjects.push(newProject);
-    toast.success(t("projectCreated"));
-    setName("");
-    setCities("");
-    onOpenChange(false);
-    navigate(`/projects/${newProject.id}`);
+    try {
+      const project = await createProject.mutateAsync({
+        name: name.trim(),
+        cities: cities.split(",").map(c => c.trim()).filter(Boolean),
+      });
+      toast.success(t("projectCreated"));
+      setName("");
+      setCities("");
+      onOpenChange(false);
+      navigate(`/projects/${project.id}`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create project");
+    }
   };
 
   return (
@@ -52,27 +49,16 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
         <div className="space-y-4 pt-2">
           <div className="space-y-2">
             <Label>{t("projectName")}</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("projectNamePlaceholder")}
-              dir="auto"
-            />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("projectNamePlaceholder")} dir="auto" />
           </div>
           <div className="space-y-2">
             <Label>{t("projectCities")}</Label>
-            <Input
-              value={cities}
-              onChange={(e) => setCities(e.target.value)}
-              placeholder={t("projectCitiesPlaceholder")}
-              dir="auto"
-            />
+            <Input value={cities} onChange={(e) => setCities(e.target.value)} placeholder={t("projectCitiesPlaceholder")} dir="auto" />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {t("cancel")}
-            </Button>
-            <Button onClick={handleCreate} disabled={!name.trim()}>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
+            <Button onClick={handleCreate} disabled={!name.trim() || createProject.isPending}>
+              {createProject.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {t("create")}
             </Button>
           </div>
