@@ -299,6 +299,23 @@ export default function AdminDashboard() {
             <p className="text-xs text-muted-foreground mt-2">إجمالي: {filtered.length} بند | الفئات: {uniqueCategories.length}</p>
           </CardContent>
         </Card>
+
+        {/* Sources Dialog */}
+        <Dialog open={!!sourcesItem} onOpenChange={(open) => !open && setSourcesItem(null)}>
+          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>مصادر التسعير</DialogTitle>
+            </DialogHeader>
+            {sourcesItem && (
+              <RateSourcesPanel
+                rateLibraryId={sourcesItem.id}
+                rateNameAr={sourcesItem.standard_name_ar}
+                targetRate={sourcesItem.target_rate}
+                isAdmin={isAdmin}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </AppLayout>
   );
