@@ -1,136 +1,21 @@
-import { supabase } from "@/integrations/supabase/client";
-
-// Location factors for Saudi cities
-const LOCATION_FACTORS: Record<string, number> = {
-  riyadh: 1.0, "الرياض": 1.0,
-  makkah: 1.05, "مكة": 1.05, "مكة المكرمة": 1.05,
-  jeddah: 1.03, "جدة": 1.03,
-  aseer: 1.15, "عسير": 1.15,
-  tabuk: 1.12, "تبوك": 1.12,
-  dammam: 1.02, "الدمام": 1.02,
-  madinah: 1.04, "المدينة": 1.04, "المدينة المنورة": 1.04,
-};
-
-function getLocationFactor(cities: string[]): number {
-  for (const city of cities) {
-    const key = city.trim().toLowerCase();
-    if (LOCATION_FACTORS[key]) return LOCATION_FACTORS[key];
-    // Try Arabic match
-    const arKey = city.trim();
-    if (LOCATION_FACTORS[arKey]) return LOCATION_FACTORS[arKey];
-  }
-  return 1.0; // default to Riyadh
-}
-
-interface PricingConfig {
-  profitMargin: number;     // e.g. 0.05
-  riskFactor: number;       // e.g. 0.03
-  locationFactor: number;
-}
-
 /**
- * Generate realistic cost breakdown for a BoQ item based on its description and unit.
- * This uses heuristic-based estimation logic.
+ * Main pricing engine - orchestrates category detection, rate calculation,
+ * and quality validation for BoQ items.
+ *
+ * This engine behaves like a real cost engineer:
+ * - Detects item type from Arabic/English descriptions
+ * - Applies category-specific cost models with realistic ranges
+ * - Varies rates based on quantity, complexity, and location
+ * - Validates output quality to prevent template-like patterns
  */
-function estimateItemCost(
-  description: string,
-  unit: string,
-  quantity: number,
-  config: PricingConfig
-): {
-  materials: number;
-  labor: number;
-  equipment: number;
-  logistics: number;
-  risk: number;
-  profit: number;
-  unitRate: number;
-  totalPrice: number;
-  confidence: number;
-} {
-  const desc = description.toLowerCase();
 
-  // Base rate estimation by category keywords
-  let baseRate = 100; // default SAR per unit
-  let matRatio = 0.45, labRatio = 0.30, eqRatio = 0.15, logRatio = 0.10;
-  let confidence = 70;
+import { supabase } from "@/integrations/supabase/client";
+import { detectCategory } from "./pricing/categoryDetector";
+import { calculateItemPrice, type PricingContext } from "./pricing/rateCalculator";
+import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 
-  // Concrete works
-  if (desc.includes("خرسان") || desc.includes("concrete") || desc.includes("صب")) {
-    baseRate = unit.includes("م3") || unit.includes("m3") ? 850 : 250;
-    matRatio = 0.50; labRatio = 0.25; eqRatio = 0.15; logRatio = 0.10;
-    confidence = 82;
-  }
-  // Rebar / reinforcement
-  else if (desc.includes("حديد") || desc.includes("تسليح") || desc.includes("rebar") || desc.includes("steel")) {
-    baseRate = unit.includes("طن") || unit.includes("ton") ? 4500 : 15;
-    matRatio = 0.65; labRatio = 0.20; eqRatio = 0.05; logRatio = 0.10;
-    confidence = 85;
-  }
-  // Excavation / earthwork
-  else if (desc.includes("حفر") || desc.includes("excavat") || desc.includes("ردم") || desc.includes("أعمال ترابية")) {
-    baseRate = unit.includes("م3") || unit.includes("m3") ? 35 : 20;
-    matRatio = 0.10; labRatio = 0.35; eqRatio = 0.45; logRatio = 0.10;
-    confidence = 78;
-  }
-  // Formwork
-  else if (desc.includes("شدات") || desc.includes("قوالب") || desc.includes("formwork")) {
-    baseRate = unit.includes("م2") || unit.includes("m2") ? 120 : 80;
-    matRatio = 0.40; labRatio = 0.40; eqRatio = 0.10; logRatio = 0.10;
-    confidence = 75;
-  }
-  // Painting
-  else if (desc.includes("دهان") || desc.includes("طلاء") || desc.includes("paint")) {
-    baseRate = unit.includes("م2") || unit.includes("m2") ? 45 : 35;
-    matRatio = 0.35; labRatio = 0.50; eqRatio = 0.05; logRatio = 0.10;
-    confidence = 80;
-  }
-  // Tiling / flooring
-  else if (desc.includes("بلاط") || desc.includes("أرضيات") || desc.includes("tile") || desc.includes("floor")) {
-    baseRate = unit.includes("م2") || unit.includes("m2") ? 180 : 100;
-    matRatio = 0.55; labRatio = 0.30; eqRatio = 0.05; logRatio = 0.10;
-    confidence = 77;
-  }
-  // Electrical
-  else if (desc.includes("كهرب") || desc.includes("electric") || desc.includes("توصيل")) {
-    baseRate = 200;
-    matRatio = 0.50; labRatio = 0.35; eqRatio = 0.05; logRatio = 0.10;
-    confidence = 72;
-  }
-  // Plumbing
-  else if (desc.includes("سباكة") || desc.includes("مواسير") || desc.includes("plumb") || desc.includes("pipe")) {
-    baseRate = 150;
-    matRatio = 0.45; labRatio = 0.35; eqRatio = 0.10; logRatio = 0.10;
-    confidence = 74;
-  }
-  // Insulation
-  else if (desc.includes("عزل") || desc.includes("insul")) {
-    baseRate = unit.includes("م2") || unit.includes("m2") ? 65 : 50;
-    matRatio = 0.55; labRatio = 0.30; eqRatio = 0.05; logRatio = 0.10;
-    confidence = 76;
-  }
-  // Supply and install (generic)
-  else if (desc.includes("توريد") || desc.includes("تركيب") || desc.includes("supply")) {
-    baseRate = 300;
-    matRatio = 0.50; labRatio = 0.30; eqRatio = 0.10; logRatio = 0.10;
-    confidence = 65;
-  }
-
-  // Apply location factor
-  baseRate *= config.locationFactor;
-
-  const materials = +(baseRate * matRatio).toFixed(2);
-  const labor = +(baseRate * labRatio).toFixed(2);
-  const equipment = +(baseRate * eqRatio).toFixed(2);
-  const logistics = +(baseRate * logRatio).toFixed(2);
-  const risk = +(baseRate * config.riskFactor).toFixed(2);
-  const profit = +(baseRate * config.profitMargin).toFixed(2);
-
-  const unitRate = +(materials + labor + equipment + logistics + risk + profit).toFixed(2);
-  const totalPrice = +(unitRate * quantity).toFixed(2);
-
-  return { materials, labor, equipment, logistics, risk, profit, unitRate, totalPrice, confidence };
-}
+export { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
+export { detectCategory } from "./pricing/categoryDetector";
 
 /**
  * Run pricing on all items in a BoQ file.
@@ -139,7 +24,7 @@ export async function runPricingEngine(
   boqFileId: string,
   cities: string[],
   onProgress?: (current: number, total: number) => void
-): Promise<{ totalValue: number; itemCount: number }> {
+): Promise<{ totalValue: number; itemCount: number; validation: ValidationResult }> {
   // Get all items
   const { data: items, error } = await supabase
     .from("boq_items")
@@ -150,18 +35,32 @@ export async function runPricingEngine(
   if (error) throw new Error(`Failed to load items: ${error.message}`);
   if (!items || items.length === 0) throw new Error("No items found to price.");
 
-  const locationFactor = getLocationFactor(cities);
-  const config: PricingConfig = {
+  const context: PricingContext = {
+    cities,
     profitMargin: 0.05,
     riskFactor: 0.03,
-    locationFactor,
   };
 
   let totalValue = 0;
+  const pricedItems: { unitRate: number; category: string; description: string }[] = [];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const cost = estimateItemCost(item.description, item.unit, item.quantity, config);
+
+    // Detect category from description
+    const detection = detectCategory(item.description, item.description_en);
+
+    // Calculate price using category-specific model
+    const cost = calculateItemPrice(
+      item.description,
+      item.description_en,
+      item.unit,
+      item.quantity,
+      detection.category,
+      detection.confidence,
+      context,
+      item.row_index,
+    );
 
     const { error: updateError } = await supabase
       .from("boq_items")
@@ -175,17 +74,22 @@ export async function runPricingEngine(
         unit_rate: cost.unitRate,
         total_price: cost.totalPrice,
         confidence: cost.confidence,
-        location_factor: locationFactor,
+        location_factor: cost.locationFactor,
         source: "ai",
         status: cost.confidence >= 80 ? "approved" : "review",
+        notes: cost.explanation,
       })
       .eq("id", item.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
 
     totalValue += cost.totalPrice;
+    pricedItems.push({ unitRate: cost.unitRate, category: cost.category, description: item.description });
     onProgress?.(i + 1, items.length);
   }
+
+  // Validate pricing quality
+  const validation = validatePricingQuality(pricedItems);
 
   // Update BoQ file status
   await supabase.from("boq_files").update({ status: "priced" }).eq("id", boqFileId);
@@ -198,7 +102,6 @@ export async function runPricingEngine(
     .single();
 
   if (boqFile) {
-    // Sum all priced items across all BoQ files for this project
     const { data: allItems } = await supabase
       .from("boq_items")
       .select("total_price, boq_file_id, boq_files!inner(project_id)")
@@ -208,5 +111,5 @@ export async function runPricingEngine(
     await supabase.from("projects").update({ total_value: projectTotal }).eq("id", boqFile.project_id);
   }
 
-  return { totalValue, itemCount: items.length };
+  return { totalValue, itemCount: items.length, validation };
 }
