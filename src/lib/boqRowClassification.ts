@@ -6,6 +6,7 @@ export interface BoQRowLike {
   description_en?: string | null;
   unit?: string | null;
   quantity?: number | string | null;
+  row_index?: number | null;
   unit_rate?: number | null;
   total_price?: number | null;
   materials?: number | null;
@@ -37,10 +38,18 @@ export interface BoQExportSummary {
   descriptiveRowsSkippedCount: number;
   invalidRowsCount: number;
   descriptiveRowsWithPricingCount: number;
+  blockingRows: BoQExportBlockingRow[];
   exportStatus: "ready" | "warning" | "blocked";
   canExport: boolean;
   warningMessage: string | null;
   errorMessage: string | null;
+}
+
+export interface BoQExportBlockingRow {
+  rowNumber: number | null;
+  itemCode: string;
+  description: string;
+  reason: string;
 }
 
 const PRICING_FIELDS: Array<keyof BoQRowLike> = [
@@ -61,6 +70,10 @@ function hasText(value: unknown): boolean {
   return String(value ?? "").trim().length > 0;
 }
 
+function hasValue(value: unknown): boolean {
+  return value != null && value !== "";
+}
+
 function parseQuantity(value: BoQRowLike["quantity"]): number | null {
   if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
@@ -70,8 +83,12 @@ function parseQuantity(value: BoQRowLike["quantity"]): number | null {
 export function hasStoredPricingData(row: BoQRowLike): boolean {
   return PRICING_FIELDS.some((field) => {
     const value = row[field];
-    return value != null && value !== "";
+    return hasValue(value);
   });
+}
+
+export function hasCompletePricingData(row: BoQRowLike): boolean {
+  return hasValue(row.unit_rate) && hasValue(row.total_price);
 }
 
 export function classifyBoQRow(row: BoQRowLike): BoQRowClassification {
@@ -113,7 +130,30 @@ export function getRowClassificationNote(row: BoQRowLike): string | null {
 }
 
 export function getPricedAnalysisRows<T extends BoQRowLike>(rows: T[]): T[] {
-  return rows.filter((row) => classifyBoQRow(row).type === "priced" && hasStoredPricingData(row));
+  return rows.filter((row) => classifyBoQRow(row).type === "priced" && hasCompletePricingData(row));
+}
+
+function getBlockingReason(row: BoQRowLike, classification: BoQRowClassification): string | null {
+  if (classification.type === "invalid") {
+    if (classification.reason === "missing_unit") return "missing unit";
+    if (classification.reason === "missing_item_code") return "missing item code";
+    return "invalid row structure";
+  }
+
+  if (classification.type === "priced" && !hasCompletePricingData(row)) {
+    return "price mapping failed";
+  }
+
+  return null;
+}
+
+function toBlockingRow(row: BoQRowLike, reason: string): BoQExportBlockingRow {
+  return {
+    rowNumber: typeof row.row_index === "number" ? row.row_index + 1 : null,
+    itemCode: String(row.item_no ?? "").trim(),
+    description: String(row.description ?? row.description_en ?? "").trim(),
+    reason,
+  };
 }
 
 export function buildBoQExportSummary(rows: BoQRowLike[]): BoQExportSummary {
@@ -121,18 +161,33 @@ export function buildBoQExportSummary(rows: BoQRowLike[]): BoQExportSummary {
   let descriptiveRowsSkippedCount = 0;
   let invalidRowsCount = 0;
   let descriptiveRowsWithPricingCount = 0;
+  const blockingRows: BoQExportBlockingRow[] = [];
 
   for (const row of rows) {
     const classification = classifyBoQRow(row);
-    if (classification.type === "priced") pricedItemsCount++;
+
+    if (classification.type === "priced") {
+      const blockingReason = getBlockingReason(row, classification);
+      if (blockingReason) {
+        invalidRowsCount++;
+        blockingRows.push(toBlockingRow(row, blockingReason));
+      } else {
+        pricedItemsCount++;
+      }
+    }
+
     if (classification.type === "descriptive") {
       descriptiveRowsSkippedCount++;
       if (hasStoredPricingData(row)) descriptiveRowsWithPricingCount++;
     }
-    if (classification.type === "invalid") invalidRowsCount++;
+
+    if (classification.type === "invalid") {
+      invalidRowsCount++;
+      blockingRows.push(toBlockingRow(row, getBlockingReason(row, classification) || "invalid row structure"));
+    }
   }
 
-  const canExport = invalidRowsCount === 0 && descriptiveRowsWithPricingCount === 0;
+  const canExport = invalidRowsCount === 0 && pricedItemsCount > 0;
   const exportStatus = !canExport
     ? "blocked"
     : descriptiveRowsSkippedCount > 0
@@ -144,10 +199,11 @@ export function buildBoQExportSummary(rows: BoQRowLike[]): BoQExportSummary {
     descriptiveRowsSkippedCount,
     invalidRowsCount,
     descriptiveRowsWithPricingCount,
+    blockingRows,
     exportStatus,
     canExport,
     warningMessage:
-      canExport && descriptiveRowsSkippedCount > 0
+      descriptiveRowsSkippedCount > 0
         ? "Descriptive rows with zero/empty quantity were excluded from pricing."
         : null,
     errorMessage: canExport
