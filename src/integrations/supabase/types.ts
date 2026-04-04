@@ -23,6 +23,7 @@ export type Database = {
           project_id: string
           status: string
           updated_at: string
+          user_id: string
         }
         Insert: {
           created_at?: string
@@ -32,6 +33,7 @@ export type Database = {
           project_id: string
           status?: string
           updated_at?: string
+          user_id: string
         }
         Update: {
           created_at?: string
@@ -41,6 +43,7 @@ export type Database = {
           project_id?: string
           status?: string
           updated_at?: string
+          user_id?: string
         }
         Relationships: [
           {
@@ -318,6 +321,7 @@ export type Database = {
           name: string
           project_id: string
           size: string
+          user_id: string
         }
         Insert: {
           created_at?: string
@@ -328,6 +332,7 @@ export type Database = {
           name: string
           project_id: string
           size?: string
+          user_id: string
         }
         Update: {
           created_at?: string
@@ -338,6 +343,7 @@ export type Database = {
           name?: string
           project_id?: string
           size?: string
+          user_id?: string
         }
         Relationships: [
           {
@@ -359,6 +365,7 @@ export type Database = {
           status: string
           total_value: number
           updated_at: string
+          user_id: string
         }
         Insert: {
           boq_count?: number
@@ -369,6 +376,7 @@ export type Database = {
           status?: string
           total_value?: number
           updated_at?: string
+          user_id: string
         }
         Update: {
           boq_count?: number
@@ -379,6 +387,7 @@ export type Database = {
           status?: string
           total_value?: number
           updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }

@@ -98,6 +98,9 @@ export async function uploadAndParseBoQ(
   file: File,
   onProgress?: (msg: string) => void
 ): Promise<{ boqFileId: string; rowCount: number }> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
   onProgress?.("Uploading file...");
 
   const fileExt = file.name.split(".").pop()?.trim() || "xlsx";
@@ -116,6 +119,7 @@ export async function uploadAndParseBoQ(
       name: file.name,
       file_path: filePath,
       status: "uploaded",
+      user_id: user.id,
     })
     .select()
     .single();

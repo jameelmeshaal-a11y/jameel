@@ -46,9 +46,11 @@ export default function QACenterPage() {
     try {
       switch (testId) {
         case "create-project": {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) throw new Error("Not authenticated");
           const { data, error } = await supabase
             .from("projects")
-            .insert({ name: `QA Test ${Date.now()}`, cities: ["Riyadh"], status: "draft" })
+            .insert({ name: `QA Test ${Date.now()}`, cities: ["Riyadh"], status: "draft", user_id: user.id })
             .select()
             .single();
           if (error) throw error;

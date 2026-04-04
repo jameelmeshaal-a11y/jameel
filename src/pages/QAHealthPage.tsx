@@ -78,9 +78,11 @@ export default function QAHealthPage() {
           break;
         }
         case "create-project": {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) throw new Error("Not authenticated");
           const { data, error } = await supabase
             .from("projects")
-            .insert({ name: `QA-Health-${Date.now()}`, cities: ["Riyadh"], status: "draft" })
+            .insert({ name: `QA-Health-${Date.now()}`, cities: ["Riyadh"], status: "draft", user_id: user.id })
             .select()
             .single();
           if (error) throw error;

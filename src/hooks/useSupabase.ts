@@ -38,9 +38,11 @@ export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { name: string; cities: string[] }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
       const { data, error } = await supabase
         .from("projects")
-        .insert({ name: input.name, cities: input.cities, status: "draft" })
+        .insert({ name: input.name, cities: input.cities, status: "draft", user_id: user.id })
         .select()
         .single();
       if (error) throw error;
@@ -90,6 +92,9 @@ export function useUploadDocument() {
       file: File;
       category: "core" | "technical" | "other";
     }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
       const fileExt = input.file.name.split(".").pop() || "bin";
       const safeName = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${fileExt}`;
       const filePath = `${input.projectId}/${safeName}`;
@@ -112,6 +117,7 @@ export function useUploadDocument() {
           file_type: ext,
           size: sizeStr,
           doc_category: input.category,
+          user_id: user.id,
         });
       if (dbError) throw dbError;
     },
