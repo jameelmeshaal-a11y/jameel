@@ -38,9 +38,11 @@ export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { name: string; cities: string[] }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
       const { data, error } = await supabase
         .from("projects")
-        .insert({ name: input.name, cities: input.cities, status: "draft" })
+        .insert({ name: input.name, cities: input.cities, status: "draft", user_id: user.id })
         .select()
         .single();
       if (error) throw error;
