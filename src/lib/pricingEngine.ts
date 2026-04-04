@@ -30,6 +30,11 @@ export { validatePricingQuality, type ValidationResult } from "./pricing/pricing
 export { detectCategory } from "./pricing/categoryDetector";
 export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
 
+/** Check if a row is a valid priceable item (quantity > 0, has unit and item code) */
+export function isPriceableItem(item: { quantity: number; unit?: string; item_no?: string }): boolean {
+  return item.quantity > 0 && Boolean(item.unit?.trim()) && Boolean(item.item_no?.trim());
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RateLibraryItem {
