@@ -163,7 +163,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
 
   return (
     <div>
-      <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} accept=".xlsx,.xls" />
+      
 
       {/* Pricing progress */}
       {pricing && (
