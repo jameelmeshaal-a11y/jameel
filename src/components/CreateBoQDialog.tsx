@@ -339,6 +339,22 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
             <Textarea value={form.specialRemarks} onChange={e => set("specialRemarks", e.target.value)} rows={2} disabled={isSubmitting} />
           </div>
 
+          {/* Owner materials flag */}
+          <div className="col-span-2">
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+              <Checkbox
+                id="ownerMaterials"
+                checked={form.ownerMaterials}
+                onCheckedChange={(checked) => setForm(prev => ({ ...prev, ownerMaterials: !!checked }))}
+                disabled={isSubmitting}
+              />
+              <label htmlFor="ownerMaterials" className="flex items-center gap-2 text-sm cursor-pointer">
+                <PackageOpen className="w-4 h-4 text-muted-foreground" />
+                {isLang("ar") ? "المواد مؤمنة من المالك (فقط تركيب ومعدات وتنقلات)" : "Owner-supplied materials (installation, equipment & logistics only)"}
+              </label>
+            </div>
+          </div>
+
           {/* File upload */}
           <div className="col-span-2">
             <Label>{t("uploadBoQFile")} *</Label>
