@@ -194,7 +194,11 @@ export default function ProjectDetail() {
 
             {/* Selected BoQ table */}
             {selectedBoQFileId ? (
-              <BoQTable boqFileId={selectedBoQFileId} projectId={project.id} cities={project.cities || []} />
+              (() => {
+                const selectedFile = boqFiles.find(f => f.id === selectedBoQFileId);
+                const isOwnerMaterials = !!(selectedFile as any)?.owner_materials;
+                return <BoQTable boqFileId={selectedBoQFileId} projectId={project.id} cities={project.cities || []} ownerMaterials={isOwnerMaterials} />;
+              })()
             ) : boqFiles.length > 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center border rounded-lg bg-muted/20">
                 <FileText className="w-8 h-8 text-muted-foreground mb-3" />

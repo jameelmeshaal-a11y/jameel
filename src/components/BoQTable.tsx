@@ -21,9 +21,10 @@ interface BoQTableProps {
   boqFileId: string;
   projectId: string;
   cities: string[];
+  ownerMaterials?: boolean;
 }
 
-export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps) {
+export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials = false }: BoQTableProps) {
   const { t } = useLanguage();
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
@@ -283,7 +284,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
               <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
-              <th className="pricing-col w-20 text-right">{t("mat")}</th>
+              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
               <th className="pricing-col w-20 text-right">{t("labor")}</th>
               <th className="pricing-col w-20 text-right">{t("equip")}</th>
               <th className="pricing-col w-20 text-right">{t("logis")}</th>
@@ -323,7 +324,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
                 </td>
                 <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>
+                {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
                 <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
@@ -351,7 +352,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
         </table>
       </div>
 
-      {selectedItem && <PriceBreakdownModal item={selectedItem} projectId={projectId} onClose={() => setSelectedItem(null)} onUpdated={() => {
+      {selectedItem && <PriceBreakdownModal item={selectedItem} projectId={projectId} ownerMaterials={ownerMaterials} onClose={() => setSelectedItem(null)} onUpdated={() => {
         qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
         qc.invalidateQueries({ queryKey: ["projects"] });
       }} />}

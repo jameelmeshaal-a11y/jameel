@@ -43,11 +43,12 @@ interface BoQItemRow {
 interface Props {
   item: BoQItemRow;
   projectId: string;
+  ownerMaterials?: boolean;
   onClose: () => void;
   onUpdated?: () => void;
 }
 
-export default function PriceBreakdownModal({ item, projectId, onClose, onUpdated }: Props) {
+export default function PriceBreakdownModal({ item, projectId, ownerMaterials = false, onClose, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [autoRebalance, setAutoRebalance] = useState(true);
@@ -95,7 +96,7 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
   const total = getUnitRate(values);
   const hasChanges = JSON.stringify(values) !== JSON.stringify(initial);
 
-  const breakdownItems: { key: BreakdownField; label: string; color: string }[] = [
+  const allBreakdownItems: { key: BreakdownField; label: string; color: string }[] = [
     { key: "materials", label: "Materials", color: "hsl(var(--info))" },
     { key: "labor", label: "Labor", color: "hsl(var(--primary))" },
     { key: "equipment", label: "Equipment", color: "hsl(var(--warning))" },
@@ -103,6 +104,10 @@ export default function PriceBreakdownModal({ item, projectId, onClose, onUpdate
     { key: "risk", label: "Risk", color: "hsl(var(--destructive))" },
     { key: "profit", label: "Profit", color: "hsl(var(--success))" },
   ];
+
+  const breakdownItems = ownerMaterials
+    ? allBreakdownItems.filter(b => b.key !== "materials")
+    : allBreakdownItems;
 
   // Quick save — just this item, no propagation modal
   const handleQuickSave = async () => {

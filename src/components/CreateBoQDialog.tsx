@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Upload, Loader2, CheckCircle, XCircle, PackageOpen } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { parseBoQExcel } from "@/lib/boqParser";
@@ -69,6 +70,7 @@ const getInitialState = () => ({
   discipline: "",
   specialRemarks: "",
   file: null as File | null,
+  ownerMaterials: false,
 });
 
 export default function CreateBoQDialog({ open, onOpenChange, projectId, projectCities }: CreateBoQDialogProps) {
@@ -144,6 +146,7 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
           package_code: form.packageCode.trim() || null,
           discipline: form.discipline.trim() || null,
           special_remarks: form.specialRemarks.trim() || null,
+          owner_materials: form.ownerMaterials,
         } as any)
         .select()
         .single();
@@ -335,6 +338,22 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
           <div className="col-span-2">
             <Label>{t("specialRemarks")} <span className="text-muted-foreground text-xs">({t("optional")})</span></Label>
             <Textarea value={form.specialRemarks} onChange={e => set("specialRemarks", e.target.value)} rows={2} disabled={isSubmitting} />
+          </div>
+
+          {/* Owner materials flag */}
+          <div className="col-span-2">
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+              <Checkbox
+                id="ownerMaterials"
+                checked={form.ownerMaterials}
+                onCheckedChange={(checked) => setForm(prev => ({ ...prev, ownerMaterials: !!checked }))}
+                disabled={isSubmitting}
+              />
+              <label htmlFor="ownerMaterials" className="flex items-center gap-2 text-sm cursor-pointer">
+                <PackageOpen className="w-4 h-4 text-muted-foreground" />
+                {isLang("ar") ? "المواد مؤمنة من المالك (فقط تركيب ومعدات وتنقلات)" : "Owner-supplied materials (installation, equipment & logistics only)"}
+              </label>
+            </div>
           </div>
 
           {/* File upload */}

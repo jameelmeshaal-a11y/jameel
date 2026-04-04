@@ -26,6 +26,7 @@ export type Database = {
           location_factor: number
           name: string
           notes: string
+          owner_materials: boolean
           package_code: string | null
           pricing_mode: string
           project_id: string
@@ -46,6 +47,7 @@ export type Database = {
           location_factor?: number
           name: string
           notes?: string
+          owner_materials?: boolean
           package_code?: string | null
           pricing_mode?: string
           project_id: string
@@ -66,6 +68,7 @@ export type Database = {
           location_factor?: number
           name?: string
           notes?: string
+          owner_materials?: boolean
           package_code?: string | null
           pricing_mode?: string
           project_id?: string
