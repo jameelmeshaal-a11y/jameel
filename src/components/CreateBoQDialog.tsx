@@ -72,7 +72,7 @@ const getInitialState = () => ({
 });
 
 export default function CreateBoQDialog({ open, onOpenChange, projectId, projectCities }: CreateBoQDialogProps) {
-  const { t, language } = useLanguage();
+  const { t, lang } = useLanguage();
   const qc = useQueryClient();
   const [form, setForm] = useState(getInitialState());
   const [phase, setPhase] = useState<SubmitPhase>("idle");
