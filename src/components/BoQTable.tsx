@@ -103,7 +103,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     setRevalidating(true);
     try {
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] }),
         qc.invalidateQueries({ queryKey: ["boq-files", projectId] }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
