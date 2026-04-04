@@ -16,31 +16,61 @@ export type Database = {
     Tables: {
       boq_files: {
         Row: {
+          city: string
           created_at: string
+          discipline: string | null
+          facility_name: string
+          facility_type: string
           file_path: string
           id: string
+          location_factor: number
           name: string
+          notes: string
+          package_code: string | null
+          pricing_mode: string
           project_id: string
+          remoteness_level: string
+          special_remarks: string | null
           status: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          city?: string
           created_at?: string
+          discipline?: string | null
+          facility_name?: string
+          facility_type?: string
           file_path: string
           id?: string
+          location_factor?: number
           name: string
+          notes?: string
+          package_code?: string | null
+          pricing_mode?: string
           project_id: string
+          remoteness_level?: string
+          special_remarks?: string | null
           status?: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          city?: string
           created_at?: string
+          discipline?: string | null
+          facility_name?: string
+          facility_type?: string
           file_path?: string
           id?: string
+          location_factor?: number
           name?: string
+          notes?: string
+          package_code?: string | null
+          pricing_mode?: string
           project_id?: string
+          remoteness_level?: string
+          special_remarks?: string | null
           status?: string
           updated_at?: string
           user_id?: string
