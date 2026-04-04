@@ -232,6 +232,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </div>
       )}
 
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-muted-foreground">{t("pricingMode")}</span>
           {(["review", "smart", "auto"] as PricingMode[]).map((m) => (
