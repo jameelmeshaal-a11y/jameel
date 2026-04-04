@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBoQFiles, useBoQItems } from "@/hooks/useSupabase";
+import { useBoQFiles, useBoQItems, useProject } from "@/hooks/useSupabase";
 import { uploadAndParseBoQ, exportBoQExcel } from "@/lib/boqParser";
 import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
+import { checkConsistency, fixConsistency } from "@/hooks/useConsistencyCheck";
 
 type PricingMode = "review" | "smart" | "auto";
 
