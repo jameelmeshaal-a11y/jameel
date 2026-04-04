@@ -1,60 +1,118 @@
 
 
-# Auto-Sync Manual Edits to Rate Library — Implementation Plan
+# Single Save Flow — Implementation Plan
 
-## What This Does
-Every manual price save (QuickSave, Approve, Propagate) automatically syncs the approved price to the central rate library. The synced rate becomes the highest-priority "Approved" source, immediately reusable in current repricing and all future projects.
+## Overview
+Replace all save/approve/propagate buttons with one **"حفظ" (Save)** button. Sequential DB writes with explicit partial-failure handling. Modal stays open on sync failure for immediate retry.
 
-## Files
+## File 1: `src/lib/pricing/rateSyncService.ts`
 
-| File | Action |
-|------|--------|
-| `src/lib/pricing/rateSyncService.ts` | **New** — core `syncToRateLibrary()` function |
-| `src/components/PriceBreakdownModal.tsx` | **Modified** — call sync from QuickSave, Approve, and Propagation flows |
-| `src/lib/pricing/propagationService.ts` | **Modified** — call sync after source item update |
+**4 targeted fixes:**
 
-No database migration needed — all required columns already exist.
+| Line | Current | New |
+|------|---------|-----|
+| 151 | `base_city: realCity \|\| "Riyadh"` | `base_city: realCity \|\| ""` |
+| 172 | `city: realCity \|\| "Riyadh"` | `city: realCity \|\| ""` |
+| 167-175 | Fire-and-forget `rate_sources` insert | Capture error, return `null` on failure |
+| 178-181 | Fire-and-forget `linked_rate_id` update | Capture error, return `null` on failure |
 
-## New: `src/lib/pricing/rateSyncService.ts`
+## File 2: `src/components/PriceBreakdownModal.tsx`
 
-Creates a `syncToRateLibrary()` function that:
+### Remove
+- Line 2: `Globe` from imports
+- Line 11: `propagateChanges`, `ChangeScope`, `EditType` imports
+- Line 12: `SimilarItem` import
+- Line 15: `PropagationScopeModal` import
+- Line 56: `showPropagation` state
+- Lines 92-95: `handleResetAuto` function
+- Lines 113-161: `handleQuickSave` — replaced by new `handleSave`
+- Lines 163-166: `handleSaveWithScope`
+- Lines 168-219: `handlePropagationConfirm`
+- Lines 221-238: `handleApprove`
+- Lines 419-426: Propagate + Reset buttons
+- Lines 429-436: Approve + Edit buttons block
+- Lines 443-454: `PropagationScopeModal` render
 
-1. **Fetches real context** — queries `boq_files` for real `name` and `city` (never hardcoded)
-2. **Optionally re-fetches item pricing** — when called without explicit values (Approve flow), fetches latest pricing from `boq_items` to guarantee freshness
-3. **Safe multi-factor matching** — queries `rate_library` by normalized `unit` + `category`, then scores by `textSimilarity` (reused from `similarItemMatcher.ts`). Only updates existing if similarity ≥ 0.7 AND `is_locked !== true`. Otherwise inserts new entry.
-4. **Upserts `rate_library`** — update: `source_type = "Revised"`, `last_reviewed_at = now()`; insert: `source_type = "Field-Approved"`, `min/max = rate ± 10%`
-5. **Inserts `rate_sources`** — `source_type: "Approved"`, `is_verified: true`, `city` from DB, `source_name` = real BoQ file name
-6. **Links item** — updates `boq_items.linked_rate_id` to library entry ID
-7. **Guards** — skips if `quantity <= 0` or `unitRate <= 0`
+### New `handleSave` (replaces all save functions)
+```typescript
+const handleSave = async () => {
+  if (!hasChanges) return;
+  setSaving(true);
+  try {
+    const unitRate = getUnitRate(values);
+    const totalPrice = +(unitRate * item.quantity).toFixed(2);
+    const overridesObj: Record<string, boolean> = {};
+    manualFields.forEach(f => { overridesObj[f] = true; });
 
-## Modified: `PriceBreakdownModal.tsx`
+    // Step 1: Save to boq_items with status "approved"
+    const { error } = await supabase.from("boq_items").update({
+      materials: values.materials, labor: values.labor,
+      equipment: values.equipment, logistics: values.logistics,
+      risk: values.risk, profit: values.profit,
+      unit_rate: unitRate, total_price: totalPrice,
+      status: "approved",
+      notes: item.notes || "Manual pricing adjustment",
+      manual_overrides: overridesObj,
+      override_at: new Date().toISOString(),
+    }).eq("id", item.id);
 
-### `handleQuickSave` (after successful DB update, ~line 145)
-Calls `syncToRateLibrary()` passing the in-memory `values` and computed `unitRate` (these are fresh — just saved to DB).
+    if (error) {
+      toast.error("فشل حفظ التعديل: " + error.message);
+      return;
+    }
 
-### `handleApprove` (~line 211, after successful status update)
-Calls `syncToRateLibrary()` with only `itemId` and `boqFileId` — the service re-fetches latest pricing from `boq_items` to guarantee no stale state.
+    // Step 2: Sync to rate library — AWAITED
+    const syncResult = await syncToRateLibrary({
+      itemId: item.id, boqFileId: item.boq_file_id, values, unitRate,
+    });
 
-### `handlePropagationConfirm` (~line 200, after propagation succeeds)
-Calls `syncToRateLibrary()` passing the propagated `values`.
+    if (!syncResult) {
+      toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
+      return; // modal stays open, values preserved, retry possible
+    }
 
-## Modified: `propagationService.ts`
+    toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+    setEditing(false);
+    onUpdated?.();
+    onClose();
+  } catch (err: any) {
+    toast.error("خطأ: " + err.message);
+  } finally {
+    setSaving(false);
+  }
+};
+```
 
-After the source item update succeeds (~line 64), fetches the source item's `description`, `description_en`, `unit`, `quantity` (extending existing query at line 67), then calls `syncToRateLibrary()` with the propagated values.
+### New action buttons (lines 408-437)
 
-## Why the Synced Rate Is Immediately Trusted
+**Editing mode** — two buttons only:
+```tsx
+<div className="flex gap-2">
+  <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
+    <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ"}
+  </Button>
+  <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
+    إلغاء
+  </Button>
+</div>
+```
 
-The existing pricing engine already:
-1. `findRateLibraryMatch()` finds entries by category + keywords
-2. `resolveFromSources()` prioritizes `source_type = "Approved"` over Supplier/Historical
-3. Uses the resolved rate as `target_rate`
+**Non-editing mode** — Edit button only:
+```tsx
+<Button variant="outline" className="flex-1 gap-2" onClick={() => setEditing(true)}>
+  <Pencil className="w-4 h-4" /> Edit Price
+</Button>
+```
 
-The inserted `rate_sources` entry with `"Approved"` + `is_verified: true` automatically becomes the highest-priority rate — no engine changes needed.
+### Wrapper cleanup
+Remove outer `<>...</>` fragment (lines 244, 455). Return just the modal `div` since `PropagationScopeModal` is gone.
 
-## Technical Details
+### Retry behavior
+On partial failure: `finally` runs `setSaving(false)` → button re-enables. `values` stay in state. `hasChanges` stays `true` (because `initial` is never updated on partial failure). User clicks Save again → idempotent boq_items update + sync retry.
 
-- Text similarity functions (`textSimilarity`, `normalizeUnit`, `tokenize`) are imported from `similarItemMatcher.ts` — they need to be exported from there
-- Category is detected via `detectCategory()` from `pricingEngine.ts` at sync time (not stored on `boq_items`)
-- City comes from `boq_files.city` (real DB value, empty string if not set)
-- RLS on `rate_library` and `rate_sources` requires admin role for writes — this is correct for the approval workflow
+## Technical Notes
+- This is a **single save flow with explicit partial-failure handling**, not an atomic DB transaction
+- Notes field is read-only in the modal — using `item.notes` is correct
+- `RotateCcw` icon stays (used in auto-rebalance toggle at line 306)
+- `propagationService.ts` code remains untouched (callable from other contexts)
 
