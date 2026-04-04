@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -12,6 +12,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
+import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -29,6 +30,8 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const [uploadMsg, setUploadMsg] = useState("");
   const [pricing, setPricing] = useState(false);
   const [pricingProgress, setPricingProgress] = useState({ current: 0, total: 0 });
+  const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
+  const [revalidating, setRevalidating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: boqFiles = [], isLoading: filesLoading } = useBoQFiles(projectId);
@@ -75,6 +78,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const handleExport = async () => {
     if (items.length === 0) return;
     if (!exportSummary.canExport) {
+      if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
       toast.error(exportSummary.errorMessage);
       return;
     }
@@ -86,6 +90,23 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
       toast.error(err.message);
     }
   };
+
+  const handleRevalidate = useCallback(async () => {
+    if (!activeFile) return;
+    setRevalidating(true);
+    try {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["boq-files", projectId] }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+      toast.success("Project revalidated");
+    } catch (err: any) {
+      toast.error(err.message || "Revalidation failed");
+    } finally {
+      setRevalidating(false);
+    }
+  }, [activeFile, projectId, qc]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -193,8 +214,8 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         <div className="rounded-lg border bg-muted/30 p-3 mb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-sm font-medium">Export summary</div>
-              <div className="text-xs text-muted-foreground">Priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Invalid rows: {exportSummary.invalidRowsCount}</div>
+              <div className="text-sm font-medium">Export readiness summary</div>
+              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Invalid payable rows: {exportSummary.invalidRowsCount}</div>
             </div>
             <Badge variant={exportSummary.exportStatus === "blocked" ? "destructive" : exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
               {exportSummary.exportStatus === "ready" ? "Ready" : exportSummary.exportStatus === "warning" ? "Warning" : "Blocked"}
@@ -205,6 +226,29 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
           )}
           {exportSummary.errorMessage && (
             <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
+          )}
+          {exportSummary.blockingRows.length > 0 && (
+            <div className="mt-3 rounded-md border bg-background/70 p-3">
+              <div className="text-xs font-medium mb-2">Blocking reasons</div>
+              <div className="space-y-2">
+                {exportSummary.blockingRows.slice(0, 3).map((row, index) => (
+                  <div key={`${row.rowNumber ?? "row"}-${row.itemCode}-${index}`} className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Row {row.rowNumber ?? "—"}</span>
+                    {row.itemCode ? ` · ${row.itemCode}` : ""}
+                    {row.description ? ` · ${row.description}` : ""}
+                    {` · ${row.reason}`}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" className="gap-1" onClick={() => setBlockingRowsOpen(true)}>
+                  <ListX className="w-3.5 h-3.5" /> View Blocking Rows
+                </Button>
+                <Button variant="outline" size="sm" className="gap-1" onClick={handleRevalidate} disabled={revalidating}>
+                  <RefreshCw className={`w-3.5 h-3.5 ${revalidating ? "animate-spin" : ""}`} /> Revalidate Project
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -301,6 +345,14 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         if (activeFile) qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
         qc.invalidateQueries({ queryKey: ["projects"] });
       }} />}
+
+      <BoQBlockingRowsDialog
+        open={blockingRowsOpen}
+        onOpenChange={setBlockingRowsOpen}
+        rows={exportSummary.blockingRows}
+        onRevalidate={handleRevalidate}
+        revalidating={revalidating}
+      />
     </div>
   );
 }

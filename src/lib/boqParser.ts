@@ -180,20 +180,16 @@ export async function exportBoQExcel(
   }
 
   try {
-    const [{ data: boqFile, error: boqFileError }, { data: latestItems, error: itemsError }] = await Promise.all([
+    const [{ data: boqFile, error: boqFileError }, latestItems] = await Promise.all([
       supabase
         .from("boq_files")
         .select("file_path")
         .eq("id", boqFileId)
         .single(),
-      supabase
-        .from("boq_items")
-        .select("*")
-        .eq("boq_file_id", boqFileId)
-        .order("row_index", { ascending: true }),
+      revalidateBoQRows(boqFileId),
     ]);
 
-    if (boqFileError || !boqFile?.file_path || itemsError) {
+    if (boqFileError || !boqFile?.file_path) {
       throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
     }
 
@@ -291,6 +287,83 @@ export async function exportBoQExcel(
     if (error instanceof Error) throw error;
     throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
   }
+}
+
+export async function revalidateBoQRows(boqFileId: string) {
+  const { data: currentItems, error } = await supabase
+    .from("boq_items")
+    .select("*")
+    .eq("boq_file_id", boqFileId)
+    .order("row_index", { ascending: true });
+
+  if (error) throw new Error(`Failed to validate items: ${error.message}`);
+  if (!currentItems?.length) return [];
+
+  const updates = currentItems
+    .map((item) => {
+      const classification = classifyBoQRow(item);
+      if (classification.type === "priced") return null;
+
+      const nextStatus = getRowPersistenceStatus(item);
+      const nextNotes = getRowClassificationNote(item);
+      const requiresUpdate =
+        item.status !== nextStatus ||
+        item.notes !== nextNotes ||
+        item.unit_rate != null ||
+        item.total_price != null ||
+        item.materials != null ||
+        item.labor != null ||
+        item.equipment != null ||
+        item.logistics != null ||
+        item.risk != null ||
+        item.profit != null ||
+        item.confidence != null ||
+        item.source != null ||
+        item.linked_rate_id != null ||
+        item.location_factor != null;
+
+      if (!requiresUpdate) return null;
+
+      return supabase
+        .from("boq_items")
+        .update({
+          status: nextStatus,
+          notes: nextNotes,
+          unit_rate: null,
+          total_price: null,
+          materials: null,
+          labor: null,
+          equipment: null,
+          logistics: null,
+          risk: null,
+          profit: null,
+          confidence: null,
+          source: null,
+          linked_rate_id: null,
+          location_factor: null,
+        })
+        .eq("id", item.id);
+    })
+    .filter(Boolean);
+
+  if (updates.length > 0) {
+    const results = await Promise.all(updates);
+    const failedUpdate = results.find((result) => result.error);
+    if (failedUpdate?.error) {
+      throw new Error(`Failed to validate items: ${failedUpdate.error.message}`);
+    }
+
+    const { data: refreshedItems, error: refreshError } = await supabase
+      .from("boq_items")
+      .select("*")
+      .eq("boq_file_id", boqFileId)
+      .order("row_index", { ascending: true });
+
+    if (refreshError) throw new Error(`Failed to validate items: ${refreshError.message}`);
+    return refreshedItems || [];
+  }
+
+  return currentItems;
 }
 
 function getMainSheetFieldConfigs() {
