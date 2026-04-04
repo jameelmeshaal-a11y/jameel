@@ -158,8 +158,8 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     );
   }
 
-  // Empty state
-  if (!hasItems && boqFiles.length === 0) {
+  // Empty state — no items for this specific BoQ file
+  if (!hasItems) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
@@ -167,10 +167,6 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
         </div>
         <h3 className="text-lg font-semibold mb-2">{t("noBoQFiles")}</h3>
         <p className="text-muted-foreground max-w-sm mb-5">{t("noBoQDesc")}</p>
-        <Button variant="outline" className="gap-2" onClick={() => fileRef.current?.click()}>
-          <Upload className="w-4 h-4" /> {t("uploadBoQFile")}
-        </Button>
-        <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} accept=".xlsx,.xls" />
       </div>
     );
   }
