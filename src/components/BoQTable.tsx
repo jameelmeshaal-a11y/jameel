@@ -37,9 +37,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   const [fixing, setFixing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { data: boqFiles = [], isLoading: filesLoading } = useBoQFiles(projectId);
-  const activeFile = boqFiles[0];
-  const { data: items = [], isLoading: itemsLoading } = useBoQItems(activeFile?.id);
+  const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
