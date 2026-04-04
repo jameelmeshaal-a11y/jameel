@@ -135,7 +135,7 @@ export function normalizeUnit(unit: string): string {
     .replace(/عدد|no|pcs/g, "no");
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text.toLowerCase().split(/[\s,،./-]+/).filter(w => w.length > 2);
 }
 
