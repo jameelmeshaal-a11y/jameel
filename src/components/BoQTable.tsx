@@ -284,7 +284,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
-              <th className="pricing-col w-20 text-right">{t("mat")}</th>
+              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
               <th className="pricing-col w-20 text-right">{t("labor")}</th>
               <th className="pricing-col w-20 text-right">{t("equip")}</th>
               <th className="pricing-col w-20 text-right">{t("logis")}</th>
