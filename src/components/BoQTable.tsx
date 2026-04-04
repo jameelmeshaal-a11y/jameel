@@ -213,7 +213,25 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-4">
+      {/* Inconsistency alert banner */}
+      {hasItems && !consistency.consistent && (
+        <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
+            <div>
+              <div className="text-sm font-medium text-destructive">Data inconsistency detected</div>
+              <div className="text-xs text-muted-foreground">
+                Table total: {formatCurrency(consistency.tableTotal)} · Database total: {formatCurrency(consistency.dbTotal)} · Difference: {formatCurrency(consistency.difference)}
+              </div>
+            </div>
+          </div>
+          <Button variant="destructive" size="sm" className="gap-1" onClick={handleFixNow} disabled={fixing}>
+            <Wrench className={`w-3.5 h-3.5 ${fixing ? "animate-spin" : ""}`} />
+            {fixing ? "Fixing..." : "Fix Now"}
+          </Button>
+        </div>
+      )}
+
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-muted-foreground">{t("pricingMode")}</span>
           {(["review", "smart", "auto"] as PricingMode[]).map((m) => (
