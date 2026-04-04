@@ -195,7 +195,7 @@ export async function runPricingEngine(
     // ZERO QUANTITY RULE: skip descriptive/non-priced rows
     if (classification.type !== "priced") {
       await supabase.from("boq_items").update({
-        status: classification.type === "descriptive" ? "description" : "invalid",
+        status: classification.type === "descriptive" ? "descriptive" : "needs_review",
         notes: getRowClassificationNote(item),
         unit_rate: null, total_price: null,
         materials: null, labor: null, equipment: null, logistics: null,
