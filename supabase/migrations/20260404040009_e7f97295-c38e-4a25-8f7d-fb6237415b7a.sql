@@ -1,0 +1,1 @@
+ALTER TABLE public.boq_files ADD COLUMN IF NOT EXISTS owner_materials boolean NOT NULL DEFAULT false;
