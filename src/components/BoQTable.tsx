@@ -68,7 +68,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
         setPricingProgress({ current, total });
       });
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
-      qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
+      qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["projects", projectId] });
     } catch (err: any) {
