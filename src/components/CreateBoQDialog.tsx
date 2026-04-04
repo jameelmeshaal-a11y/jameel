@@ -69,6 +69,7 @@ const getInitialState = () => ({
   discipline: "",
   specialRemarks: "",
   file: null as File | null,
+  ownerMaterials: false,
 });
 
 export default function CreateBoQDialog({ open, onOpenChange, projectId, projectCities }: CreateBoQDialogProps) {
