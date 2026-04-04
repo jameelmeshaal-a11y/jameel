@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { BreakdownValues } from "./smartRecalculator";
 import { getUnitRate } from "./smartRecalculator";
 import type { SimilarItem } from "./similarItemMatcher";
+import { syncToRateLibrary } from "./rateSyncService";
 
 export type ChangeScope = "item_only" | "project" | "global";
 export type EditType = "project_override" | "master_update";
