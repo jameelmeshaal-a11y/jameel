@@ -92,6 +92,9 @@ export function useUploadDocument() {
       file: File;
       category: "core" | "technical" | "other";
     }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
       const fileExt = input.file.name.split(".").pop() || "bin";
       const safeName = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${fileExt}`;
       const filePath = `${input.projectId}/${safeName}`;
@@ -114,6 +117,7 @@ export function useUploadDocument() {
           file_type: ext,
           size: sizeStr,
           doc_category: input.category,
+          user_id: user.id,
         });
       if (dbError) throw dbError;
     },
