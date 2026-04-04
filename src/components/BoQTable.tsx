@@ -99,7 +99,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   };
 
   const handleRevalidate = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setRevalidating(true);
     try {
       await Promise.all([
