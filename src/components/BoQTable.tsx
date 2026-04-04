@@ -28,14 +28,11 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadMsg, setUploadMsg] = useState("");
   const [pricing, setPricing] = useState(false);
   const [pricingProgress, setPricingProgress] = useState({ current: 0, total: 0 });
   const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
   const [revalidating, setRevalidating] = useState(false);
   const [fixing, setFixing] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
