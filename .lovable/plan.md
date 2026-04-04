@@ -1,54 +1,119 @@
 
 
-# Confirmed: Full-Stack Implementation (Not UI-Only)
+# Semantic Row Grouping — Full-Stack Implementation
 
-Every point you listed is explicitly in scope. Here is the confirmation with implementation specifics:
+## Confirmed Scope
 
-## Database Layer (Migration)
+All changes happen in the **database-backed pricing pipeline**. Nothing is UI-only.
 
-- **Schema migration** adds real columns to `boq_files`: `facility_name`, `facility_type`, `city`, `remoteness_level`, `location_factor`, `pricing_mode`, `notes`, `package_code`, `discipline`, `special_remarks`
-- All columns have defaults for backward compatibility with existing rows
-- **Status constraint** updated in the database to include `draft`, `uploading`, `processing`, `ready`, `failed` alongside legacy values (`uploaded`, `parsed`, `error`)
-- Migration runs against live database via the migration tool
+- `groupSemanticRows()` runs inside `runPricingEngine()` before classification/pricing
+- Merged descriptions are used for real `detectCategory()` and `findRateLibraryMatch()` calls
+- Pricing results are written to real `boq_items` records via Supabase
+- Contributor rows are marked `status: 'descriptive'` in the database
+- Low-confidence merged items are priced but flagged `status: 'needs_review'` with a note in the database
+- Manual overrides (`source === 'manual_override'` or non-empty `manual_overrides`) are preserved — never overwritten
+- On reopen, all statuses and notes come from the database — no frontend-only state
 
-## Record Creation Flow
+## Files
 
-- `CreateBoQDialog` calls `supabase.from("boq_files").insert(...)` to create a real database record with all metadata fields **before** any file upload
-- The returned `boqFileId` (UUID from the database) is then used for file upload and parsing
-- No mock state, no local-only objects — the record exists in the database immediately after step 1
+| File | Action |
+|------|--------|
+| `src/lib/boqRowGrouping.ts` | **New** — `groupSemanticRows()` + types |
+| `src/lib/boqRowGrouping.test.ts` | **New** — 4 mandatory test cases |
+| `src/lib/pricingEngine.ts` | **Modified** — replace raw row loop with semantic block loop |
 
-## Parsing and Storage
+No database migration needed — uses existing columns.
 
-- `uploadAndParseForBoQ(boqFileId, projectId, file)` uploads to `supabase.storage.from("boq-files")` and updates `boq_files.file_path` and `boq_files.status` in the database
-- Parsed `boq_items` are inserted with `boq_file_id = boqFileId` linking them to the exact record
-- Failure at upload phase: `UPDATE boq_files SET status = 'failed' WHERE id = boqFileId`
-- Failure at parse phase: `DELETE FROM boq_items WHERE boq_file_id = boqFileId`, then `UPDATE boq_files SET status = 'failed'`
+## `src/lib/boqRowGrouping.ts`
 
-## Read Path
+```typescript
+interface SemanticBlock {
+  primaryRow: BoQItem;         // qty > 0 — receives pricing
+  contributorRows: BoQItem[];  // qty = 0 above — marked descriptive
+  mergedDescription: string;
+  mergedDescriptionEn: string;
+  quantity: number;
+  unit: string;
+  itemNo: string;
+}
+```
 
-- `ProjectDetail` uses `useBoQFiles(projectId)` which queries `supabase.from("boq_files").select("*").eq("project_id", projectId)` — real database reads
-- Facility grouping uses `facility_name` column from the database response, grouped client-side via `Object.groupBy` or equivalent
-- `BoQTable` receives a `boqFileId` prop and uses `useBoQItems(boqFileId)` which queries `supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId)` — real database reads
-- No `boqFiles[0]` fallback; user must explicitly select a BoQ
+**Algorithm** (iterate rows by `row_index` ascending):
 
-## Backward Compatibility
+1. Accumulate consecutive zero-quantity rows into a buffer
+2. When a priced row (qty > 0) appears:
+   - Check if buffered rows belong to the same item (no new `item_no`, no section-title patterns like "أعمال", "القسم", "SECTION", all-caps headers)
+   - If related: create a `SemanticBlock` with `mergedDescription = buffer descriptions + " — " + priced row description`
+   - If unrelated (section headers/notes): flush buffer as standalone descriptive rows, priced row gets its own block
+3. Standalone priced rows (no buffer) pass through unchanged
 
-- Old rows with `status = 'uploaded'`, `'parsed'`, `'error'` remain valid (constraint includes them)
-- Old rows with empty `facility_name`, `city`, etc. display correctly (defaults applied by migration)
-- New creation flow only writes `draft` → `uploading` → `processing` → `ready` | `failed`
-- `BoQTable` renders items regardless of which status generation created the record
+**Section-title detection** (prevents merging unrelated headers):
+- Row text matches patterns: starts with "أعمال", "القسم", "باب", "SECTION", numbered headings like "1-", "أولاً"
+- Row has no `item_no` and text is very short (< 5 words) and generic
 
-## Files Changed
+## `src/lib/pricingEngine.ts` Changes
 
-| File | What happens |
-|------|-------------|
-| `supabase/migrations/new.sql` | Real schema migration: ALTER TABLE, constraint update |
-| `src/components/CreateBoQDialog.tsx` | New — calls supabase insert, upload, parse |
-| `src/lib/boqParser.ts` | Split into `createBoQFileRecord()` + `uploadAndParseForBoQ()`, both hit real DB |
-| `src/hooks/useSupabase.ts` | Add `useCreateBoQFile` mutation (real supabase call) |
-| `src/pages/ProjectDetail.tsx` | Uses `useBoQFiles` for DB reads, groups by DB `facility_name`, passes `boqFileId` |
-| `src/components/BoQTable.tsx` | Accepts `boqFileId` prop, removes upload UI, reads from DB only |
-| `src/lib/i18n.ts` | New translation keys |
+Replace the current `for (let i = 0; i < items.length; i++)` loop (lines 193–280) with:
 
-No UI-only mock state. No local temporary flow. Every create, read, and update goes through the database.
+```
+const blocks = groupSemanticRows(items);
+
+for (const block of blocks) {
+  // 1. Mark contributor rows as descriptive in DB
+  for (const contributor of block.contributorRows) {
+    await supabase.from("boq_items").update({
+      status: "descriptive",
+      notes: `وصف مدمج مع البند ${block.itemNo}`,
+      unit_rate: null, total_price: null, ...nullFields
+    }).eq("id", contributor.id);
+  }
+
+  // 2. Manual override protection
+  if (block.primaryRow.source === "manual_override" 
+      || (block.primaryRow.manual_overrides && Object.keys(block.primaryRow.manual_overrides).length > 0)) {
+    // Skip — preserve existing pricing, flag for review
+    await supabase.from("boq_items").update({
+      status: "needs_review",
+      notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي محفوظ"
+    }).eq("id", block.primaryRow.id);
+    continue;
+  }
+
+  // 3. Classify using merged description
+  const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
+
+  // 4. Price using merged description + primary row's quantity
+  // ... existing library match / AI fallback logic, but using block.mergedDescription
+
+  // 5. Low confidence adjustment (user's clarification)
+  if (detection.confidence < 60 || cost.confidence < 70) {
+    cost.confidence = Math.min(cost.confidence, 65);
+    status = "needs_review";
+    cost.explanation += " | ⚠️ تسعير بثقة منخفضة — وصف مدمج";
+  }
+
+  // 6. Write to primary row in DB
+  await supabase.from("boq_items").update({ ...pricingFields }).eq("id", block.primaryRow.id);
+}
+```
+
+Key: non-priced rows that are NOT part of any block (standalone descriptive) continue to be handled exactly as before (marked descriptive, pricing cleared).
+
+## Test Cases (`boqRowGrouping.test.ts`)
+
+| # | Input | Expected |
+|---|-------|----------|
+| 1 | Row A: title, qty=0 → Row B: continuation, qty>0 | One block, merged description, priced on B |
+| 2 | Two rows each with item_no + qty>0 | Two separate blocks, no merge |
+| 3 | Row A: heading qty=0 → Row B: scope qty=0 → Row C: qty>0 | One block, A+B+C merged, priced on C |
+| 4 | Row with `manual_overrides` set | Block created but pricing skipped |
+
+## Safety Guarantees
+
+- **Quantity**: never aggregated — always from `primaryRow.quantity` only
+- **Zero-qty rows**: never priced — always marked `descriptive`
+- **Low confidence**: priced but flagged `needs_review` with explanatory note in DB
+- **Manual overrides**: detected and skipped, flagged `needs_review`
+- **Section headers**: excluded from merging via pattern detection
+- **Read path**: all statuses, notes, confidence come from `boq_items` table — no frontend state
 
