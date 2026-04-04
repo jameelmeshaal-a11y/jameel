@@ -111,10 +111,15 @@ export function isPriceableBoQRow(row: BoQRowLike): boolean {
   return classifyBoQRow(row).type === "priced";
 }
 
+/**
+ * Canonical DB status values (must match boq_items_status_check constraint):
+ * pending, approved, review, conflict, descriptive, invalid,
+ * needs_review, manual_override, project_override, priced
+ */
 export function getRowPersistenceStatus(row: BoQRowLike): string {
   const classification = classifyBoQRow(row);
-  if (classification.type === "descriptive") return "description";
-  if (classification.type === "invalid") return "invalid";
+  if (classification.type === "descriptive") return "descriptive";
+  if (classification.type === "invalid") return "needs_review";
   return "pending";
 }
 
