@@ -71,6 +71,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
       qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["projects", projectId] });
     } catch (err: any) {
       toast.error(err.message);
     } finally {
