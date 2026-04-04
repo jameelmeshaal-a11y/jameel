@@ -25,6 +25,7 @@ import {
   type ProjectSummary,
 } from "./pricing/locationEngine";
 import { fetchAllSources, resolveFromSources } from "./pricing/sourceResolver";
+import { classifyBoQRow, getRowClassificationNote, isPriceableBoQRow } from "./boqRowClassification";
 
 export { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 export { detectCategory } from "./pricing/categoryDetector";
@@ -32,7 +33,7 @@ export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectTy
 
 /** Check if a row is a valid priceable item (quantity > 0, has unit and item code) */
 export function isPriceableItem(item: { quantity: number; unit?: string; item_no?: string }): boolean {
-  return item.quantity > 0 && Boolean(item.unit?.trim()) && Boolean(item.item_no?.trim());
+  return isPriceableBoQRow(item);
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -189,12 +190,13 @@ export async function runPricingEngine(
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
+    const classification = classifyBoQRow(item);
 
     // ZERO QUANTITY RULE: skip descriptive/non-priced rows
-    if (!isPriceableItem(item)) {
+    if (classification.type !== "priced") {
       await supabase.from("boq_items").update({
-        status: "description",
-        notes: "وصف / بند غير مسعّر — Description / Non-priced",
+        status: classification.type === "descriptive" ? "description" : "invalid",
+        notes: getRowClassificationNote(item),
         unit_rate: null, total_price: null,
         materials: null, labor: null, equipment: null, logistics: null,
         risk: null, profit: null, confidence: null, source: null,
@@ -296,7 +298,7 @@ export async function runPricingEngine(
 
   return {
     totalValue,
-    itemCount: items.length,
+    itemCount: pricedItems.length,
     validation,
     libraryHits,
     locationApplied: locationMatch,
