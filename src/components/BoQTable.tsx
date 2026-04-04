@@ -154,7 +154,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     } finally {
       setFixing(false);
     }
-  }, [activeFile, projectId, qc]);
+  }, [boqFileId, projectId, qc]);
 
   const isLoading = filesLoading || itemsLoading;
   const hasItems = items.length > 0;
