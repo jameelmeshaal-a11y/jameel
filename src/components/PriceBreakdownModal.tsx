@@ -228,6 +228,10 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       toast.error("فشل الاعتماد");
     } else {
       toast.success("تم اعتماد البند");
+      // Sync to rate library — re-fetches latest pricing from DB (no stale state)
+      syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id })
+        .then(r => r && console.log(`[RateSync] Approve → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+        .catch(e => console.warn("[RateSync] Approve sync failed:", e));
       onUpdated?.();
       onClose();
     }
