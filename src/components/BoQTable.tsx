@@ -147,16 +147,6 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     );
   }
 
-  // Upload progress overlay
-  if (uploading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
-        <h3 className="text-lg font-semibold mb-2">{uploadMsg || "Processing..."}</h3>
-        <p className="text-sm text-muted-foreground">Please wait while the file is being processed</p>
-      </div>
-    );
-  }
 
   // Empty state — no items for this specific BoQ file
   if (!hasItems) {
