@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBoQFiles, useBoQItems } from "@/hooks/useSupabase";
+import { useBoQFiles, useBoQItems, useProject } from "@/hooks/useSupabase";
 import { uploadAndParseBoQ, exportBoQExcel } from "@/lib/boqParser";
 import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
+import { checkConsistency, fixConsistency } from "@/hooks/useConsistencyCheck";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -32,11 +33,13 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const [pricingProgress, setPricingProgress] = useState({ current: 0, total: 0 });
   const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
   const [revalidating, setRevalidating] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: boqFiles = [], isLoading: filesLoading } = useBoQFiles(projectId);
-  const activeFile = boqFiles[0]; // Use first/latest BoQ file
+  const activeFile = boqFiles[0];
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(activeFile?.id);
+  const { data: project } = useProject(projectId);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -68,6 +71,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
       qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["projects", projectId] });
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -77,6 +81,10 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
 
   const handleExport = async () => {
     if (items.length === 0) return;
+    if (!consistency.consistent) {
+      toast.error("Data inconsistency detected. Fix totals before exporting.");
+      return;
+    }
     if (!exportSummary.canExport) {
       if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
       toast.error(exportSummary.errorMessage);
@@ -127,6 +135,27 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const totalValue = items.reduce((sum, item) => sum + (item.total_price || 0), 0);
   const modeLabels: Record<PricingMode, string> = { review: t("review"), smart: t("smart"), auto: t("auto") };
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
+  const consistency = useMemo(() => checkConsistency(items, project?.total_value ?? 0), [items, project?.total_value]);
+
+  const canExport = exportSummary.canExport && consistency.consistent;
+
+  const handleFixNow = useCallback(async () => {
+    if (!activeFile) return;
+    setFixing(true);
+    try {
+      const newTotal = await fixConsistency(projectId, activeFile.id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+        qc.invalidateQueries({ queryKey: ["projects", projectId] }),
+      ]);
+      toast.success(`Totals synced: ${formatCurrency(newTotal)}`);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setFixing(false);
+    }
+  }, [activeFile, projectId, qc]);
 
   const isLoading = filesLoading || itemsLoading;
   const hasItems = items.length > 0;
@@ -185,6 +214,25 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </div>
       )}
 
+      {/* Inconsistency alert banner */}
+      {hasItems && !consistency.consistent && (
+        <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
+            <div>
+              <div className="text-sm font-medium text-destructive">Data inconsistency detected</div>
+              <div className="text-xs text-muted-foreground">
+                Table total: {formatCurrency(consistency.tableTotal)} · Database total: {formatCurrency(consistency.dbTotal)} · Difference: {formatCurrency(consistency.difference)}
+              </div>
+            </div>
+          </div>
+          <Button variant="destructive" size="sm" className="gap-1" onClick={handleFixNow} disabled={fixing}>
+            <Wrench className={`w-3.5 h-3.5 ${fixing ? "animate-spin" : ""}`} />
+            {fixing ? "Fixing..." : "Fix Now"}
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-muted-foreground">{t("pricingMode")}</span>
@@ -203,7 +251,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!exportSummary.canExport}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
               <Download className="w-3 h-3" /> {t("export")}
             </Button>
           )}
