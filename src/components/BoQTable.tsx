@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback, useMemo } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, Upload, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBoQFiles, useBoQItems, useProject } from "@/hooks/useSupabase";
-import { uploadAndParseBoQ, exportBoQExcel } from "@/lib/boqParser";
+import { useBoQItems, useProject } from "@/hooks/useSupabase";
+import { exportBoQExcel } from "@/lib/boqParser";
 import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
@@ -18,58 +18,37 @@ import { checkConsistency, fixConsistency } from "@/hooks/useConsistencyCheck";
 type PricingMode = "review" | "smart" | "auto";
 
 interface BoQTableProps {
+  boqFileId: string;
   projectId: string;
   cities: string[];
 }
 
-export default function BoQTable({ projectId, cities }: BoQTableProps) {
+export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps) {
   const { t } = useLanguage();
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadMsg, setUploadMsg] = useState("");
   const [pricing, setPricing] = useState(false);
   const [pricingProgress, setPricingProgress] = useState({ current: 0, total: 0 });
   const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
   const [revalidating, setRevalidating] = useState(false);
   const [fixing, setFixing] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
-  const { data: boqFiles = [], isLoading: filesLoading } = useBoQFiles(projectId);
-  const activeFile = boqFiles[0];
-  const { data: items = [], isLoading: itemsLoading } = useBoQItems(activeFile?.id);
+  const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const result = await uploadAndParseBoQ(projectId, file, setUploadMsg);
-      toast.success(`${result.rowCount} items parsed successfully`);
-      qc.invalidateQueries({ queryKey: ["boq-files", projectId] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setUploading(false);
-      setUploadMsg("");
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
+  // Upload is now handled by CreateBoQDialog at project level
 
   const handlePricing = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
     try {
-      const result = await runPricingEngine(activeFile.id, cities, (current, total) => {
+      const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
       });
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
-      qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
+      qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["projects", projectId] });
     } catch (err: any) {
@@ -77,7 +56,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     } finally {
       setPricing(false);
     }
-  }, [activeFile, cities, qc]);
+  }, [boqFileId, cities, qc]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
@@ -92,7 +71,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     }
     try {
       if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
-      await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, activeFile?.id);
+      await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, boqFileId);
       toast.success("Excel file downloaded");
     } catch (err: any) {
       toast.error(err.message);
@@ -100,11 +79,11 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   };
 
   const handleRevalidate = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setRevalidating(true);
     try {
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] }),
         qc.invalidateQueries({ queryKey: ["boq-files", projectId] }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
@@ -114,7 +93,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     } finally {
       setRevalidating(false);
     }
-  }, [activeFile, projectId, qc]);
+  }, [boqFileId, projectId, qc]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -140,12 +119,12 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const canExport = exportSummary.canExport && consistency.consistent;
 
   const handleFixNow = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setFixing(true);
     try {
-      const newTotal = await fixConsistency(projectId, activeFile.id);
+      const newTotal = await fixConsistency(projectId, boqFileId);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
         qc.invalidateQueries({ queryKey: ["projects", projectId] }),
       ]);
@@ -155,9 +134,9 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     } finally {
       setFixing(false);
     }
-  }, [activeFile, projectId, qc]);
+  }, [boqFileId, projectId, qc]);
 
-  const isLoading = filesLoading || itemsLoading;
+  const isLoading = itemsLoading;
   const hasItems = items.length > 0;
 
   if (isLoading) {
@@ -168,19 +147,9 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
     );
   }
 
-  // Upload progress overlay
-  if (uploading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
-        <h3 className="text-lg font-semibold mb-2">{uploadMsg || "Processing..."}</h3>
-        <p className="text-sm text-muted-foreground">Please wait while the file is being processed</p>
-      </div>
-    );
-  }
 
-  // Empty state
-  if (!hasItems && boqFiles.length === 0) {
+  // Empty state — no items for this specific BoQ file
+  if (!hasItems) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
@@ -188,17 +157,13 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </div>
         <h3 className="text-lg font-semibold mb-2">{t("noBoQFiles")}</h3>
         <p className="text-muted-foreground max-w-sm mb-5">{t("noBoQDesc")}</p>
-        <Button variant="outline" className="gap-2" onClick={() => fileRef.current?.click()}>
-          <Upload className="w-4 h-4" /> {t("uploadBoQFile")}
-        </Button>
-        <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} accept=".xlsx,.xls" />
       </div>
     );
   }
 
   return (
     <div>
-      <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} accept=".xlsx,.xls" />
+      
 
       {/* Pricing progress */}
       {pricing && (
@@ -244,9 +209,6 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
         </div>
         <div className="flex items-center gap-2">
           {totalValue > 0 && <span className="text-sm font-semibold">{t("total")} {formatCurrency(totalValue)}</span>}
-          <Button variant="outline" size="sm" className="gap-1" onClick={() => fileRef.current?.click()}>
-            <Upload className="w-3 h-3" /> {t("uploadBoQ")}
-          </Button>
           <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
@@ -390,7 +352,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
       </div>
 
       {selectedItem && <PriceBreakdownModal item={selectedItem} projectId={projectId} onClose={() => setSelectedItem(null)} onUpdated={() => {
-        if (activeFile) qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] });
+        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
         qc.invalidateQueries({ queryKey: ["projects"] });
       }} />}
 
