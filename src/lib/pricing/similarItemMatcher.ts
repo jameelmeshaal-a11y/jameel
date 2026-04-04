@@ -139,7 +139,7 @@ export function tokenize(text: string): string[] {
   return text.toLowerCase().split(/[\s,،./-]+/).filter(w => w.length > 2);
 }
 
-function textSimilarity(a: string, b: string): number {
+export function textSimilarity(a: string, b: string): number {
   if (!a || !b) return 0;
   const tokensA = tokenize(a);
   const tokensB = tokenize(b);
