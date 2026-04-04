@@ -130,6 +130,27 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
   const totalValue = items.reduce((sum, item) => sum + (item.total_price || 0), 0);
   const modeLabels: Record<PricingMode, string> = { review: t("review"), smart: t("smart"), auto: t("auto") };
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
+  const consistency = useMemo(() => checkConsistency(items, project?.total_value ?? 0), [items, project?.total_value]);
+
+  const canExport = exportSummary.canExport && consistency.consistent;
+
+  const handleFixNow = useCallback(async () => {
+    if (!activeFile) return;
+    setFixing(true);
+    try {
+      const newTotal = await fixConsistency(projectId, activeFile.id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+        qc.invalidateQueries({ queryKey: ["projects", projectId] }),
+      ]);
+      toast.success(`Totals synced: ${formatCurrency(newTotal)}`);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setFixing(false);
+    }
+  }, [activeFile, projectId, qc]);
 
   const isLoading = filesLoading || itemsLoading;
   const hasItems = items.length > 0;
