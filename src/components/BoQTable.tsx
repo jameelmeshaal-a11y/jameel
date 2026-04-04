@@ -231,7 +231,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!exportSummary.canExport}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
               <Download className="w-3 h-3" /> {t("export")}
             </Button>
           )}
