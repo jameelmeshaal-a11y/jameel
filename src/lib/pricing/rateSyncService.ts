@@ -148,7 +148,7 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         max_rate: +(unitRate * 1.1).toFixed(2),
         ...pcts,
         source_type: "Field-Approved",
-        base_city: realCity || "Riyadh",
+        base_city: realCity || "",
         keywords,
         last_reviewed_at: new Date().toISOString(),
       })
@@ -164,21 +164,31 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
   }
 
   // 4. Insert rate_sources — "Approved" source with real BoQ name and city
-  await supabase.from("rate_sources").insert({
+  const { error: sourceError } = await supabase.from("rate_sources").insert({
     rate_library_id: libraryId,
     source_type: "Approved",
     rate: unitRate,
     is_verified: true,
-    city: realCity || "Riyadh",
+    city: realCity || "",
     source_name: boqFile.name,
     notes: `Synced from BoQ item ${itemData.item_no || itemId}`,
   });
 
+  if (sourceError) {
+    console.error("[RateSync] Insert rate_sources failed:", sourceError.message);
+    return null;
+  }
+
   // 5. Link boq_item to library entry
-  await supabase
+  const { error: linkError } = await supabase
     .from("boq_items")
     .update({ linked_rate_id: libraryId })
     .eq("id", itemId);
+
+  if (linkError) {
+    console.error("[RateSync] Update linked_rate_id failed:", linkError.message);
+    return null;
+  }
 
   console.log(`[RateSync] ${isNew ? "Created" : "Updated"} rate_library ${libraryId} from BoQ "${boqFile.name}" (city: ${realCity})`);
   return { libraryId, isNew, boqFileName: boqFile.name };
