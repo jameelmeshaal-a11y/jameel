@@ -1,119 +1,60 @@
 
 
-# Semantic Row Grouping — Full-Stack Implementation
+# Auto-Sync Manual Edits to Rate Library — Implementation Plan
 
-## Confirmed Scope
-
-All changes happen in the **database-backed pricing pipeline**. Nothing is UI-only.
-
-- `groupSemanticRows()` runs inside `runPricingEngine()` before classification/pricing
-- Merged descriptions are used for real `detectCategory()` and `findRateLibraryMatch()` calls
-- Pricing results are written to real `boq_items` records via Supabase
-- Contributor rows are marked `status: 'descriptive'` in the database
-- Low-confidence merged items are priced but flagged `status: 'needs_review'` with a note in the database
-- Manual overrides (`source === 'manual_override'` or non-empty `manual_overrides`) are preserved — never overwritten
-- On reopen, all statuses and notes come from the database — no frontend-only state
+## What This Does
+Every manual price save (QuickSave, Approve, Propagate) automatically syncs the approved price to the central rate library. The synced rate becomes the highest-priority "Approved" source, immediately reusable in current repricing and all future projects.
 
 ## Files
 
 | File | Action |
 |------|--------|
-| `src/lib/boqRowGrouping.ts` | **New** — `groupSemanticRows()` + types |
-| `src/lib/boqRowGrouping.test.ts` | **New** — 4 mandatory test cases |
-| `src/lib/pricingEngine.ts` | **Modified** — replace raw row loop with semantic block loop |
+| `src/lib/pricing/rateSyncService.ts` | **New** — core `syncToRateLibrary()` function |
+| `src/components/PriceBreakdownModal.tsx` | **Modified** — call sync from QuickSave, Approve, and Propagation flows |
+| `src/lib/pricing/propagationService.ts` | **Modified** — call sync after source item update |
 
-No database migration needed — uses existing columns.
+No database migration needed — all required columns already exist.
 
-## `src/lib/boqRowGrouping.ts`
+## New: `src/lib/pricing/rateSyncService.ts`
 
-```typescript
-interface SemanticBlock {
-  primaryRow: BoQItem;         // qty > 0 — receives pricing
-  contributorRows: BoQItem[];  // qty = 0 above — marked descriptive
-  mergedDescription: string;
-  mergedDescriptionEn: string;
-  quantity: number;
-  unit: string;
-  itemNo: string;
-}
-```
+Creates a `syncToRateLibrary()` function that:
 
-**Algorithm** (iterate rows by `row_index` ascending):
+1. **Fetches real context** — queries `boq_files` for real `name` and `city` (never hardcoded)
+2. **Optionally re-fetches item pricing** — when called without explicit values (Approve flow), fetches latest pricing from `boq_items` to guarantee freshness
+3. **Safe multi-factor matching** — queries `rate_library` by normalized `unit` + `category`, then scores by `textSimilarity` (reused from `similarItemMatcher.ts`). Only updates existing if similarity ≥ 0.7 AND `is_locked !== true`. Otherwise inserts new entry.
+4. **Upserts `rate_library`** — update: `source_type = "Revised"`, `last_reviewed_at = now()`; insert: `source_type = "Field-Approved"`, `min/max = rate ± 10%`
+5. **Inserts `rate_sources`** — `source_type: "Approved"`, `is_verified: true`, `city` from DB, `source_name` = real BoQ file name
+6. **Links item** — updates `boq_items.linked_rate_id` to library entry ID
+7. **Guards** — skips if `quantity <= 0` or `unitRate <= 0`
 
-1. Accumulate consecutive zero-quantity rows into a buffer
-2. When a priced row (qty > 0) appears:
-   - Check if buffered rows belong to the same item (no new `item_no`, no section-title patterns like "أعمال", "القسم", "SECTION", all-caps headers)
-   - If related: create a `SemanticBlock` with `mergedDescription = buffer descriptions + " — " + priced row description`
-   - If unrelated (section headers/notes): flush buffer as standalone descriptive rows, priced row gets its own block
-3. Standalone priced rows (no buffer) pass through unchanged
+## Modified: `PriceBreakdownModal.tsx`
 
-**Section-title detection** (prevents merging unrelated headers):
-- Row text matches patterns: starts with "أعمال", "القسم", "باب", "SECTION", numbered headings like "1-", "أولاً"
-- Row has no `item_no` and text is very short (< 5 words) and generic
+### `handleQuickSave` (after successful DB update, ~line 145)
+Calls `syncToRateLibrary()` passing the in-memory `values` and computed `unitRate` (these are fresh — just saved to DB).
 
-## `src/lib/pricingEngine.ts` Changes
+### `handleApprove` (~line 211, after successful status update)
+Calls `syncToRateLibrary()` with only `itemId` and `boqFileId` — the service re-fetches latest pricing from `boq_items` to guarantee no stale state.
 
-Replace the current `for (let i = 0; i < items.length; i++)` loop (lines 193–280) with:
+### `handlePropagationConfirm` (~line 200, after propagation succeeds)
+Calls `syncToRateLibrary()` passing the propagated `values`.
 
-```
-const blocks = groupSemanticRows(items);
+## Modified: `propagationService.ts`
 
-for (const block of blocks) {
-  // 1. Mark contributor rows as descriptive in DB
-  for (const contributor of block.contributorRows) {
-    await supabase.from("boq_items").update({
-      status: "descriptive",
-      notes: `وصف مدمج مع البند ${block.itemNo}`,
-      unit_rate: null, total_price: null, ...nullFields
-    }).eq("id", contributor.id);
-  }
+After the source item update succeeds (~line 64), fetches the source item's `description`, `description_en`, `unit`, `quantity` (extending existing query at line 67), then calls `syncToRateLibrary()` with the propagated values.
 
-  // 2. Manual override protection
-  if (block.primaryRow.source === "manual_override" 
-      || (block.primaryRow.manual_overrides && Object.keys(block.primaryRow.manual_overrides).length > 0)) {
-    // Skip — preserve existing pricing, flag for review
-    await supabase.from("boq_items").update({
-      status: "needs_review",
-      notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي محفوظ"
-    }).eq("id", block.primaryRow.id);
-    continue;
-  }
+## Why the Synced Rate Is Immediately Trusted
 
-  // 3. Classify using merged description
-  const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
+The existing pricing engine already:
+1. `findRateLibraryMatch()` finds entries by category + keywords
+2. `resolveFromSources()` prioritizes `source_type = "Approved"` over Supplier/Historical
+3. Uses the resolved rate as `target_rate`
 
-  // 4. Price using merged description + primary row's quantity
-  // ... existing library match / AI fallback logic, but using block.mergedDescription
+The inserted `rate_sources` entry with `"Approved"` + `is_verified: true` automatically becomes the highest-priority rate — no engine changes needed.
 
-  // 5. Low confidence adjustment (user's clarification)
-  if (detection.confidence < 60 || cost.confidence < 70) {
-    cost.confidence = Math.min(cost.confidence, 65);
-    status = "needs_review";
-    cost.explanation += " | ⚠️ تسعير بثقة منخفضة — وصف مدمج";
-  }
+## Technical Details
 
-  // 6. Write to primary row in DB
-  await supabase.from("boq_items").update({ ...pricingFields }).eq("id", block.primaryRow.id);
-}
-```
-
-Key: non-priced rows that are NOT part of any block (standalone descriptive) continue to be handled exactly as before (marked descriptive, pricing cleared).
-
-## Test Cases (`boqRowGrouping.test.ts`)
-
-| # | Input | Expected |
-|---|-------|----------|
-| 1 | Row A: title, qty=0 → Row B: continuation, qty>0 | One block, merged description, priced on B |
-| 2 | Two rows each with item_no + qty>0 | Two separate blocks, no merge |
-| 3 | Row A: heading qty=0 → Row B: scope qty=0 → Row C: qty>0 | One block, A+B+C merged, priced on C |
-| 4 | Row with `manual_overrides` set | Block created but pricing skipped |
-
-## Safety Guarantees
-
-- **Quantity**: never aggregated — always from `primaryRow.quantity` only
-- **Zero-qty rows**: never priced — always marked `descriptive`
-- **Low confidence**: priced but flagged `needs_review` with explanatory note in DB
-- **Manual overrides**: detected and skipped, flagged `needs_review`
-- **Section headers**: excluded from merging via pattern detection
-- **Read path**: all statuses, notes, confidence come from `boq_items` table — no frontend state
+- Text similarity functions (`textSimilarity`, `normalizeUnit`, `tokenize`) are imported from `similarItemMatcher.ts` — they need to be exported from there
+- Category is detected via `detectCategory()` from `pricingEngine.ts` at sync time (not stored on `boq_items`)
+- City comes from `boq_files.city` (real DB value, empty string if not set)
+- RLS on `rate_library` and `rate_sources` requires admin role for writes — this is correct for the approval workflow
 
