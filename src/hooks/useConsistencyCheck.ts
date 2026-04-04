@@ -44,14 +44,26 @@ export function checkConsistency(
  */
 export async function fixConsistency(
   projectId: string,
-  boqFileId: string | undefined
+  _boqFileId?: string | undefined
 ): Promise<number> {
-  if (!boqFileId) throw new Error("No BoQ file to recalculate");
+  // Aggregate totals from ALL BoQ files under this project
+  const { data: boqFiles, error: bfErr } = await supabase
+    .from("boq_files")
+    .select("id")
+    .eq("project_id", projectId);
 
+  if (bfErr) throw new Error(bfErr.message);
+  if (!boqFiles || boqFiles.length === 0) {
+    // No BoQ files — set total to 0
+    await supabase.from("projects").update({ total_value: 0 }).eq("id", projectId);
+    return 0;
+  }
+
+  const boqFileIds = boqFiles.map((f) => f.id);
   const { data: items, error } = await supabase
     .from("boq_items")
     .select("total_price")
-    .eq("boq_file_id", boqFileId);
+    .in("boq_file_id", boqFileIds);
 
   if (error) throw new Error(error.message);
 
