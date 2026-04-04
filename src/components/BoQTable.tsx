@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useBoQFiles, useBoQItems } from "@/hooks/useSupabase";
 import { uploadAndParseBoQ, exportBoQExcel } from "@/lib/boqParser";
-import { runPricingEngine, detectCategory } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
