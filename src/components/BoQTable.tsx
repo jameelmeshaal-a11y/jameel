@@ -91,7 +91,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     }
     try {
       if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
-      await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, activeFile?.id);
+      await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, boqFileId);
       toast.success("Excel file downloaded");
     } catch (err: any) {
       toast.error(err.message);
