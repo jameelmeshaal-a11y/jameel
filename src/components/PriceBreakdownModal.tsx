@@ -11,6 +11,7 @@ import { recalculateBreakdown, getUnitRate, type BreakdownValues, type Breakdown
 import { propagateChanges, type ChangeScope, type EditType } from "@/lib/pricing/propagationService";
 import type { SimilarItem } from "@/lib/pricing/similarItemMatcher";
 import { detectCategory } from "@/lib/pricingEngine";
+import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
 import PropagationScopeModal from "./PropagationScopeModal";
 
 interface BoQItemRow {
