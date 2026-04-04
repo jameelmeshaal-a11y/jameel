@@ -43,11 +43,12 @@ interface BoQItemRow {
 interface Props {
   item: BoQItemRow;
   projectId: string;
+  ownerMaterials?: boolean;
   onClose: () => void;
   onUpdated?: () => void;
 }
 
-export default function PriceBreakdownModal({ item, projectId, onClose, onUpdated }: Props) {
+export default function PriceBreakdownModal({ item, projectId, ownerMaterials = false, onClose, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [autoRebalance, setAutoRebalance] = useState(true);
