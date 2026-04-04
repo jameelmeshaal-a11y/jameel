@@ -144,6 +144,10 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         toast.error("فشل حفظ التعديل: " + error.message);
       } else {
         toast.success(`تم تعديل البند — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+        // Sync to rate library (fire-and-forget with logging)
+        syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id, values, unitRate })
+          .then(r => r && console.log(`[RateSync] QuickSave → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+          .catch(e => console.warn("[RateSync] QuickSave sync failed:", e));
         setEditing(false);
         onUpdated?.();
         onClose();
