@@ -64,7 +64,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
     try {
-      const result = await runPricingEngine(activeFile.id, cities, (current, total) => {
+      const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
       });
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
