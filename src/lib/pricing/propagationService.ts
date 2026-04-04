@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { BreakdownValues } from "./smartRecalculator";
 import { getUnitRate } from "./smartRecalculator";
 import type { SimilarItem } from "./similarItemMatcher";
+import { syncToRateLibrary } from "./rateSyncService";
 
 export type ChangeScope = "item_only" | "project" | "global";
 export type EditType = "project_override" | "master_update";
@@ -74,6 +75,14 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
         .update({ total_price: +(unitRate * srcItem.quantity).toFixed(2) })
         .eq("id", req.sourceItemId);
     }
+
+    // Auto-sync source item to rate library
+    syncToRateLibrary({
+      itemId: req.sourceItemId,
+      boqFileId: req.boqFileId,
+      values: req.newValues,
+      unitRate,
+    }).catch(e => console.warn("[RateSync] Propagation source sync failed:", e));
   }
 
   // 2. Propagate to similar items if scope > item_only

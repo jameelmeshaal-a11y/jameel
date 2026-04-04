@@ -127,7 +127,7 @@ function scoreAndFilter(
   return results.sort((a, b) => b.confidence - a.confidence);
 }
 
-function normalizeUnit(unit: string): string {
+export function normalizeUnit(unit: string): string {
   return unit.trim().toLowerCase()
     .replace(/م3|m3|م\.م/g, "m3")
     .replace(/م2|m2/g, "m2")
@@ -135,11 +135,11 @@ function normalizeUnit(unit: string): string {
     .replace(/عدد|no|pcs/g, "no");
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text.toLowerCase().split(/[\s,،./-]+/).filter(w => w.length > 2);
 }
 
-function textSimilarity(a: string, b: string): number {
+export function textSimilarity(a: string, b: string): number {
   if (!a || !b) return 0;
   const tokensA = tokenize(a);
   const tokensB = tokenize(b);

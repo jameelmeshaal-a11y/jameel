@@ -11,6 +11,7 @@ import { recalculateBreakdown, getUnitRate, type BreakdownValues, type Breakdown
 import { propagateChanges, type ChangeScope, type EditType } from "@/lib/pricing/propagationService";
 import type { SimilarItem } from "@/lib/pricing/similarItemMatcher";
 import { detectCategory } from "@/lib/pricingEngine";
+import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
 import PropagationScopeModal from "./PropagationScopeModal";
 
 interface BoQItemRow {
@@ -143,6 +144,10 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         toast.error("فشل حفظ التعديل: " + error.message);
       } else {
         toast.success(`تم تعديل البند — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+        // Sync to rate library (fire-and-forget with logging)
+        syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id, values, unitRate })
+          .then(r => r && console.log(`[RateSync] QuickSave → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+          .catch(e => console.warn("[RateSync] QuickSave sync failed:", e));
         setEditing(false);
         onUpdated?.();
         onClose();
@@ -198,6 +203,11 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         toast.success(`Updated ${result.updatedCount} item(s) — ${editType === "master_update" ? "Master rate" : "Project override"} (${scopeLabel})`);
       }
 
+      // Sync source item to rate library (fire-and-forget)
+      syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id, values, unitRate: getUnitRate(values) })
+        .then(r => r && console.log(`[RateSync] Propagation → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+        .catch(e => console.warn("[RateSync] Propagation sync failed:", e));
+
       setEditing(false);
       onUpdated?.();
       onClose();
@@ -218,6 +228,10 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       toast.error("فشل الاعتماد");
     } else {
       toast.success("تم اعتماد البند");
+      // Sync to rate library — re-fetches latest pricing from DB (no stale state)
+      syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id })
+        .then(r => r && console.log(`[RateSync] Approve → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+        .catch(e => console.warn("[RateSync] Approve sync failed:", e));
       onUpdated?.();
       onClose();
     }
