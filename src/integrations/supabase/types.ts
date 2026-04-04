@@ -624,6 +624,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      recalculate_project_total: {
+        Args: { p_project_id: string }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

@@ -376,15 +376,10 @@ export async function runPricingEngine(
   const validation = validatePricingQuality(pricedItems);
   await supabase.from("boq_files").update({ status: "priced" }).eq("id", boqFileId);
 
-  // Update project total
+  // Update project total using server-side aggregation (no row-limit issues)
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
   if (boqFile) {
-    const { data: allItems } = await supabase
-      .from("boq_items")
-      .select("total_price, boq_file_id, boq_files!inner(project_id)")
-      .eq("boq_files.project_id", boqFile.project_id);
-    const projectTotal = (allItems || []).reduce((sum, item) => sum + (item.total_price || 0), 0);
-    await supabase.from("projects").update({ total_value: projectTotal }).eq("id", boqFile.project_id);
+    await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
   }
 
   const summary = calculateProjectOverhead(totalValue, projectType);
