@@ -168,22 +168,35 @@ export default function ProjectDetail() {
                         : <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       }
                     </CollapsibleTrigger>
-                    <CollapsibleContent className="mt-1 ml-6 space-y-1">
+                    <CollapsibleContent className="mt-1 ml-6 space-y-2">
                       {files.map(file => (
                         <button
                           key={file.id}
                           onClick={() => setSelectedBoQFileId(file.id)}
-                          className={`flex items-center gap-3 w-full p-2.5 rounded-md text-sm transition-colors ${
+                          className={`flex flex-col w-full p-3 rounded-md text-sm transition-colors border ${
                             selectedBoQFileId === file.id
-                              ? "bg-primary/10 border border-primary/30"
-                              : "hover:bg-muted/50"
+                              ? "bg-primary/10 border-primary/30"
+                              : "border-transparent hover:bg-muted/50 hover:border-border"
                           }`}
                         >
-                          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-                          <span className="flex-1 text-left truncate">{file.name}</span>
-                          <Badge variant="secondary" className={`text-[10px] ${statusColor(file.status)}`}>
-                            {file.status}
-                          </Badge>
+                          <div className="flex items-center gap-3 w-full">
+                            <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <span className="flex-1 text-left font-medium truncate" dir="auto">{file.name}</span>
+                            <Badge variant="secondary" className={`text-[10px] ${statusColor(file.status)}`}>
+                              {file.status}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1.5 ml-7 text-xs text-muted-foreground">
+                            {(file as any).facility_name && (
+                              <span dir="auto">🏢 {(file as any).facility_name}</span>
+                            )}
+                            {(file as any).city && (
+                              <span>📍 {(file as any).city}</span>
+                            )}
+                            {(file as any).package_code && (
+                              <span>📦 {(file as any).package_code}</span>
+                            )}
+                          </div>
                         </button>
                       ))}
                     </CollapsibleContent>
