@@ -164,12 +164,13 @@ export async function runPricingEngine(
   onProgress?: (current: number, total: number) => void,
   projectType: ProjectType = "government_civil"
 ): Promise<PricingResult> {
-  // Fetch items, library, and location factors in parallel
-  const [itemsResult, libraryResult, locationFactors, sourcesMap] = await Promise.all([
+  // Fetch items, library, location factors, and BoQ file metadata in parallel
+  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
+    supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
   ]);
 
   if (itemsResult.error) throw new Error(`Failed to load items: ${itemsResult.error.message}`);
@@ -177,6 +178,7 @@ export async function runPricingEngine(
   if (!items || items.length === 0) throw new Error("No items found to price.");
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
+  const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
 
   // Resolve location from DB table
   const locationMatch = resolveLocationFactor(cities, locationFactors);
