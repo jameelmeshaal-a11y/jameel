@@ -146,6 +146,7 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
           package_code: form.packageCode.trim() || null,
           discipline: form.discipline.trim() || null,
           special_remarks: form.specialRemarks.trim() || null,
+          owner_materials: form.ownerMaterials,
         } as any)
         .select()
         .single();
