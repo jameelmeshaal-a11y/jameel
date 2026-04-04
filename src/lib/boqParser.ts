@@ -373,6 +373,11 @@ function writeExportRow(
 }
 
 function upsertAnalysisSheet(wb: XLSX.WorkBook, exportItems: any[]) {
+  // Filter: only include priced items with quantity > 0
+  const pricedItems = exportItems.filter(
+    (item) => item.quantity > 0 && (item.unit_rate || item.total_price)
+  );
+
   const rows = [
     [
       "Row ID / Item Code",
@@ -388,7 +393,7 @@ function upsertAnalysisSheet(wb: XLSX.WorkBook, exportItems: any[]) {
       "Category",
       "Location Factor",
     ],
-    ...exportItems.map((item) => {
+    ...pricedItems.map((item) => {
       const category = detectCategory(item.description ?? "", item.description_en ?? "").category.replace(/_/g, " ");
       return [
         item.item_no || item.row_index || "",
