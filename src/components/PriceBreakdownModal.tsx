@@ -96,7 +96,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
   const total = getUnitRate(values);
   const hasChanges = JSON.stringify(values) !== JSON.stringify(initial);
 
-  const breakdownItems: { key: BreakdownField; label: string; color: string }[] = [
+  const allBreakdownItems: { key: BreakdownField; label: string; color: string }[] = [
     { key: "materials", label: "Materials", color: "hsl(var(--info))" },
     { key: "labor", label: "Labor", color: "hsl(var(--primary))" },
     { key: "equipment", label: "Equipment", color: "hsl(var(--warning))" },
@@ -104,6 +104,10 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
     { key: "risk", label: "Risk", color: "hsl(var(--destructive))" },
     { key: "profit", label: "Profit", color: "hsl(var(--success))" },
   ];
+
+  const breakdownItems = ownerMaterials
+    ? allBreakdownItems.filter(b => b.key !== "materials")
+    : allBreakdownItems;
 
   // Quick save — just this item, no propagation modal
   const handleQuickSave = async () => {
