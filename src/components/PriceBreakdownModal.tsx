@@ -203,6 +203,11 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         toast.success(`Updated ${result.updatedCount} item(s) — ${editType === "master_update" ? "Master rate" : "Project override"} (${scopeLabel})`);
       }
 
+      // Sync source item to rate library (fire-and-forget)
+      syncToRateLibrary({ itemId: item.id, boqFileId: item.boq_file_id, values, unitRate: getUnitRate(values) })
+        .then(r => r && console.log(`[RateSync] Propagation → ${r.isNew ? "new" : "updated"} library entry ${r.libraryId}`))
+        .catch(e => console.warn("[RateSync] Propagation sync failed:", e));
+
       setEditing(false);
       onUpdated?.();
       onClose();
