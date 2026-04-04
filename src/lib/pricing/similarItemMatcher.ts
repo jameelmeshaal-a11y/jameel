@@ -127,7 +127,7 @@ function scoreAndFilter(
   return results.sort((a, b) => b.confidence - a.confidence);
 }
 
-function normalizeUnit(unit: string): string {
+export function normalizeUnit(unit: string): string {
   return unit.trim().toLowerCase()
     .replace(/م3|m3|م\.م/g, "m3")
     .replace(/م2|m2/g, "m2")
