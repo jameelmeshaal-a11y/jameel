@@ -11,6 +11,7 @@ import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -73,7 +74,12 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
 
   const handleExport = async () => {
     if (items.length === 0) return;
+    if (!exportSummary.canExport) {
+      toast.error(exportSummary.errorMessage);
+      return;
+    }
     try {
+      if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
       await exportBoQExcel(items, `Priced_BoQ_${Date.now()}.xlsx`, activeFile?.id);
       toast.success("Excel file downloaded");
     } catch (err: any) {
@@ -99,6 +105,7 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
 
   const totalValue = items.reduce((sum, item) => sum + (item.total_price || 0), 0);
   const modeLabels: Record<PricingMode, string> = { review: t("review"), smart: t("smart"), auto: t("auto") };
+  const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
 
   const isLoading = filesLoading || itemsLoading;
   const hasItems = items.length > 0;
@@ -175,12 +182,32 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!exportSummary.canExport}>
               <Download className="w-3 h-3" /> {t("export")}
             </Button>
           )}
         </div>
       </div>
+
+      {hasItems && (
+        <div className="rounded-lg border bg-muted/30 p-3 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-medium">Export summary</div>
+              <div className="text-xs text-muted-foreground">Priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Invalid rows: {exportSummary.invalidRowsCount}</div>
+            </div>
+            <Badge variant={exportSummary.exportStatus === "blocked" ? "destructive" : exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
+              {exportSummary.exportStatus === "ready" ? "Ready" : exportSummary.exportStatus === "warning" ? "Warning" : "Blocked"}
+            </Badge>
+          </div>
+          {exportSummary.warningMessage && (
+            <div className="text-xs text-muted-foreground mt-2">{exportSummary.warningMessage}</div>
+          )}
+          {exportSummary.errorMessage && (
+            <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
@@ -215,45 +242,49 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
           </thead>
           <tbody>
             {items.map((item, index) => {
-              const detected = detectCategory(item.description, item.description_en);
-              const catLabel = detected.category.replace(/_/g, " ");
-              const isDescriptive = !isPriceableItem(item);
+              const rowClassification = classifyBoQRow(item);
+              const isPriced = rowClassification.type === "priced";
+              const isDescriptive = rowClassification.type === "descriptive";
+              const isInvalid = rowClassification.type === "invalid";
+              const detected = isPriced ? detectCategory(item.description, item.description_en) : null;
+              const catLabel = detected?.category.replace(/_/g, " ") || "";
               return (
-              <tr key={item.id} className={`group ${isDescriptive ? "opacity-50 bg-muted/30" : ""}`}>
+              <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
                 <td className="protected-col font-mono text-xs">{item.item_no}</td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
+                  {isInvalid && <Badge variant="destructive" className="text-[9px] mt-1">Invalid</Badge>}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
                 <td className="pricing-col">
-                  {!isDescriptive && (
+                  {isPriced && (
                     <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
                       {catLabel}
                     </Badge>
                   )}
                 </td>
-                <td className="pricing-col text-right font-mono text-xs font-medium">{!isDescriptive && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-xs font-semibold">{!isDescriptive && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.materials ? formatNumber(item.materials) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.labor ? formatNumber(item.labor) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.equipment ? formatNumber(item.equipment) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.logistics ? formatNumber(item.logistics) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.risk ? formatNumber(item.risk) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.profit ? formatNumber(item.profit) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>
                 <td className="text-center">
-                  {!isDescriptive && item.confidence && (
+                  {isPriced && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>
                       {item.confidence}%
                     </span>
                   )}
                 </td>
-                <td className="text-center">{isDescriptive ? <span className="text-[10px] text-muted-foreground">—</span> : getStatusIcon(item.status)}</td>
+                <td className="text-center">{isPriced ? getStatusIcon(item.status) : <span className="text-[10px] text-muted-foreground">—</span>}</td>
                 <td>
-                  {!isDescriptive && (
+                  {isPriced && (
                     <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
                       <Eye className="w-3.5 h-3.5" />
                     </Button>

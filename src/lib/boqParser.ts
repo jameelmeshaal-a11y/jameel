@@ -1,6 +1,13 @@
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { detectCategory } from "./pricing/categoryDetector";
+import {
+  buildBoQExportSummary,
+  classifyBoQRow,
+  getPricedAnalysisRows,
+  getRowClassificationNote,
+  getRowPersistenceStatus,
+} from "./boqRowClassification";
 
 export interface ParsedBoQRow {
   item_no: string;
@@ -38,7 +45,7 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
     if (!desc && qty === 0) continue; // skip empty rows
 
     rows.push({
-      item_no: String(row[colMap.itemNo] ?? "").trim() || String(rows.length + 1),
+      item_no: String(row[colMap.itemNo] ?? "").trim(),
       description: desc,
       description_en: "",
       unit: String(row[colMap.unit] ?? "").trim(),
@@ -132,7 +139,8 @@ export async function uploadAndParseBoQ(
     unit: row.unit,
     quantity: row.quantity,
     row_index: row.row_index,
-    status: "pending",
+    status: getRowPersistenceStatus(row),
+    notes: getRowClassificationNote(row),
   }));
 
   // Insert in batches of 100
@@ -193,6 +201,10 @@ export async function exportBoQExcel(
     if (!exportItems.length) {
       throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
     }
+    const exportSummary = buildBoQExportSummary(exportItems);
+    if (!exportSummary.canExport) {
+      throw new Error(exportSummary.errorMessage || "Export failed because one or more invalid payable item rows could not be priced or written safely.");
+    }
 
     const { data: blob, error: downloadError } = await supabase.storage
       .from("boq-files")
@@ -238,18 +250,9 @@ export async function exportBoQExcel(
     let mainExpectedWrites = 0;
     const allowedMainCells = new Set<string>();
 
-    // SAFETY CHECK: block export if zero-quantity rows have pricing
-    const invalidPricedRows = exportItems.filter(
-      (item) => (!item.quantity || item.quantity <= 0) && (item.unit_rate || item.total_price)
-    );
-    if (invalidPricedRows.length > 0) {
-      throw new Error("Invalid pricing: descriptive rows (zero quantity) must not be priced.");
-    }
-
     for (let i = 0; i < exportItems.length; i++) {
       const item = exportItems[i];
-      // Skip zero-quantity descriptive rows for main sheet pricing write
-      if (!item.quantity || item.quantity <= 0) continue;
+      if (classifyBoQRow(item).type !== "priced") continue;
 
       const targetRow = typeof item.row_index === "number" && item.row_index > headerRow
         ? item.row_index
@@ -276,7 +279,7 @@ export async function exportBoQExcel(
     const formulasPreserved = compareFormulaMaps(originalFormulaMap, captureFormulaMap(wb, originalSheetNames));
     const mainSheetUnchanged = compareWorksheetCells(originalMainSheetCells, ws, allowedMainCells);
     const analysisStoredSeparately = Boolean(analysisSheet?.["!ref"]);
-    const writeBackComplete = mainExpectedWrites > 0 && mainWrittenCells > 0 && mainWrittenCells === mainExpectedWrites;
+    const writeBackComplete = mainWrittenCells === mainExpectedWrites;
 
     if (!workbookPreserved || !writeBackComplete || !analysisStoredSeparately || !formulasPreserved || !mainSheetUnchanged) {
       throw new Error("Export failed because workbook preservation or pricing write-back was incomplete.");
@@ -384,10 +387,7 @@ function writeExportRow(
 }
 
 function upsertAnalysisSheet(wb: XLSX.WorkBook, exportItems: any[]) {
-  // Filter: only include priced items with quantity > 0
-  const pricedItems = exportItems.filter(
-    (item) => item.quantity > 0 && (item.unit_rate || item.total_price)
-  );
+  const pricedItems = getPricedAnalysisRows(exportItems);
 
   const rows = [
     [
