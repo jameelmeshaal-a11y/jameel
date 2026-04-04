@@ -76,7 +76,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     } finally {
       setPricing(false);
     }
-  }, [activeFile, cities, qc]);
+  }, [boqFileId, cities, qc]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
