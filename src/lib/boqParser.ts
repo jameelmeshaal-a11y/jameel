@@ -238,8 +238,19 @@ export async function exportBoQExcel(
     let mainExpectedWrites = 0;
     const allowedMainCells = new Set<string>();
 
+    // SAFETY CHECK: block export if zero-quantity rows have pricing
+    const invalidPricedRows = exportItems.filter(
+      (item) => (!item.quantity || item.quantity <= 0) && (item.unit_rate || item.total_price)
+    );
+    if (invalidPricedRows.length > 0) {
+      throw new Error("Invalid pricing: descriptive rows (zero quantity) must not be priced.");
+    }
+
     for (let i = 0; i < exportItems.length; i++) {
       const item = exportItems[i];
+      // Skip zero-quantity descriptive rows for main sheet pricing write
+      if (!item.quantity || item.quantity <= 0) continue;
+
       const targetRow = typeof item.row_index === "number" && item.row_index > headerRow
         ? item.row_index
         : headerRow + 1 + i;
