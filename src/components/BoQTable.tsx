@@ -113,7 +113,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     } finally {
       setRevalidating(false);
     }
-  }, [activeFile, projectId, qc]);
+  }, [boqFileId, projectId, qc]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
