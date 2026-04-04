@@ -209,9 +209,6 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
         </div>
         <div className="flex items-center gap-2">
           {totalValue > 0 && <span className="text-sm font-semibold">{t("total")} {formatCurrency(totalValue)}</span>}
-          <Button variant="outline" size="sm" className="gap-1" onClick={() => fileRef.current?.click()}>
-            <Upload className="w-3 h-3" /> {t("uploadBoQ")}
-          </Button>
           <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
