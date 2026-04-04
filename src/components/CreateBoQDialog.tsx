@@ -98,7 +98,7 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
 
   const set = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }));
 
-  const isLang = (lang: string) => language === lang;
+  const isLang = (l: string) => lang === l;
 
   const requiredFilled =
     form.boqName.trim() !== "" &&

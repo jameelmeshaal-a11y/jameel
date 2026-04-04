@@ -18,11 +18,12 @@ import { checkConsistency, fixConsistency } from "@/hooks/useConsistencyCheck";
 type PricingMode = "review" | "smart" | "auto";
 
 interface BoQTableProps {
+  boqFileId: string;
   projectId: string;
   cities: string[];
 }
 
-export default function BoQTable({ projectId, cities }: BoQTableProps) {
+export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps) {
   const { t } = useLanguage();
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
