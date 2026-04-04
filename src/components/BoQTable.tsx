@@ -60,7 +60,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   };
 
   const handlePricing = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
     try {
