@@ -1,21 +1,48 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useState } from "react";
-import { ArrowLeft, FileText, Upload, FolderOpen, Settings, BookOpen, Loader2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { ArrowLeft, FileText, FolderOpen, Settings, Loader2, Plus, ChevronDown, ChevronRight, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
 import BoQTable from "@/components/BoQTable";
 import DocumentsTab from "@/components/DocumentsTab";
-import { useProject } from "@/hooks/useSupabase";
+import CreateBoQDialog from "@/components/CreateBoQDialog";
+import { useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { formatCurrency } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState("boq");
+  const [createBoQOpen, setCreateBoQOpen] = useState(false);
+  const [selectedBoQFileId, setSelectedBoQFileId] = useState<string | null>(null);
+  const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
+
   const { data: project, isLoading } = useProject(id);
+  const { data: boqFiles = [], isLoading: boqFilesLoading } = useBoQFiles(id);
+
+  // Group BoQ files by facility_name
+  const facilityGroups = useMemo(() => {
+    const groups: Record<string, typeof boqFiles> = {};
+    for (const file of boqFiles) {
+      const key = (file as any).facility_name || t("ungroupedFacility");
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(file);
+    }
+    return groups;
+  }, [boqFiles, t]);
+
+  const toggleFacility = (name: string) => {
+    setExpandedFacilities(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   const tabs = [
     { id: "boq", label: t("billsOfQuantities"), icon: FileText },
@@ -48,6 +75,15 @@ export default function ProjectDetail() {
     );
   }
 
+  const statusColor = (status: string) => {
+    switch (status) {
+      case "ready": case "parsed": case "priced": return "bg-emerald-500 text-white";
+      case "failed": case "error": return "bg-destructive text-destructive-foreground";
+      case "processing": case "uploading": return "bg-amber-500 text-white";
+      default: return "";
+    }
+  };
+
   return (
     <AppLayout>
       <div className="animate-fade-in">
@@ -76,7 +112,7 @@ export default function ProjectDetail() {
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setActiveTab(tab.id); setSelectedBoQFileId(null); }}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.id
                   ? "border-primary text-primary"
@@ -89,7 +125,93 @@ export default function ProjectDetail() {
           ))}
         </div>
 
-        {activeTab === "boq" && <BoQTable projectId={project.id} cities={project.cities || []} />}
+        {activeTab === "boq" && (
+          <div>
+            {/* Add New BoQ button — project level */}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">{t("billsOfQuantities")}</h3>
+              <Button className="gap-2" onClick={() => setCreateBoQOpen(true)}>
+                <Plus className="w-4 h-4" /> {t("addNewBoQ")}
+              </Button>
+            </div>
+
+            {/* BoQ files grouped by facility */}
+            {boqFilesLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : boqFiles.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
+                  <FileText className="w-7 h-7 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2">{t("noBoQFiles")}</h3>
+                <p className="text-muted-foreground max-w-sm mb-5">{t("noBoQDesc")}</p>
+                <Button className="gap-2" onClick={() => setCreateBoQOpen(true)}>
+                  <Plus className="w-4 h-4" /> {t("addNewBoQ")}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3 mb-6">
+                {Object.entries(facilityGroups).map(([facilityName, files]) => (
+                  <Collapsible
+                    key={facilityName}
+                    open={expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1}
+                    onOpenChange={() => toggleFacility(facilityName)}
+                  >
+                    <CollapsibleTrigger className="flex items-center gap-2 w-full p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
+                      <Building2 className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium text-sm flex-1 text-left">{facilityName}</span>
+                      <Badge variant="secondary" className="text-xs">{files.length}</Badge>
+                      {(expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1)
+                        ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                        : <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      }
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-1 ml-6 space-y-1">
+                      {files.map(file => (
+                        <button
+                          key={file.id}
+                          onClick={() => setSelectedBoQFileId(file.id)}
+                          className={`flex items-center gap-3 w-full p-2.5 rounded-md text-sm transition-colors ${
+                            selectedBoQFileId === file.id
+                              ? "bg-primary/10 border border-primary/30"
+                              : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                          <span className="flex-1 text-left truncate">{file.name}</span>
+                          <Badge variant="secondary" className={`text-[10px] ${statusColor(file.status)}`}>
+                            {file.status}
+                          </Badge>
+                        </button>
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </div>
+            )}
+
+            {/* Selected BoQ table */}
+            {selectedBoQFileId ? (
+              <BoQTable boqFileId={selectedBoQFileId} projectId={project.id} cities={project.cities || []} />
+            ) : boqFiles.length > 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center border rounded-lg bg-muted/20">
+                <FileText className="w-8 h-8 text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">{t("selectBoQ")}</p>
+                <p className="text-xs text-muted-foreground mt-1">{t("selectBoQDesc")}</p>
+              </div>
+            ) : null}
+
+            <CreateBoQDialog
+              open={createBoQOpen}
+              onOpenChange={setCreateBoQOpen}
+              projectId={project.id}
+              projectCities={project.cities || []}
+            />
+          </div>
+        )}
+
         {activeTab === "documents" && <DocumentsTab projectId={project.id} />}
         {activeTab === "settings" && (
           <div className="stat-card">
