@@ -261,6 +261,17 @@ export async function runPricingEngine(
       }
     }
 
+    // Owner-supplied materials: zero out materials and recalculate totals
+    if (ownerMaterials) {
+      cost = {
+        ...cost,
+        materials: 0,
+        unitRate: +(cost.labor + cost.equipment + cost.logistics + cost.risk + cost.profit).toFixed(2),
+        totalPrice: +(((cost.labor + cost.equipment + cost.logistics + cost.risk + cost.profit) * item.quantity)).toFixed(2),
+        explanation: cost.explanation + " | 📦 Owner-supplied materials",
+      };
+    }
+
     const { error: updateError } = await supabase
       .from("boq_items")
       .update({
