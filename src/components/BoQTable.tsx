@@ -37,24 +37,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const result = await uploadAndParseBoQ(projectId, file, setUploadMsg);
-      toast.success(`${result.rowCount} items parsed successfully`);
-      qc.invalidateQueries({ queryKey: ["boq-files", projectId] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setUploading(false);
-      setUploadMsg("");
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
+  // Upload is now handled by CreateBoQDialog at project level
 
   const handlePricing = useCallback(async () => {
     if (!boqFileId) return;
