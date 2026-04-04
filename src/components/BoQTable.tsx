@@ -139,7 +139,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
   const canExport = exportSummary.canExport && consistency.consistent;
 
   const handleFixNow = useCallback(async () => {
-    if (!activeFile) return;
+    if (!boqFileId) return;
     setFixing(true);
     try {
       const newTotal = await fixConsistency(projectId, activeFile.id);
