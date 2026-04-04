@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
-import { checkConsistency, fixConsistency } from "@/hooks/useConsistencyCheck";
+import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -49,9 +49,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         setPricingProgress({ current, total });
       });
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
-      qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["projects", projectId] });
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -84,8 +87,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     setRevalidating(true);
     try {
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] }),
-        qc.invalidateQueries({ queryKey: ["boq-files", projectId] }),
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["boq-files", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
       toast.success("Project revalidated");
@@ -115,7 +120,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const totalValue = items.reduce((sum, item) => sum + (item.total_price || 0), 0);
   const modeLabels: Record<PricingMode, string> = { review: t("review"), smart: t("smart"), auto: t("auto") };
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
-  const consistency = useMemo(() => checkConsistency(items, project?.total_value ?? 0), [items, project?.total_value]);
+  const { data: consistency } = useProjectConsistency(projectId, project?.total_value ?? 0);
 
   const canExport = exportSummary.canExport && consistency.consistent;
 
@@ -125,9 +130,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     try {
       const newTotal = await fixConsistency(projectId, boqFileId);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] }),
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
-        qc.invalidateQueries({ queryKey: ["projects", projectId] }),
       ]);
       toast.success(`Totals synced: ${formatCurrency(newTotal)}`);
     } catch (err: any) {
@@ -188,7 +194,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             <div>
               <div className="text-sm font-medium text-destructive">Data inconsistency detected</div>
               <div className="text-xs text-muted-foreground">
-                Table total: {formatCurrency(consistency.tableTotal)} · Database total: {formatCurrency(consistency.dbTotal)} · Difference: {formatCurrency(consistency.difference)}
+                Aggregated BoQ total: {formatCurrency(consistency.tableTotal)} · Saved project total: {formatCurrency(consistency.dbTotal)} · Difference: {formatCurrency(consistency.difference)}
               </div>
             </div>
           </div>
