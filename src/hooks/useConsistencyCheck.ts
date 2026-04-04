@@ -46,35 +46,12 @@ export async function fixConsistency(
   projectId: string,
   _boqFileId?: string | undefined
 ): Promise<number> {
-  // Aggregate totals from ALL BoQ files under this project
-  const { data: boqFiles, error: bfErr } = await supabase
-    .from("boq_files")
-    .select("id")
-    .eq("project_id", projectId);
-
-  if (bfErr) throw new Error(bfErr.message);
-  if (!boqFiles || boqFiles.length === 0) {
-    // No BoQ files — set total to 0
-    await supabase.from("projects").update({ total_value: 0 }).eq("id", projectId);
-    return 0;
-  }
-
-  const boqFileIds = boqFiles.map((f) => f.id);
-  const { data: items, error } = await supabase
-    .from("boq_items")
-    .select("total_price")
-    .in("boq_file_id", boqFileIds);
+  // Use server-side aggregation to avoid row-limit issues
+  const { data, error } = await supabase.rpc("recalculate_project_total", {
+    p_project_id: projectId,
+  });
 
   if (error) throw new Error(error.message);
 
-  const newTotal = (items || []).reduce((s, i) => s + (i.total_price || 0), 0);
-
-  const { error: updateErr } = await supabase
-    .from("projects")
-    .update({ total_value: newTotal })
-    .eq("id", projectId);
-
-  if (updateErr) throw new Error(updateErr.message);
-
-  return newTotal;
+  return (data as number) ?? 0;
 }
