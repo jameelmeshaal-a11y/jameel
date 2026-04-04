@@ -148,7 +148,7 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         max_rate: +(unitRate * 1.1).toFixed(2),
         ...pcts,
         source_type: "Field-Approved",
-        base_city: realCity || "Riyadh",
+        base_city: realCity || "",
         keywords,
         last_reviewed_at: new Date().toISOString(),
       })
