@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useBoQFiles, useBoQItems } from "@/hooks/useSupabase";
 import { uploadAndParseBoQ, exportBoQExcel } from "@/lib/boqParser";
-import { runPricingEngine, detectCategory } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -217,41 +217,47 @@ export default function BoQTable({ projectId, cities }: BoQTableProps) {
             {items.map((item, index) => {
               const detected = detectCategory(item.description, item.description_en);
               const catLabel = detected.category.replace(/_/g, " ");
+              const isDescriptive = !isPriceableItem(item);
               return (
-              <tr key={item.id} className="group">
+              <tr key={item.id} className={`group ${isDescriptive ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
                 <td className="protected-col font-mono text-xs">{item.item_no}</td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
+                  {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
                 <td className="pricing-col">
-                  <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
-                    {catLabel}
-                  </Badge>
+                  {!isDescriptive && (
+                    <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
+                      {catLabel}
+                    </Badge>
+                  )}
                 </td>
-                <td className="pricing-col text-right font-mono text-xs font-medium">{item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-xs font-semibold">{item.total_price ? formatCurrency(item.total_price) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.materials ? formatNumber(item.materials) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.labor ? formatNumber(item.labor) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.equipment ? formatNumber(item.equipment) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.logistics ? formatNumber(item.logistics) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.risk ? formatNumber(item.risk) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{item.profit ? formatNumber(item.profit) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-medium">{!isDescriptive && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-semibold">{!isDescriptive && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.materials ? formatNumber(item.materials) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.labor ? formatNumber(item.labor) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.equipment ? formatNumber(item.equipment) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.logistics ? formatNumber(item.logistics) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.risk ? formatNumber(item.risk) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{!isDescriptive && item.profit ? formatNumber(item.profit) : "—"}</td>
                 <td className="text-center">
-                  {item.confidence && (
+                  {!isDescriptive && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>
                       {item.confidence}%
                     </span>
                   )}
                 </td>
-                <td className="text-center">{getStatusIcon(item.status)}</td>
+                <td className="text-center">{isDescriptive ? <span className="text-[10px] text-muted-foreground">—</span> : getStatusIcon(item.status)}</td>
                 <td>
-                  <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
-                    <Eye className="w-3.5 h-3.5" />
-                  </Button>
+                  {!isDescriptive && (
+                    <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
+                      <Eye className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                 </td>
               </tr>
               );

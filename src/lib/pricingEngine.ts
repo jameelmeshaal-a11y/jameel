@@ -30,6 +30,11 @@ export { validatePricingQuality, type ValidationResult } from "./pricing/pricing
 export { detectCategory } from "./pricing/categoryDetector";
 export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
 
+/** Check if a row is a valid priceable item (quantity > 0, has unit and item code) */
+export function isPriceableItem(item: { quantity: number; unit?: string; item_no?: string }): boolean {
+  return item.quantity > 0 && Boolean(item.unit?.trim()) && Boolean(item.item_no?.trim());
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface RateLibraryItem {
@@ -184,6 +189,21 @@ export async function runPricingEngine(
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
+
+    // ZERO QUANTITY RULE: skip descriptive/non-priced rows
+    if (!isPriceableItem(item)) {
+      await supabase.from("boq_items").update({
+        status: "description",
+        notes: "وصف / بند غير مسعّر — Description / Non-priced",
+        unit_rate: null, total_price: null,
+        materials: null, labor: null, equipment: null, logistics: null,
+        risk: null, profit: null, confidence: null, source: null,
+        linked_rate_id: null, location_factor: null,
+      }).eq("id", item.id);
+      onProgress?.(i + 1, items.length);
+      continue;
+    }
+
     const detection = detectCategory(item.description, item.description_en);
 
     const libraryMatch = findRateLibraryMatch(item.description, detection.category, rateLibrary, item.linked_rate_id);
