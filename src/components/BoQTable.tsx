@@ -142,7 +142,7 @@ export default function BoQTable({ boqFileId, projectId, cities }: BoQTableProps
     if (!boqFileId) return;
     setFixing(true);
     try {
-      const newTotal = await fixConsistency(projectId, activeFile.id);
+      const newTotal = await fixConsistency(projectId, boqFileId);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["boq-items", activeFile.id] }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
