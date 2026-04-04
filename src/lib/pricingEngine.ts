@@ -189,6 +189,21 @@ export async function runPricingEngine(
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
+
+    // ZERO QUANTITY RULE: skip descriptive/non-priced rows
+    if (!isPriceableItem(item)) {
+      await supabase.from("boq_items").update({
+        status: "description",
+        notes: "وصف / بند غير مسعّر — Description / Non-priced",
+        unit_rate: null, total_price: null,
+        materials: null, labor: null, equipment: null, logistics: null,
+        risk: null, profit: null, confidence: null, source: null,
+        linked_rate_id: null, location_factor: null,
+      }).eq("id", item.id);
+      onProgress?.(i + 1, items.length);
+      continue;
+    }
+
     const detection = detectCategory(item.description, item.description_en);
 
     const libraryMatch = findRateLibraryMatch(item.description, detection.category, rateLibrary, item.linked_rate_id);
