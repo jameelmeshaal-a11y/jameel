@@ -146,12 +146,14 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
 
       if (!syncResult) {
         // Partial success: boq_items saved but library sync failed
-        // Modal stays open, values preserved, Save button re-enables for retry
+        // Still recalculate project total since total_price was already saved
+        await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).catch(() => {});
         toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
         return;
       }
 
-      // Full success
+      // Full success — recalculate project total
+      await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
       toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
       setEditing(false);
       onUpdated?.();
