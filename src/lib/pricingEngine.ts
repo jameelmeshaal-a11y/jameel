@@ -324,6 +324,7 @@ export async function runPricingEngine(
     const matchConfidence = libraryResult?.confidence ?? 0;
 
     let cost: PricedResult;
+    let extremeDeviation = false;
 
     if (matchedItem) {
       libraryHits++;
@@ -381,6 +382,23 @@ export async function runPricingEngine(
       if (block.contributorRows.length > 0) {
         cost.explanation += ` | 🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`;
       }
+
+      // Deviation protection: compare AI price against closest library entry
+      const normalizedUnit_ = normalizeUnit(block.primaryRow.unit);
+      const sameUnitRates = rateLibrary.filter(l => normalizeUnit(l.unit) === normalizedUnit_);
+      if (sameUnitRates.length > 0 && cost.unitRate > 0) {
+        const closest = sameUnitRates.reduce((a, b) =>
+          Math.abs(a.target_rate - cost.unitRate) < Math.abs(b.target_rate - cost.unitRate) ? a : b
+        );
+        if (closest.target_rate > 0) {
+          const deviation = Math.abs(cost.unitRate - closest.target_rate) / closest.target_rate;
+          if (deviation > 3.0) {
+            extremeDeviation = true;
+            cost.confidence = Math.min(cost.confidence, 40);
+            cost.explanation += ` | ⚠️ انحراف ${Math.round(deviation * 100)}% عن "${closest.standard_name_ar}" (${closest.target_rate} SAR)`;
+          }
+        }
+      }
     }
 
     // 6. Confidence-based status assignment
@@ -392,6 +410,9 @@ export async function runPricingEngine(
         itemStatus = "needs_review";
         cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
       }
+    } else if (extremeDeviation) {
+      itemStatus = "needs_review";
+      cost.explanation += " | 🚫 تسعير AI مرفوض — انحراف كبير عن مكتبة الأسعار";
     } else if (detection.confidence < 60 || cost.confidence < 70) {
       cost.confidence = Math.min(cost.confidence, 65);
       itemStatus = "needs_review";
