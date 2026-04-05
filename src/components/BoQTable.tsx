@@ -68,9 +68,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (items.length === 0) return;
     
     if (!exportSummary.canExport) {
-      if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
-      toast.error(exportSummary.errorMessage);
+      toast.error(exportSummary.errorMessage ?? "No priced items found");
       return;
+    }
+    if (exportSummary.warningRows.length > 0) {
+      setBlockingRowsOpen(true);
     }
     try {
       if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
@@ -248,10 +250,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-sm font-medium">Export readiness summary</div>
-              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Invalid payable rows: {exportSummary.invalidRowsCount}</div>
+              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Rows with warnings: {exportSummary.warningRowsCount}</div>
             </div>
-            <Badge variant={exportSummary.exportStatus === "blocked" ? "destructive" : exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
-              {exportSummary.exportStatus === "ready" ? "Ready" : exportSummary.exportStatus === "warning" ? "Warning" : "Blocked"}
+            <Badge variant={exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
+              {exportSummary.exportStatus === "ready" ? "Ready" : "Warning"}
             </Badge>
           </div>
           {exportSummary.warningMessage && (
@@ -260,11 +262,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           {exportSummary.errorMessage && (
             <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
           )}
-          {exportSummary.blockingRows.length > 0 && (
+          {exportSummary.warningRows.length > 0 && (
             <div className="mt-3 rounded-md border bg-background/70 p-3">
-              <div className="text-xs font-medium mb-2">Blocking reasons</div>
+              <div className="text-xs font-medium mb-2">Warnings</div>
               <div className="space-y-2">
-                {exportSummary.blockingRows.slice(0, 3).map((row, index) => (
+                {exportSummary.warningRows.slice(0, 3).map((row, index) => (
                   <div key={`${row.rowNumber ?? "row"}-${row.itemCode}-${index}`} className="text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">Row {row.rowNumber ?? "—"}</span>
                     {row.itemCode ? ` · ${row.itemCode}` : ""}
@@ -275,7 +277,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" className="gap-1" onClick={() => setBlockingRowsOpen(true)}>
-                  <ListX className="w-3.5 h-3.5" /> View Blocking Rows
+                  <ListX className="w-3.5 h-3.5" /> View Warnings
                 </Button>
                 <Button variant="outline" size="sm" className="gap-1" onClick={handleRevalidate} disabled={revalidating}>
                   <RefreshCw className={`w-3.5 h-3.5 ${revalidating ? "animate-spin" : ""}`} /> Revalidate Project
@@ -322,7 +324,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               const rowClassification = classifyBoQRow(item);
               const isPriced = rowClassification.type === "priced";
               const isDescriptive = rowClassification.type === "descriptive";
-              const isInvalid = rowClassification.type === "invalid";
+              const hasWarnings = rowClassification.warnings && rowClassification.warnings.length > 0;
               const detected = isPriced ? detectCategory(item.description, item.description_en) : null;
               const catLabel = detected?.category.replace(/_/g, " ") || "";
               return (
@@ -333,7 +335,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
-                  {isInvalid && <Badge variant="destructive" className="text-[9px] mt-1">Invalid</Badge>}
+                  {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
@@ -382,7 +384,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       <BoQBlockingRowsDialog
         open={blockingRowsOpen}
         onOpenChange={setBlockingRowsOpen}
-        rows={exportSummary.blockingRows}
+        rows={exportSummary.warningRows}
         onRevalidate={handleRevalidate}
         revalidating={revalidating}
       />
