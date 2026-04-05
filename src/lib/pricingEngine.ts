@@ -444,7 +444,7 @@ export async function runPricingEngine(
         profit: cost.profit,
         unit_rate: cost.unitRate,
         total_price: cost.totalPrice,
-        confidence: matchedItem ? matchConfidence : cost.confidence,
+        confidence: Math.max(0, Math.min(100, Math.round(matchedItem ? matchConfidence : cost.confidence))),
         location_factor: cost.locationFactor,
         source: matchedItem ? (matchConfidence >= 70 ? "library-high" : "library-medium") : "ai",
         linked_rate_id: matchedItem?.id ?? null,
