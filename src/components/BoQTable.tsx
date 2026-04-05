@@ -68,9 +68,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (items.length === 0) return;
     
     if (!exportSummary.canExport) {
-      if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
-      toast.error(exportSummary.errorMessage);
+      toast.error(exportSummary.errorMessage ?? "No priced items found");
       return;
+    }
+    if (exportSummary.warningRows.length > 0) {
+      setBlockingRowsOpen(true);
     }
     try {
       if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
