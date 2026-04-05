@@ -335,7 +335,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
-                  {isInvalid && <Badge variant="destructive" className="text-[9px] mt-1">Invalid</Badge>}
+                  {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
