@@ -163,7 +163,7 @@ export default function ProjectDetail() {
                       <Building2 className="w-4 h-4 text-muted-foreground" />
                       <span className="font-medium text-sm flex-1 text-left">{facilityName}</span>
                       <Badge variant="secondary" className="text-xs">{files.length}</Badge>
-                      {(expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1)
+                      {!collapsedFacilities.has(facilityName)
                         ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
                         : <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       }
