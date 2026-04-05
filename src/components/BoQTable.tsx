@@ -324,7 +324,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               const rowClassification = classifyBoQRow(item);
               const isPriced = rowClassification.type === "priced";
               const isDescriptive = rowClassification.type === "descriptive";
-              const isInvalid = rowClassification.type === "invalid";
+              const hasWarnings = rowClassification.warnings && rowClassification.warnings.length > 0;
               const detected = isPriced ? detectCategory(item.description, item.description_en) : null;
               const catLabel = detected?.category.replace(/_/g, " ") || "";
               return (
