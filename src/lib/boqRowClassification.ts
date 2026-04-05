@@ -1,4 +1,4 @@
-export type BoQRowType = "priced" | "descriptive" | "invalid";
+export type BoQRowType = "priced" | "descriptive";
 
 export interface BoQRowLike {
   item_no?: string | null;
@@ -27,29 +27,39 @@ export interface BoQRowClassification {
     | "zero_quantity"
     | "empty_quantity"
     | "text_block"
-    | "empty_row"
-    | "missing_unit"
-    | "missing_item_code"
-    | "broken_payable_structure";
+    | "empty_row";
+  warnings?: string[];
 }
 
-export interface BoQExportSummary {
-  pricedItemsCount: number;
-  descriptiveRowsSkippedCount: number;
-  invalidRowsCount: number;
-  descriptiveRowsWithPricingCount: number;
-  blockingRows: BoQExportBlockingRow[];
-  exportStatus: "ready" | "warning" | "blocked";
-  canExport: boolean;
-  warningMessage: string | null;
-  errorMessage: string | null;
+export interface BoQExportWarningRow {
+  rowNumber: number | null;
+  itemCode: string;
+  description: string;
+  reason: string;
 }
 
+/** @deprecated Use BoQExportWarningRow instead */
 export interface BoQExportBlockingRow {
   rowNumber: number | null;
   itemCode: string;
   description: string;
   reason: string;
+}
+
+export interface BoQExportSummary {
+  pricedItemsCount: number;
+  descriptiveRowsSkippedCount: number;
+  /** @deprecated Always 0 — no rows are invalid under warning-only policy */
+  invalidRowsCount: number;
+  descriptiveRowsWithPricingCount: number;
+  /** @deprecated Always empty — use warningRows instead */
+  blockingRows: BoQExportBlockingRow[];
+  warningRows: BoQExportWarningRow[];
+  warningRowsCount: number;
+  exportStatus: "ready" | "warning";
+  canExport: boolean;
+  warningMessage: string | null;
+  errorMessage: string | null;
 }
 
 const PRICING_FIELDS: Array<keyof BoQRowLike> = [
@@ -91,25 +101,8 @@ export function hasCompletePricingData(row: BoQRowLike): boolean {
   return hasValue(row.unit_rate) && hasValue(row.total_price);
 }
 
-/**
- * Detect if an item_no value looks like a real item code (e.g. "1-2-3", "A.01")
- * vs. a descriptive string that was incorrectly placed in the item_no column.
- * Real item codes are typically short alphanumeric strings with dots, dashes, or slashes.
- */
-function isRealItemCode(value: string | null | undefined): boolean {
-  const trimmed = String(value ?? "").trim();
-  if (!trimmed) return false;
-  // If longer than 30 characters, it's almost certainly a description, not a code
-  if (trimmed.length > 30) return false;
-  // If it contains mostly Arabic words (3+ Arabic words), treat as description
-  const arabicWords = trimmed.match(/[\u0600-\u06FF]+/g);
-  if (arabicWords && arabicWords.length >= 3) return false;
-  return true;
-}
-
 export function classifyBoQRow(row: BoQRowLike): BoQRowClassification {
   const quantity = parseQuantity(row.quantity);
-  const hasItemCode = isRealItemCode(row.item_no);
   const hasUnit = hasText(row.unit);
   const hasDescription = hasText(row.description) || hasText(row.description_en);
   const hasRowContent = hasText(row.item_no) || hasUnit || hasDescription || quantity != null;
@@ -117,12 +110,18 @@ export function classifyBoQRow(row: BoQRowLike): BoQRowClassification {
   if (!hasRowContent) return { type: "descriptive", reason: "empty_row" };
   if (quantity == null) return { type: "descriptive", reason: hasDescription ? "text_block" : "empty_quantity" };
   if (quantity <= 0) return { type: "descriptive", reason: "zero_quantity" };
-  if (hasItemCode && hasUnit) return { type: "priced", reason: "priceable_item" };
-  if (hasItemCode && !hasUnit) return { type: "invalid", reason: "missing_unit" };
-  if (!hasItemCode && hasUnit) return { type: "invalid", reason: "missing_item_code" };
-  // No real item code and no unit — treat as descriptive (likely a reference/note row)
-  if (!hasItemCode && !hasUnit) return { type: "descriptive", reason: "text_block" };
-  return { type: "invalid", reason: "broken_payable_structure" };
+
+  // quantity > 0 → ALWAYS priced. Collect warnings for missing fields.
+  const warnings: string[] = [];
+  if (!hasUnit) warnings.push("missing_unit");
+  if (!hasText(row.item_no)) warnings.push("missing_item_code");
+  if (!hasDescription) warnings.push("no_description");
+
+  return {
+    type: "priced",
+    reason: "priceable_item",
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }
 
 export function isPriceableBoQRow(row: BoQRowLike): boolean {
@@ -137,7 +136,8 @@ export function isPriceableBoQRow(row: BoQRowLike): boolean {
 export function getRowPersistenceStatus(row: BoQRowLike): string {
   const classification = classifyBoQRow(row);
   if (classification.type === "descriptive") return "descriptive";
-  if (classification.type === "invalid") return "needs_review";
+  // Priced with warnings → needs_review; otherwise → pending
+  if (classification.warnings && classification.warnings.length > 0) return "needs_review";
   return "pending";
 }
 
@@ -146,8 +146,9 @@ export function getRowClassificationNote(row: BoQRowLike): string | null {
   if (classification.type === "descriptive") {
     return "وصف / بند غير مسعّر — Description / Non-priced";
   }
-  if (classification.type === "invalid") {
-    return "بند غير صالح للتسعير — Invalid payable item (missing item code/unit or broken structure)";
+  if (classification.warnings && classification.warnings.length > 0) {
+    const warningList = classification.warnings.join(", ");
+    return `بند مسعّر يحتاج مراجعة — Priced with warnings: ${warningList}`;
   }
   return null;
 }
@@ -156,21 +157,7 @@ export function getPricedAnalysisRows<T extends BoQRowLike>(rows: T[]): T[] {
   return rows.filter((row) => classifyBoQRow(row).type === "priced" && hasCompletePricingData(row));
 }
 
-function getBlockingReason(row: BoQRowLike, classification: BoQRowClassification): string | null {
-  if (classification.type === "invalid") {
-    if (classification.reason === "missing_unit") return "missing unit";
-    if (classification.reason === "missing_item_code") return "missing item code";
-    return "invalid row structure";
-  }
-
-  if (classification.type === "priced" && !hasCompletePricingData(row)) {
-    return "price mapping failed";
-  }
-
-  return null;
-}
-
-function toBlockingRow(row: BoQRowLike, reason: string): BoQExportBlockingRow {
+function toWarningRow(row: BoQRowLike, reason: string): BoQExportWarningRow {
   return {
     rowNumber: typeof row.row_index === "number" ? row.row_index + 1 : null,
     itemCode: String(row.item_no ?? "").trim(),
@@ -182,20 +169,25 @@ function toBlockingRow(row: BoQRowLike, reason: string): BoQExportBlockingRow {
 export function buildBoQExportSummary(rows: BoQRowLike[]): BoQExportSummary {
   let pricedItemsCount = 0;
   let descriptiveRowsSkippedCount = 0;
-  let invalidRowsCount = 0;
   let descriptiveRowsWithPricingCount = 0;
-  const blockingRows: BoQExportBlockingRow[] = [];
+  const warningRows: BoQExportWarningRow[] = [];
 
   for (const row of rows) {
     const classification = classifyBoQRow(row);
 
     if (classification.type === "priced") {
-      const blockingReason = getBlockingReason(row, classification);
-      if (blockingReason) {
-        invalidRowsCount++;
-        blockingRows.push(toBlockingRow(row, blockingReason));
-      } else {
-        pricedItemsCount++;
+      pricedItemsCount++;
+
+      // Collect warnings for informational purposes (never blocking)
+      const reasons: string[] = [];
+      if (classification.warnings) {
+        reasons.push(...classification.warnings);
+      }
+      if (!hasCompletePricingData(row)) {
+        reasons.push("pricing_incomplete");
+      }
+      if (reasons.length > 0) {
+        warningRows.push(toWarningRow(row, reasons.join(", ")));
       }
     }
 
@@ -203,34 +195,29 @@ export function buildBoQExportSummary(rows: BoQRowLike[]): BoQExportSummary {
       descriptiveRowsSkippedCount++;
       if (hasStoredPricingData(row)) descriptiveRowsWithPricingCount++;
     }
-
-    if (classification.type === "invalid") {
-      invalidRowsCount++;
-      blockingRows.push(toBlockingRow(row, getBlockingReason(row, classification) || "invalid row structure"));
-    }
   }
 
-  const canExport = invalidRowsCount === 0 && pricedItemsCount > 0;
-  const exportStatus = !canExport
-    ? "blocked"
-    : descriptiveRowsSkippedCount > 0
-    ? "warning"
-    : "ready";
+  const canExport = pricedItemsCount > 0;
+  const exportStatus: "ready" | "warning" = warningRows.length > 0 || descriptiveRowsSkippedCount > 0 ? "warning" : "ready";
 
   return {
     pricedItemsCount,
     descriptiveRowsSkippedCount,
-    invalidRowsCount,
+    invalidRowsCount: 0,
     descriptiveRowsWithPricingCount,
-    blockingRows,
+    blockingRows: [],
+    warningRows,
+    warningRowsCount: warningRows.length,
     exportStatus,
     canExport,
     warningMessage:
-      descriptiveRowsSkippedCount > 0
+      warningRows.length > 0
+        ? `${warningRows.length} row(s) priced with warnings — review recommended.`
+        : descriptiveRowsSkippedCount > 0
         ? "Descriptive rows with zero/empty quantity were excluded from pricing."
         : null,
     errorMessage: canExport
       ? null
-      : "Export failed because one or more invalid payable item rows could not be priced or written safely.",
+      : "No priced items found in this workbook.",
   };
 }
