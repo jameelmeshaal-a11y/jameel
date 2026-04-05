@@ -262,11 +262,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           {exportSummary.errorMessage && (
             <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
           )}
-          {exportSummary.blockingRows.length > 0 && (
+          {exportSummary.warningRows.length > 0 && (
             <div className="mt-3 rounded-md border bg-background/70 p-3">
-              <div className="text-xs font-medium mb-2">Blocking reasons</div>
+              <div className="text-xs font-medium mb-2">Warnings</div>
               <div className="space-y-2">
-                {exportSummary.blockingRows.slice(0, 3).map((row, index) => (
+                {exportSummary.warningRows.slice(0, 3).map((row, index) => (
                   <div key={`${row.rowNumber ?? "row"}-${row.itemCode}-${index}`} className="text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">Row {row.rowNumber ?? "—"}</span>
                     {row.itemCode ? ` · ${row.itemCode}` : ""}
@@ -277,7 +277,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" className="gap-1" onClick={() => setBlockingRowsOpen(true)}>
-                  <ListX className="w-3.5 h-3.5" /> View Blocking Rows
+                  <ListX className="w-3.5 h-3.5" /> View Warnings
                 </Button>
                 <Button variant="outline" size="sm" className="gap-1" onClick={handleRevalidate} disabled={revalidating}>
                   <RefreshCw className={`w-3.5 h-3.5 ${revalidating ? "animate-spin" : ""}`} /> Revalidate Project
