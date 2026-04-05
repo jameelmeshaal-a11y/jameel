@@ -66,10 +66,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const handleExport = async () => {
     if (items.length === 0) return;
-    if (!consistency.consistent) {
-      toast.error("Data inconsistency detected. Fix totals before exporting.");
-      return;
-    }
+    
     if (!exportSummary.canExport) {
       if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
       toast.error(exportSummary.errorMessage);
