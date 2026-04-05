@@ -318,6 +318,7 @@ export async function runPricingEngine(
       detection.category,
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
+      approvedRateIds,
     );
     const matchedItem = libraryResult?.item ?? null;
     const matchConfidence = libraryResult?.confidence ?? 0;
