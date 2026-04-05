@@ -249,6 +249,14 @@ export async function runPricingEngine(
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
 
+  // Build set of approved rate IDs from sources
+  const approvedRateIds = new Set<string>();
+  for (const [rateId, sources] of sourcesMap.entries()) {
+    if (sources.some(s => s.source_type === 'Approved')) {
+      approvedRateIds.add(rateId);
+    }
+  }
+
   // Resolve location from DB table
   const locationMatch = resolveLocationFactor(cities, locationFactors);
   const locFactor = locationMatch.location_factor;
