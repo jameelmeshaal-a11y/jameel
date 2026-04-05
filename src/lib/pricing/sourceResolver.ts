@@ -23,6 +23,7 @@ export interface SourceResolution {
   sourceCount: number;
   variance: number;
   highVariance: boolean;
+  baseCity: string;
 }
 
 const avg = (arr: number[]): number =>
@@ -37,7 +38,8 @@ export function resolveFromSources(
 ): SourceResolution {
   const supplierRates = sources.filter(s => s.source_type === "Supplier").map(s => s.rate);
   const historicalRates = sources.filter(s => s.source_type === "Historical").map(s => s.rate);
-  const approvedRates = sources.filter(s => s.source_type === "Approved").map(s => s.rate);
+  const approvedSources = sources.filter(s => s.source_type === "Approved");
+  const approvedRates = approvedSources.map(s => s.rate);
 
   const supplierAvg = supplierRates.length > 0 ? avg(supplierRates) : null;
   const historicalAvg = historicalRates.length > 0 ? avg(historicalRates) : null;
@@ -51,6 +53,13 @@ export function resolveFromSources(
 
   let resolvedRate = targetRate;
   let method: SourceResolution["method"] = "target";
+
+  // Determine base city from approved source or first available
+  const baseCity = approvedSources.length > 0
+    ? approvedSources[approvedSources.length - 1].city
+    : sources.length > 0
+    ? sources[0].city
+    : "";
 
   if (approvedRate !== null) {
     resolvedRate = approvedRate;
@@ -75,6 +84,7 @@ export function resolveFromSources(
     sourceCount: sources.length,
     variance: +variance.toFixed(1),
     highVariance: variance > 30,
+    baseCity,
   };
 }
 
