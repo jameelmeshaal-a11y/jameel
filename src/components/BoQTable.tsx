@@ -384,7 +384,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       <BoQBlockingRowsDialog
         open={blockingRowsOpen}
         onOpenChange={setBlockingRowsOpen}
-        rows={exportSummary.blockingRows}
+        rows={exportSummary.warningRows}
         onRevalidate={handleRevalidate}
         revalidating={revalidating}
       />

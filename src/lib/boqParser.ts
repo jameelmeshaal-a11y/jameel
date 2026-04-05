@@ -203,7 +203,7 @@ export async function exportBoQExcel(
     }
     const exportSummary = buildBoQExportSummary(exportItems);
     if (!exportSummary.canExport) {
-      throw new Error(exportSummary.errorMessage || "Export failed because one or more invalid payable item rows could not be priced or written safely.");
+      throw new Error(exportSummary.errorMessage || "No priced items found in this workbook.");
     }
 
     const { data: blob, error: downloadError } = await supabase.storage
