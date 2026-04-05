@@ -19,7 +19,7 @@ export default function ProjectDetail() {
   const [activeTab, setActiveTab] = useState("boq");
   const [createBoQOpen, setCreateBoQOpen] = useState(false);
   const [selectedBoQFileId, setSelectedBoQFileId] = useState<string | null>(null);
-  const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
+  const [collapsedFacilities, setCollapsedFacilities] = useState<Set<string>>(new Set());
 
   const { data: project, isLoading } = useProject(id);
   const { data: boqFiles = [], isLoading: boqFilesLoading } = useBoQFiles(id);
