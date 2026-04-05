@@ -80,6 +80,7 @@ function findRateLibraryMatch(
   category: string,
   rateLibrary: RateLibraryItem[],
   linkedRateId?: string | null,
+  approvedRateIds?: Set<string>,
 ): { item: RateLibraryItem; confidence: number } | null {
   // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
@@ -124,7 +125,43 @@ function findRateLibraryMatch(
     }
   }
 
-  return bestMatch ? { item: bestMatch, confidence: bestScore } : null;
+  if (bestMatch) {
+    return { item: bestMatch, confidence: bestScore };
+  }
+
+  // Path C — Approved-rate fallback (lower threshold, only approved entries)
+  if (approvedRateIds && approvedRateIds.size > 0) {
+    const stripPrefix = (t: string) => t.replace(/^(ال|و|لل|بال)/, "");
+    const normalizedUnit_ = normalizeUnit(unit);
+
+    for (const candidate of rateLibrary) {
+      if (!approvedRateIds.has(candidate.id)) continue;
+      if (normalizeUnit(candidate.unit) !== normalizedUnit_) continue;
+
+      const textScore = Math.max(
+        textSimilarity(description, candidate.standard_name_ar || ""),
+        textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
+      ) * 60;
+
+      const srcTokens = tokenize(description + " " + (descriptionEn || "")).map(stripPrefix);
+      const candTokens = tokenize((candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "")).map(stripPrefix);
+      const overlapCount = srcTokens.filter(t => candTokens.includes(t)).length;
+      const kwScore = Math.min(25, overlapCount * 5);
+
+      const score = Math.min(textScore + kwScore, 55);
+
+      if (score >= 20 && score > bestScore) {
+        bestScore = score;
+        bestMatch = candidate;
+      }
+    }
+
+    if (bestMatch) {
+      return { item: bestMatch, confidence: Math.min(bestScore, 55) };
+    }
+  }
+
+  return null;
 }
 
 // ─── Library Pricing ────────────────────────────────────────────────────────
@@ -212,6 +249,14 @@ export async function runPricingEngine(
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
 
+  // Build set of approved rate IDs from sources
+  const approvedRateIds = new Set<string>();
+  for (const [rateId, sources] of sourcesMap.entries()) {
+    if (sources.some(s => s.source_type === 'Approved')) {
+      approvedRateIds.add(rateId);
+    }
+  }
+
   // Resolve location from DB table
   const locationMatch = resolveLocationFactor(cities, locationFactors);
   const locFactor = locationMatch.location_factor;
@@ -273,11 +318,13 @@ export async function runPricingEngine(
       detection.category,
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
+      approvedRateIds,
     );
     const matchedItem = libraryResult?.item ?? null;
     const matchConfidence = libraryResult?.confidence ?? 0;
 
     let cost: PricedResult;
+    let extremeDeviation = false;
 
     if (matchedItem) {
       libraryHits++;
@@ -335,6 +382,23 @@ export async function runPricingEngine(
       if (block.contributorRows.length > 0) {
         cost.explanation += ` | 🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`;
       }
+
+      // Deviation protection: compare AI price against closest library entry
+      const normalizedUnit_ = normalizeUnit(block.primaryRow.unit);
+      const sameUnitRates = rateLibrary.filter(l => normalizeUnit(l.unit) === normalizedUnit_);
+      if (sameUnitRates.length > 0 && cost.unitRate > 0) {
+        const closest = sameUnitRates.reduce((a, b) =>
+          Math.abs(a.target_rate - cost.unitRate) < Math.abs(b.target_rate - cost.unitRate) ? a : b
+        );
+        if (closest.target_rate > 0) {
+          const deviation = Math.abs(cost.unitRate - closest.target_rate) / closest.target_rate;
+          if (deviation > 3.0) {
+            extremeDeviation = true;
+            cost.confidence = Math.min(cost.confidence, 40);
+            cost.explanation += ` | ⚠️ انحراف ${Math.round(deviation * 100)}% عن "${closest.standard_name_ar}" (${closest.target_rate} SAR)`;
+          }
+        }
+      }
     }
 
     // 6. Confidence-based status assignment
@@ -346,6 +410,9 @@ export async function runPricingEngine(
         itemStatus = "needs_review";
         cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
       }
+    } else if (extremeDeviation) {
+      itemStatus = "needs_review";
+      cost.explanation += " | 🚫 تسعير AI مرفوض — انحراف كبير عن مكتبة الأسعار";
     } else if (detection.confidence < 60 || cost.confidence < 70) {
       cost.confidence = Math.min(cost.confidence, 65);
       itemStatus = "needs_review";
