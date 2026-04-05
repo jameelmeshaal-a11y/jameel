@@ -34,6 +34,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
   const [revalidating, setRevalidating] = useState(false);
   const [fixing, setFixing] = useState(false);
+  const autoFixAttempted = useRef(false);
+  const [autoFixFailed, setAutoFixFailed] = useState(false);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
