@@ -121,7 +121,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
   const { data: consistency } = useProjectConsistency(projectId, project?.total_value ?? 0);
 
-  const canExport = exportSummary.canExport && consistency.consistent;
+  const canExport = exportSummary.canExport;
+
+  useEffect(() => {
+    if (!consistency || consistency.consistent) {
+      autoFixAttempted.current = false;
+      setAutoFixFailed(false);
+      return;
+    }
+    if (autoFixAttempted.current) return;
+    autoFixAttempted.current = true;
+    fixConsistency(projectId, boqFileId)
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ["projects", projectId] });
+        qc.invalidateQueries({ queryKey: ["project-consistency", projectId] });
+        qc.invalidateQueries({ queryKey: ["projects"] });
+      })
+      .catch(() => setAutoFixFailed(true));
+  }, [consistency?.consistent, projectId, boqFileId, qc]);
 
   const handleFixNow = useCallback(async () => {
     if (!boqFileId) return;
