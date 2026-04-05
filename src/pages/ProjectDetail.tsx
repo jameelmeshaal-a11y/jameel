@@ -156,7 +156,7 @@ export default function ProjectDetail() {
                 {Object.entries(facilityGroups).map(([facilityName, files]) => (
                   <Collapsible
                     key={facilityName}
-                    open={expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1}
+                    open={!collapsedFacilities.has(facilityName)}
                     onOpenChange={() => toggleFacility(facilityName)}
                   >
                     <CollapsibleTrigger className="flex items-center gap-2 w-full p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
