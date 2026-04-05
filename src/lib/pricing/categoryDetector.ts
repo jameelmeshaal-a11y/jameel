@@ -129,7 +129,7 @@ export function detectCategory(description: string, descriptionEn?: string): Det
   const combined = `${description} ${descriptionEn || ""}`.toLowerCase();
   const arabicText = description;
 
-  let bestMatch: { rule: CategoryRule; matchedKeywords: string[] } | null = null;
+  let bestMatch: { rule: CategoryRule; matchedKeywords: string[]; effectiveCount: number } | null = null;
 
   // Sort by priority descending
   const sorted = [...RULES].sort((a, b) => b.priority - a.priority);
@@ -142,9 +142,15 @@ export function detectCategory(description: string, descriptionEn?: string): Det
       }
     }
     if (matched.length > 0) {
-      if (!bestMatch || matched.length > bestMatch.matchedKeywords.length ||
-          (matched.length === bestMatch.matchedKeywords.length && rule.priority > bestMatch.rule.priority)) {
-        bestMatch = { rule, matchedKeywords: matched };
+      // Position-aware boost: keywords in first 30 chars of Arabic get +1
+      const hasEarlyMatch = matched.some(kw => {
+        const idx = description.indexOf(kw);
+        return idx >= 0 && idx < 30;
+      });
+      const effectiveCount = hasEarlyMatch ? matched.length + 1 : matched.length;
+      if (!bestMatch || effectiveCount > bestMatch.effectiveCount ||
+          (effectiveCount === bestMatch.effectiveCount && rule.priority > bestMatch.rule.priority)) {
+        bestMatch = { rule, matchedKeywords: matched, effectiveCount };
       }
     }
   }

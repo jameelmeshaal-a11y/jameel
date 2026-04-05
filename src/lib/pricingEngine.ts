@@ -80,6 +80,7 @@ function findRateLibraryMatch(
   category: string,
   rateLibrary: RateLibraryItem[],
   linkedRateId?: string | null,
+  approvedRateIds?: Set<string>,
 ): { item: RateLibraryItem; confidence: number } | null {
   // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
@@ -124,7 +125,43 @@ function findRateLibraryMatch(
     }
   }
 
-  return bestMatch ? { item: bestMatch, confidence: bestScore } : null;
+  if (bestMatch) {
+    return { item: bestMatch, confidence: bestScore };
+  }
+
+  // Path C — Approved-rate fallback (lower threshold, only approved entries)
+  if (approvedRateIds && approvedRateIds.size > 0) {
+    const stripPrefix = (t: string) => t.replace(/^(ال|و|لل|بال)/, "");
+    const normalizedUnit_ = normalizeUnit(unit);
+
+    for (const candidate of rateLibrary) {
+      if (!approvedRateIds.has(candidate.id)) continue;
+      if (normalizeUnit(candidate.unit) !== normalizedUnit_) continue;
+
+      const textScore = Math.max(
+        textSimilarity(description, candidate.standard_name_ar || ""),
+        textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
+      ) * 60;
+
+      const srcTokens = tokenize(description + " " + (descriptionEn || "")).map(stripPrefix);
+      const candTokens = tokenize((candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "")).map(stripPrefix);
+      const overlapCount = srcTokens.filter(t => candTokens.includes(t)).length;
+      const kwScore = Math.min(25, overlapCount * 5);
+
+      const score = Math.min(textScore + kwScore, 55);
+
+      if (score >= 20 && score > bestScore) {
+        bestScore = score;
+        bestMatch = candidate;
+      }
+    }
+
+    if (bestMatch) {
+      return { item: bestMatch, confidence: Math.min(bestScore, 55) };
+    }
+  }
+
+  return null;
 }
 
 // ─── Library Pricing ────────────────────────────────────────────────────────
