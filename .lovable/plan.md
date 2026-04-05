@@ -1,70 +1,29 @@
 
 
-# Optimized Project Total Auto-Sync — Implementation Plan
+# Smart Similarity Matching — Implementation
 
-## Strategy
-Explicit `recalculate_project_total` RPC at operation boundaries only. No per-row trigger. No database migration.
+## Single file: `src/lib/pricingEngine.ts`
 
-## Changes
+### Changes
 
-### 1. `src/components/PriceBreakdownModal.tsx`
+1. **Line 13**: Add import of `textSimilarity`, `normalizeUnit`, `tokenize` from `./pricing/similarItemMatcher`
 
-In `handleSave`, add RPC call at two points:
+2. **Lines 75–114**: Replace `findRateLibraryMatch` with new dual-path version:
+   - **Direct path**: `linkedRateId` found → return `{ item, confidence: 95 }` (trusted, no scoring)
+   - **Similarity path**: mandatory `normalizeUnit` match, then score 0–100 from text similarity (×60), category (+15), keyword overlap via `tokenize` (+5/word, max 25). Threshold ≥40, cap 99. Empty descriptions default to `""` safely.
 
-**Partial failure path** (after line 150, before `return` on line 151):
-```typescript
-await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).catch(() => {});
-```
+3. **Lines 255–260**: Pass `descriptionEn` and `unit` to updated function, destructure result into `matchedItem` and `matchConfidence`
 
-**Full success path** (after line 154, before toast.success on line 155):
-```typescript
-await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
-```
+4. **Lines 264–297**: Replace `libraryMatch` references with `matchedItem`, append match confidence to explanation
 
-### 2. `src/components/BoQTable.tsx`
+5. **Lines 322–329**: Confidence-based status:
+   - Library match ≥70 → `approved`
+   - Library match 40–69 → `needs_review`
+   - No match → existing AI logic unchanged
 
-**a. Update React import (line 1):** Add `useRef, useEffect`
+6. **Line 356**: Source field: `library-high` / `library-medium` / `ai`
 
-**b. Add guarded auto-fix (after line 36):**
-```typescript
-const autoFixAttempted = useRef(false);
-const [autoFixFailed, setAutoFixFailed] = useState(false);
+7. **Lines 343–360**: Add `linked_rate_id: matchedItem?.id ?? null` to DB write
 
-useEffect(() => {
-  if (!consistency || consistency.consistent) {
-    autoFixAttempted.current = false;
-    setAutoFixFailed(false);
-    return;
-  }
-  if (autoFixAttempted.current) return;
-  autoFixAttempted.current = true;
-  fixConsistency(projectId, boqFileId)
-    .then(() => {
-      qc.invalidateQueries({ queryKey: ["projects", projectId] });
-      qc.invalidateQueries({ queryKey: ["project-consistency", projectId] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-    })
-    .catch(() => setAutoFixFailed(true));
-}, [consistency?.consistent, projectId, boqFileId, qc]);
-```
-
-**c. Remove export blocking on inconsistency (lines 67-70):** Delete the `if (!consistency.consistent)` block
-
-**d. Update canExport (line 125):** Change to `const canExport = exportSummary.canExport;`
-
-**e. Downgrade banner (line 190):** Change `!consistency.consistent` to `autoFixFailed`
-
-### Files unchanged
-- `src/lib/boqParser.ts` — import doesn't write `total_price`
-- `src/lib/pricingEngine.ts` — already has RPC at end
-- No database migration needed
-
-### Recalculation coverage
-
-| Operation | Recalc | Location |
-|---|---|---|
-| Bulk pricing engine | Once at end | `pricingEngine.ts` (existing) |
-| Manual save — full success | Once at end | `PriceBreakdownModal` (new) |
-| Manual save — partial failure | Once at end | `PriceBreakdownModal` (new) |
-| Fallback | Once per inconsistency | `BoQTable` auto-fix (new) |
+No other files changed. No database migration.
 
