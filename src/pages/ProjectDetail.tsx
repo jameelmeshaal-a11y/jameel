@@ -19,7 +19,7 @@ export default function ProjectDetail() {
   const [activeTab, setActiveTab] = useState("boq");
   const [createBoQOpen, setCreateBoQOpen] = useState(false);
   const [selectedBoQFileId, setSelectedBoQFileId] = useState<string | null>(null);
-  const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
+  const [collapsedFacilities, setCollapsedFacilities] = useState<Set<string>>(new Set());
 
   const { data: project, isLoading } = useProject(id);
   const { data: boqFiles = [], isLoading: boqFilesLoading } = useBoQFiles(id);
@@ -36,7 +36,7 @@ export default function ProjectDetail() {
   }, [boqFiles, t]);
 
   const toggleFacility = (name: string) => {
-    setExpandedFacilities(prev => {
+    setCollapsedFacilities(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -156,14 +156,14 @@ export default function ProjectDetail() {
                 {Object.entries(facilityGroups).map(([facilityName, files]) => (
                   <Collapsible
                     key={facilityName}
-                    open={expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1}
+                    open={!collapsedFacilities.has(facilityName)}
                     onOpenChange={() => toggleFacility(facilityName)}
                   >
                     <CollapsibleTrigger className="flex items-center gap-2 w-full p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
                       <Building2 className="w-4 h-4 text-muted-foreground" />
                       <span className="font-medium text-sm flex-1 text-left">{facilityName}</span>
                       <Badge variant="secondary" className="text-xs">{files.length}</Badge>
-                      {(expandedFacilities.has(facilityName) || Object.keys(facilityGroups).length === 1)
+                      {!collapsedFacilities.has(facilityName)
                         ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
                         : <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       }
