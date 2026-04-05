@@ -1,0 +1,2 @@
+ALTER TABLE public.boq_items DROP CONSTRAINT boq_items_source_check;
+ALTER TABLE public.boq_items ADD CONSTRAINT boq_items_source_check CHECK (source = ANY (ARRAY['library'::text, 'library-high'::text, 'library-medium'::text, 'ai'::text, 'manual'::text, 'project_override'::text, 'master_update'::text]));
