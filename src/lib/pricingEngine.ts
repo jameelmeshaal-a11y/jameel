@@ -11,6 +11,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { textSimilarity, normalizeUnit, tokenize } from "./pricing/similarItemMatcher";
 import { detectCategory } from "./pricing/categoryDetector";
 import { calculateItemPrice, type PricingContext, type PricedResult } from "./pricing/rateCalculator";
 import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
@@ -74,43 +75,56 @@ export interface PricingResult {
 
 function findRateLibraryMatch(
   description: string,
+  descriptionEn: string,
+  unit: string,
   category: string,
   rateLibrary: RateLibraryItem[],
   linkedRateId?: string | null,
-): RateLibraryItem | null {
+): { item: RateLibraryItem; confidence: number } | null {
+  // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
-    if (linked) return linked;
+    if (linked) return { item: linked, confidence: 95 };
   }
 
-  const descLower = description.toLowerCase();
-  const descAr = description;
-
+  // Path B — Similarity scoring (0–100)
   let bestMatch: RateLibraryItem | null = null;
   let bestScore = 0;
 
-  for (const rate of rateLibrary) {
+  for (const candidate of rateLibrary) {
+    // Mandatory: unit must match
+    if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
+
     let score = 0;
-    const matchedKw = (rate.keywords || []).filter(kw =>
-      descLower.includes(kw.toLowerCase()) || descAr.includes(kw)
-    );
-    score += matchedKw.length * 10;
 
-    if (rate.category.toLowerCase().includes(category.replace(/_/g, " ").split(" ")[0])) {
-      score += 5;
-    }
+    // Text similarity (max 60 pts)
+    const textScore = Math.max(
+      textSimilarity(description, candidate.standard_name_ar || ""),
+      textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
+    ) * 60;
+    score += textScore;
 
-    if (rate.standard_name_ar && descAr.includes(rate.standard_name_ar.substring(0, 10))) {
+    // Category match (+15 pts)
+    if (candidate.category.toLowerCase().includes(category.replace(/_/g, " ").split(" ")[0])) {
       score += 15;
     }
 
-    if (score > bestScore && score >= 10) {
+    // Keyword overlap via tokenize (max 25 pts)
+    const srcTokens = tokenize(description + " " + (descriptionEn || ""));
+    const candTokens = tokenize((candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || ""));
+    const overlapCount = srcTokens.filter(t => candTokens.includes(t)).length;
+    score += Math.min(25, overlapCount * 5);
+
+    // Cap at 99
+    score = Math.min(score, 99);
+
+    if (score > bestScore && score >= 40) {
       bestScore = score;
-      bestMatch = rate;
+      bestMatch = candidate;
     }
   }
 
-  return bestMatch;
+  return bestMatch ? { item: bestMatch, confidence: bestScore } : null;
 }
 
 // ─── Library Pricing ────────────────────────────────────────────────────────
@@ -252,21 +266,25 @@ export async function runPricingEngine(
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
     // 5. Rate library match using merged description
-    const libraryMatch = findRateLibraryMatch(
+    const libraryResult = findRateLibraryMatch(
       block.mergedDescription,
+      block.mergedDescriptionEn,
+      block.primaryRow.unit,
       detection.category,
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
     );
+    const matchedItem = libraryResult?.item ?? null;
+    const matchConfidence = libraryResult?.confidence ?? 0;
 
     let cost: PricedResult;
 
-    if (libraryMatch) {
+    if (matchedItem) {
       libraryHits++;
 
-      const itemSources = sourcesMap.get(libraryMatch.id) || [];
-      const sourceResolution = resolveFromSources(itemSources, libraryMatch.target_rate);
-      const effectiveLibraryItem = { ...libraryMatch, target_rate: sourceResolution.resolvedRate };
+      const itemSources = sourcesMap.get(matchedItem.id) || [];
+      const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
+      const effectiveLibraryItem = { ...matchedItem, target_rate: sourceResolution.resolvedRate };
       const libResult = priceFromLibrary(effectiveLibraryItem, block.quantity, locFactor);
 
       const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
@@ -281,15 +299,16 @@ export async function runPricingEngine(
         category: detection.category,
         priceFlag: "normal" as const,
         explanation: [
-          `📚 Library V2: "${libraryMatch.standard_name_ar}"`,
+          `📚 Library V2: "${matchedItem.standard_name_ar}"`,
           sourceLabel,
           `Sources: ${displayedSourceCount}`,
           sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
-          `Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate}`,
+          `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
           `Region: ${locationMatch.region_ar} (×${locFactor})`,
           `Zone: ${locationMatch.zone_class}`,
-          `Profit: ${libraryMatch.profit_pct}% | Risk: ${libraryItem_risk(libraryMatch)}%`,
-          `${libraryMatch.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
+          `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `🎯 Match: ${matchConfidence}% | Ref: ${matchedItem.id}`,
           block.contributorRows.length > 0
             ? `🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`
             : "",
@@ -318,9 +337,16 @@ export async function runPricingEngine(
       }
     }
 
-    // 6. Low confidence adjustment — price but flag for review
+    // 6. Confidence-based status assignment
     let itemStatus: string;
-    if (detection.confidence < 60 || cost.confidence < 70) {
+    if (matchedItem) {
+      if (matchConfidence >= 70) {
+        itemStatus = "approved";
+      } else {
+        itemStatus = "needs_review";
+        cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
+      }
+    } else if (detection.confidence < 60 || cost.confidence < 70) {
       cost.confidence = Math.min(cost.confidence, 65);
       itemStatus = "needs_review";
       cost.explanation += " | ⚠️ تسعير بثقة منخفضة — وصف مدمج";
@@ -351,9 +377,10 @@ export async function runPricingEngine(
         profit: cost.profit,
         unit_rate: cost.unitRate,
         total_price: cost.totalPrice,
-        confidence: cost.confidence,
+        confidence: matchedItem ? matchConfidence : cost.confidence,
         location_factor: cost.locationFactor,
-        source: libraryMatch ? "library" : "ai",
+        source: matchedItem ? (matchConfidence >= 70 ? "library-high" : "library-medium") : "ai",
+        linked_rate_id: matchedItem?.id ?? null,
         status: itemStatus,
         notes: cost.explanation,
       })
