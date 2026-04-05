@@ -203,7 +203,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       )}
 
       {/* Inconsistency alert banner */}
-      {hasItems && !consistency.consistent && (
+      {hasItems && autoFixFailed && !consistency.consistent && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
