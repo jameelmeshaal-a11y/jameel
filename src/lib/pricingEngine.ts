@@ -266,21 +266,25 @@ export async function runPricingEngine(
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
     // 5. Rate library match using merged description
-    const libraryMatch = findRateLibraryMatch(
+    const libraryResult = findRateLibraryMatch(
       block.mergedDescription,
+      block.mergedDescriptionEn,
+      block.primaryRow.unit,
       detection.category,
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
     );
+    const matchedItem = libraryResult?.item ?? null;
+    const matchConfidence = libraryResult?.confidence ?? 0;
 
     let cost: PricedResult;
 
-    if (libraryMatch) {
+    if (matchedItem) {
       libraryHits++;
 
-      const itemSources = sourcesMap.get(libraryMatch.id) || [];
-      const sourceResolution = resolveFromSources(itemSources, libraryMatch.target_rate);
-      const effectiveLibraryItem = { ...libraryMatch, target_rate: sourceResolution.resolvedRate };
+      const itemSources = sourcesMap.get(matchedItem.id) || [];
+      const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
+      const effectiveLibraryItem = { ...matchedItem, target_rate: sourceResolution.resolvedRate };
       const libResult = priceFromLibrary(effectiveLibraryItem, block.quantity, locFactor);
 
       const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
@@ -295,15 +299,16 @@ export async function runPricingEngine(
         category: detection.category,
         priceFlag: "normal" as const,
         explanation: [
-          `📚 Library V2: "${libraryMatch.standard_name_ar}"`,
+          `📚 Library V2: "${matchedItem.standard_name_ar}"`,
           sourceLabel,
           `Sources: ${displayedSourceCount}`,
           sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
-          `Range: ${libraryMatch.min_rate}–${libraryMatch.max_rate}`,
+          `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
           `Region: ${locationMatch.region_ar} (×${locFactor})`,
           `Zone: ${locationMatch.zone_class}`,
-          `Profit: ${libraryMatch.profit_pct}% | Risk: ${libraryItem_risk(libraryMatch)}%`,
-          `${libraryMatch.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
+          `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `🎯 Match: ${matchConfidence}% | Ref: ${matchedItem.id}`,
           block.contributorRows.length > 0
             ? `🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`
             : "",
@@ -332,9 +337,16 @@ export async function runPricingEngine(
       }
     }
 
-    // 6. Low confidence adjustment — price but flag for review
+    // 6. Confidence-based status assignment
     let itemStatus: string;
-    if (detection.confidence < 60 || cost.confidence < 70) {
+    if (matchedItem) {
+      if (matchConfidence >= 70) {
+        itemStatus = "approved";
+      } else {
+        itemStatus = "needs_review";
+        cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
+      }
+    } else if (detection.confidence < 60 || cost.confidence < 70) {
       cost.confidence = Math.min(cost.confidence, 65);
       itemStatus = "needs_review";
       cost.explanation += " | ⚠️ تسعير بثقة منخفضة — وصف مدمج";
@@ -365,9 +377,10 @@ export async function runPricingEngine(
         profit: cost.profit,
         unit_rate: cost.unitRate,
         total_price: cost.totalPrice,
-        confidence: cost.confidence,
+        confidence: matchedItem ? matchConfidence : cost.confidence,
         location_factor: cost.locationFactor,
-        source: libraryMatch ? "library" : "ai",
+        source: matchedItem ? (matchConfidence >= 70 ? "library-high" : "library-medium") : "ai",
+        linked_rate_id: matchedItem?.id ?? null,
         status: itemStatus,
         notes: cost.explanation,
       })
