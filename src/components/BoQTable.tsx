@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
