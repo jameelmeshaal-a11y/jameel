@@ -1,6 +1,7 @@
 /**
  * Similar item matching logic for propagation.
  * Matches items by category, unit, and description similarity.
+ * V2: Enhanced Arabic normalization + deterministic matching support.
  */
 
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +20,103 @@ export interface SimilarItem {
   project_name?: string;
   project_id?: string;
 }
+
+// ─── Arabic Normalization ───────────────────────────────────────────────────
+
+/**
+ * Aggressive Arabic text normalization for deterministic comparison.
+ * Strips diacritics, normalizes letter variants, removes prefixes,
+ * and sorts tokens alphabetically for order-independent matching.
+ */
+export function normalizeArabicText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[ًٌٍَُِّْـ]/g, "")       // strip tashkeel + tatweel
+    .replace(/[أإآ]/g, "ا")             // normalize alef variants
+    .replace(/ة/g, "ه")                 // taa marbuta → haa
+    .replace(/ى/g, "ي")                 // alef maqsura → yaa
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/[\s,،./-]+/)
+    .map(w => w.replace(/^(ال|وال|بال|لل|و|ب|ل|ك|ف)/, ""))
+    .filter(w => w.length > 1)
+    .sort()
+    .join(" ");
+}
+
+/**
+ * Tokenize text with Arabic-aware normalization.
+ * Strips diacritics, normalizes letter variants, removes common prefixes.
+ * Min token length: 2 characters.
+ */
+export function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[ًٌٍَُِّْـ]/g, "")       // strip tashkeel
+    .replace(/[أإآ]/g, "ا")             // normalize alef
+    .replace(/ة/g, "ه")                 // taa marbuta
+    .replace(/ى/g, "ي")                 // alef maqsura
+    .split(/[\s,،./-]+/)
+    .map(w => w.replace(/^(ال|وال|بال|لل|و|ب)/, ""))
+    .filter(w => w.length > 1);          // min 2 chars (was 3)
+}
+
+/**
+ * Character-level trigram Jaccard similarity.
+ * Catches reformulated Arabic text with different word boundaries.
+ */
+export function charNgramSimilarity(a: string, b: string, n: number = 3): number {
+  if (!a || !b) return 0;
+  const norm = (s: string) => s.toLowerCase()
+    .replace(/[ًٌٍَُِّْـ\s]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+
+  const na = norm(a);
+  const nb = norm(b);
+  if (na.length < n || nb.length < n) return 0;
+
+  const ngrams = (s: string): Set<string> => {
+    const set = new Set<string>();
+    for (let i = 0; i <= s.length - n; i++) {
+      set.add(s.substring(i, i + n));
+    }
+    return set;
+  };
+
+  const setA = ngrams(na);
+  const setB = ngrams(nb);
+  const intersection = [...setA].filter(g => setB.has(g)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+// ─── Unit Normalization ─────────────────────────────────────────────────────
+
+export function normalizeUnit(unit: string): string {
+  return unit.trim().toLowerCase()
+    .replace(/م3|m3|م\.م/g, "m3")
+    .replace(/م2|m2/g, "m2")
+    .replace(/م\.ط|m\.l|l\.m/g, "ml")
+    .replace(/عدد|no|pcs/g, "no");
+}
+
+// ─── Text Similarity ────────────────────────────────────────────────────────
+
+export function textSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const tokensA = tokenize(a);
+  const tokensB = tokenize(b);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  const intersection = [...setA].filter(w => setB.has(w)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return intersection / union; // Jaccard similarity
+}
+
+// ─── Similar Item Search ────────────────────────────────────────────────────
 
 /**
  * Find similar items within a single project's BoQ file.
@@ -43,7 +141,6 @@ export async function findSimilarInProject(
 export async function findSimilarGlobally(
   sourceItem: { description: string; description_en: string; unit: string; id: string },
 ): Promise<SimilarItem[]> {
-  // Get all boq items across all files
   const { data: items } = await supabase
     .from("boq_items")
     .select("*")
@@ -52,7 +149,6 @@ export async function findSimilarGlobally(
 
   if (!items) return [];
 
-  // Get project info for context
   const fileIds = [...new Set(items.map(i => i.boq_file_id))];
   const { data: files } = await supabase
     .from("boq_files")
@@ -90,19 +186,16 @@ function scoreAndFilter(
   for (const item of candidates) {
     let score = 0;
 
-    // Unit match (required — skip if different)
     if (normalizeUnit(item.unit) !== normalizeUnit(source.unit)) continue;
     score += 20;
 
-    // Description similarity
     const descSim = textSimilarity(source.description, item.description);
     const descEnSim = textSimilarity(source.description_en || "", item.description_en || "");
     const bestSim = Math.max(descSim, descEnSim);
 
-    if (bestSim < 0.3) continue; // Too different
+    if (bestSim < 0.3) continue;
     score += Math.round(bestSim * 60);
 
-    // Keyword overlap boost
     const srcWords = tokenize(source.description + " " + (source.description_en || ""));
     const candWords = tokenize(item.description + " " + (item.description_en || ""));
     const overlap = srcWords.filter(w => candWords.includes(w)).length;
@@ -125,28 +218,4 @@ function scoreAndFilter(
   }
 
   return results.sort((a, b) => b.confidence - a.confidence);
-}
-
-export function normalizeUnit(unit: string): string {
-  return unit.trim().toLowerCase()
-    .replace(/م3|m3|م\.م/g, "m3")
-    .replace(/م2|m2/g, "m2")
-    .replace(/م\.ط|m\.l|l\.m/g, "ml")
-    .replace(/عدد|no|pcs/g, "no");
-}
-
-export function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/[\s,،./-]+/).filter(w => w.length > 2);
-}
-
-export function textSimilarity(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const tokensA = tokenize(a);
-  const tokensB = tokenize(b);
-  if (tokensA.length === 0 || tokensB.length === 0) return 0;
-  const setA = new Set(tokensA);
-  const setB = new Set(tokensB);
-  const intersection = [...setA].filter(w => setB.has(w)).length;
-  const union = new Set([...setA, ...setB]).size;
-  return intersection / union; // Jaccard similarity
 }
