@@ -36,7 +36,7 @@ export default function ProjectDetail() {
   }, [boqFiles, t]);
 
   const toggleFacility = (name: string) => {
-    setExpandedFacilities(prev => {
+    setCollapsedFacilities(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
