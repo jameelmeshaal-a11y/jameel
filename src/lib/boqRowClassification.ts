@@ -91,12 +91,28 @@ export function hasCompletePricingData(row: BoQRowLike): boolean {
   return hasValue(row.unit_rate) && hasValue(row.total_price);
 }
 
+/**
+ * Detect if an item_no value looks like a real item code (e.g. "1-2-3", "A.01")
+ * vs. a descriptive string that was incorrectly placed in the item_no column.
+ * Real item codes are typically short alphanumeric strings with dots, dashes, or slashes.
+ */
+function isRealItemCode(value: string | null | undefined): boolean {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return false;
+  // If longer than 30 characters, it's almost certainly a description, not a code
+  if (trimmed.length > 30) return false;
+  // If it contains mostly Arabic words (3+ Arabic words), treat as description
+  const arabicWords = trimmed.match(/[\u0600-\u06FF]+/g);
+  if (arabicWords && arabicWords.length >= 3) return false;
+  return true;
+}
+
 export function classifyBoQRow(row: BoQRowLike): BoQRowClassification {
   const quantity = parseQuantity(row.quantity);
-  const hasItemCode = hasText(row.item_no);
+  const hasItemCode = isRealItemCode(row.item_no);
   const hasUnit = hasText(row.unit);
   const hasDescription = hasText(row.description) || hasText(row.description_en);
-  const hasRowContent = hasItemCode || hasUnit || hasDescription || quantity != null;
+  const hasRowContent = hasText(row.item_no) || hasUnit || hasDescription || quantity != null;
 
   if (!hasRowContent) return { type: "descriptive", reason: "empty_row" };
   if (quantity == null) return { type: "descriptive", reason: hasDescription ? "text_block" : "empty_quantity" };
@@ -104,6 +120,8 @@ export function classifyBoQRow(row: BoQRowLike): BoQRowClassification {
   if (hasItemCode && hasUnit) return { type: "priced", reason: "priceable_item" };
   if (hasItemCode && !hasUnit) return { type: "invalid", reason: "missing_unit" };
   if (!hasItemCode && hasUnit) return { type: "invalid", reason: "missing_item_code" };
+  // No real item code and no unit — treat as descriptive (likely a reference/note row)
+  if (!hasItemCode && !hasUnit) return { type: "descriptive", reason: "text_block" };
   return { type: "invalid", reason: "broken_payable_structure" };
 }
 
