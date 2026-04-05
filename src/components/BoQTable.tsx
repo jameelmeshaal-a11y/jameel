@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [blockingRowsOpen, setBlockingRowsOpen] = useState(false);
   const [revalidating, setRevalidating] = useState(false);
   const [fixing, setFixing] = useState(false);
+  const autoFixAttempted = useRef(false);
+  const [autoFixFailed, setAutoFixFailed] = useState(false);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
@@ -64,10 +66,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const handleExport = async () => {
     if (items.length === 0) return;
-    if (!consistency.consistent) {
-      toast.error("Data inconsistency detected. Fix totals before exporting.");
-      return;
-    }
+    
     if (!exportSummary.canExport) {
       if (exportSummary.blockingRows.length > 0) setBlockingRowsOpen(true);
       toast.error(exportSummary.errorMessage);
@@ -122,7 +121,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
   const { data: consistency } = useProjectConsistency(projectId, project?.total_value ?? 0);
 
-  const canExport = exportSummary.canExport && consistency.consistent;
+  const canExport = exportSummary.canExport;
+
+  useEffect(() => {
+    if (!consistency || consistency.consistent) {
+      autoFixAttempted.current = false;
+      setAutoFixFailed(false);
+      return;
+    }
+    if (autoFixAttempted.current) return;
+    autoFixAttempted.current = true;
+    fixConsistency(projectId, boqFileId)
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ["projects", projectId] });
+        qc.invalidateQueries({ queryKey: ["project-consistency", projectId] });
+        qc.invalidateQueries({ queryKey: ["projects"] });
+      })
+      .catch(() => setAutoFixFailed(true));
+  }, [consistency?.consistent, projectId, boqFileId, qc]);
 
   const handleFixNow = useCallback(async () => {
     if (!boqFileId) return;
@@ -187,7 +203,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       )}
 
       {/* Inconsistency alert banner */}
-      {hasItems && !consistency.consistent && (
+      {hasItems && autoFixFailed && !consistency.consistent && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
