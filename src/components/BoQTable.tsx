@@ -250,7 +250,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-sm font-medium">Export readiness summary</div>
-              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Invalid payable rows: {exportSummary.invalidRowsCount}</div>
+              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Rows with warnings: {exportSummary.warningRowsCount}</div>
             </div>
             <Badge variant={exportSummary.exportStatus === "blocked" ? "destructive" : exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
               {exportSummary.exportStatus === "ready" ? "Ready" : exportSummary.exportStatus === "warning" ? "Warning" : "Blocked"}
