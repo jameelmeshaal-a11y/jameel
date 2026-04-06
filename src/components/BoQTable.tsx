@@ -187,9 +187,29 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     );
   }
 
+  // Pricing progress stats
+  const pricedCount = items.filter(i => classifyBoQRow(i).type === "priced" && i.unit_rate && i.unit_rate > 0).length;
+  const priceableCount = items.filter(i => classifyBoQRow(i).type === "priced").length;
+  const pricingPercent = priceableCount > 0 ? Math.round((pricedCount / priceableCount) * 100) : 0;
+
   return (
     <div>
-      
+      <BudgetDistributionPanel projectId={projectId} />
+
+      {/* Pricing progress bar */}
+      {priceableCount > 0 && (
+        <div className="mb-4 p-3 border rounded-lg bg-card">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-medium">نسبة التسعير: {pricedCount}/{priceableCount} بند</span>
+            <span className="text-xs font-semibold">{pricingPercent}%</span>
+          </div>
+          <Progress value={pricingPercent} className="h-2" />
+          <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">✅ مسعّر: {pricedCount}</span>
+            <span className="flex items-center gap-1">🔴 غير مسعّر: {priceableCount - pricedCount}</span>
+          </div>
+        </div>
+      )}
 
       {/* Pricing progress */}
       {pricing && (
