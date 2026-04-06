@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
+import BudgetDistributionPanel from "./BudgetDistributionPanel";
 
 type PricingMode = "review" | "smart" | "auto";
 
