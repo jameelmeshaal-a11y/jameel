@@ -231,6 +231,12 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === "budget" && (
+          <div className="max-w-3xl">
+            <BudgetDistributionPanel projectId={project.id} />
+          </div>
+        )}
+
         {activeTab === "documents" && <DocumentsTab projectId={project.id} />}
         {activeTab === "settings" && (
           <div className="stat-card">
