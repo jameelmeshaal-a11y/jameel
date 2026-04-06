@@ -324,6 +324,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="w-8">#</th>
               <th className="protected-col">{t("itemNo")}</th>
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
+              <th className="w-16 text-center">المطابقة</th>
               <th className="protected-col w-16">{t("unit")}</th>
               <th className="protected-col w-24 text-right">{t("qty")}</th>
               <th className="pricing-col w-28">الفئة</th>
