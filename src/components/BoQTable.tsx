@@ -359,6 +359,19 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                 </td>
+                <td className="text-center">
+                  {isPriced && (
+                    item.linked_rate_id ? (
+                      <span title="موجود في المكتبة">✅</span>
+                    ) : item.source === "library-medium" ? (
+                      <span title="اقتراح">🟡</span>
+                    ) : item.unit_rate && item.unit_rate > 0 ? (
+                      <span title="تسعير AI">🔵</span>
+                    ) : (
+                      <span title="غير مسعّر">🔴</span>
+                    )
+                  )}
+                </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
                 <td className="pricing-col">
