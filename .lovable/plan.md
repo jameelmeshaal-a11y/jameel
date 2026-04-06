@@ -1,95 +1,158 @@
 
 
-# Enforce Price Library as Deterministic Single Source of Truth
+# Integrated Pricing System Enhancement
 
-## Problem (Two Layers)
+## Overview
 
-**Layer 1 — Approved rates are inflated:** `priceFromLibrary()` applies complexity (x1.08), quantity (x1.06), and location multipliers on top of already-approved rates. A 31 SAR approved rate becomes ~35+ SAR.
+This plan adds 6 interconnected features to the pricing system. The existing `rate_library` table already covers most of the requested `price_library` functionality, so we'll extend it rather than duplicate. The existing `RateLibraryPage` currently uses mock data — we'll rewire it to use real database data.
 
-**Layer 2 — Matching is probabilistic:** Jaccard similarity with threshold 40 misses items with slight Arabic wording differences, causing fallback to AI which produces wildly different rates (852 vs 31 SAR). No deterministic historical mapping exists.
+## Database Changes (3 new tables, 1 table extension)
 
-## Changes
-
-### File 1: `src/lib/pricing/similarItemMatcher.ts`
-
-**Add `normalizeArabicText()` export** — aggressive Arabic normalization:
-- Strip tashkeel (diacritics: ًٌٍَُِّْ)
-- Normalize alef variants (أ إ آ → ا), taa marbuta (ة → ه), alef maqsura (ى → ي)
-- Strip common prefixes (ال، و، لل، بال)
-- Sort tokens alphabetically for order-independent matching
-
-**Update `tokenize()`** — apply Arabic normalization, lower min token length from 3 to 2.
-
-**Add `charNgramSimilarity()` export** — character-level trigram Jaccard similarity (~15 lines). Catches reformulated Arabic text with different word boundaries.
-
-### File 2: `src/lib/pricingEngine.ts`
-
-**Add `priceFromApprovedRate()` function** (after line 204, ~25 lines):
-- Uses approved rate directly — NO complexity, quantity, or overhead multipliers
-- Only applies location factor if project city differs from library `base_city`
-- Splits rate into breakdown components using library percentage splits
-
-**Add `buildHistoricalMap()` function** (~20 lines):
-- Fetches all `boq_items` where `linked_rate_id IS NOT NULL` and `source IN ('library-high', 'manual', 'project_override', 'master_update')`
-- Deduplicates by `linked_rate_id`, keeps first occurrence
-- Returns array of `{ normalizedDesc, tokens, linkedRateId, unit }`
-
-**Add `findHistoricalMatch()` function** (~25 lines):
-- Checks new item description against historical mappings
-- First pass: exact normalized text match → confidence 93
-- Second pass: Jaccard ≥ 0.85 → confidence 90
-- Unit must match. Returns the linked library item if found.
-
-**Update `runPricingEngine()`** (line 237):
-- Add `buildHistoricalMap()` to the parallel fetch
-- After `findRateLibraryMatch` returns null (line 323), call `findHistoricalMatch` as Path A.5 before AI fallback
-
-**Update pricing branch** (lines 329-363):
-- If `sourceResolution.method === "approved"` → call `priceFromApprovedRate()` instead of `priceFromLibrary()`
-- Show clear source label: `"✅ Approved Rate: X SAR (used directly)"`
-
-**Lower thresholds:**
-- Path B: 40 → 30
-- Path C: 20 → 15
-
-**AI deviation cap** (lines 386-401):
-- When AI rate deviates >300% from closest library entry, cap rate to 150% of library reference
-
-### File 3: `src/lib/pricing/sourceResolver.ts`
-
-**Add `baseCity: string` to `SourceResolution` interface.** Populate from the sources' city field (use approved source's city if available).
-
-### File 4: `src/lib/boqRowClassification.test.ts` (or new test file)
-
-Add tests covering:
-- Historical mapping reuse: item with same normalized description resolves to same `linked_rate_id`
-- Approved rate bypass: `priceFromApprovedRate` returns rate directly without multipliers
-- Arabic normalization: slight wording differences still produce identical normalized text
-
-## Resolution Flow (After Changes)
-
-```text
-Path A:   linked_rate_id on THIS item           → deterministic
-Path A.5: historical mapping (past approvals)    → deterministic (NEW)
-Path B:   similarity scoring ≥30                 → probabilistic (improved)
-Path C:   approved-rate fallback ≥15             → probabilistic (improved)
-AI:       only if ALL paths fail                 → capped against library
+### New Table: `project_budget_distribution`
+```sql
+CREATE TABLE project_budget_distribution (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  total_amount numeric NOT NULL DEFAULT 0,
+  materials_percentage numeric NOT NULL DEFAULT 45,
+  labor_percentage numeric NOT NULL DEFAULT 30,
+  equipment_percentage numeric NOT NULL DEFAULT 15,
+  other_percentage numeric NOT NULL DEFAULT 10,
+  materials_amount numeric NOT NULL DEFAULT 0,
+  labor_amount numeric NOT NULL DEFAULT 0,
+  equipment_amount numeric NOT NULL DEFAULT 0,
+  other_amount numeric NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- RLS: user_id = auth.uid() for all ops
 ```
 
-## What Stays the Same
+### New Table: `price_change_log`
+```sql
+CREATE TABLE price_change_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id uuid,
+  rate_library_id uuid,
+  old_price numeric,
+  new_price numeric,
+  changed_by uuid NOT NULL,
+  change_reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- RLS: changed_by = auth.uid() for insert, select via project ownership
+```
 
-- `syncToRateLibrary` — already persists approved prices and sets `linked_rate_id`
-- `priceFromLibrary` for non-approved rates — keeps complexity/qty factors (correct for estimates)
-- Classification system (warning-only policy)
-- Export logic
-- No database schema changes needed
+### Extend `rate_library` table
+Add columns to support the `price_library` concept without creating a duplicate table:
+```sql
+ALTER TABLE rate_library
+  ADD COLUMN item_code text DEFAULT '',
+  ADD COLUMN item_name_aliases text[] DEFAULT '{}',
+  ADD COLUMN approved_by uuid,
+  ADD COLUMN approved_at timestamptz;
+```
 
-## Validation Guarantee
+The existing columns already cover: `standard_name_ar` (= item_name), `category`, `unit`, `target_rate` (= unit_price), `is_locked`, `source_type`.
 
-| Scenario | Before | After |
-|---|---|---|
-| Approved library rate 31 SAR | 35+ SAR (inflated) | **31 SAR** (direct) |
-| Same item, different wording | Falls to AI → 852 SAR | **Matches via historical map → 31 SAR** |
-| Same item across projects | Different rates | **Same rate guaranteed** |
-| AI deviates >300% | Low confidence only | **Capped to 150% of library ref** |
+## Edge Function: `match-price-item`
+
+A new edge function that receives an item description and returns best matches from the library using fuzzy matching:
+
+- Fetches all approved items from `rate_library`
+- Implements Levenshtein distance + token overlap scoring (no external dependency needed — pure Deno)
+- Uses existing `normalizeArabicText` logic server-side
+- Returns matches with confidence scores:
+  - ≥70% → auto-match
+  - 50-70% → suggestion needing confirmation
+  - <50% → not found
+- Checks `standard_name_ar`, `standard_name_en`, `item_name_aliases`, and `keywords`
+
+## Frontend Changes
+
+### File 1: `src/hooks/usePriceLibrary.ts` (NEW)
+React Query hooks for the price library:
+- `usePriceLibrary()` — fetch all rate_library items with search/filter/category
+- `useUpdatePriceItem()` — inline edit mutation + writes to `price_change_log`
+- `useApprovePriceItem()` — mark as approved
+- `useBudgetDistribution(projectId)` — fetch/create budget distribution
+- `useUpdateBudgetDistribution()` — update percentages and amounts
+- `useMatchPriceItem()` — calls the edge function with debounce
+
+### File 2: `src/pages/RateLibraryPage.tsx` (REWRITE)
+Replace mock data with real database queries:
+- Table with inline editing (click cell → input → save)
+- Search with 300ms debounce
+- Category filter tabs from real data
+- Status badges: ✅ Approved / ⏳ Pending
+- **Export button**: generates Excel using SheetJS with columns: [Code | Name | Aliases | Category | Unit | Price | Currency | Approved]
+- **Import button**: file upload → SheetJS parse → diff preview dialog → confirm → upsert
+- Add/delete items
+
+### File 3: `src/components/BudgetDistributionPanel.tsx` (NEW)
+Panel shown in project pricing view:
+- Total amount input field
+- 4 editable percentage fields (materials/labor/equipment/other) with validation (must sum to 100%)
+- "Distribute" button → calculates amounts → saves to DB
+- Results table showing distributed amounts
+- Manual override of individual amounts with auto-recalculate of total
+
+### File 4: `src/components/PriceLibraryImportDialog.tsx` (NEW)
+Dialog for Excel import:
+- File drop zone
+- SheetJS parsing
+- Preview table showing: new items (green), updated items (yellow), unchanged (gray)
+- Summary: "X new, Y updated, Z unchanged"
+- Confirm button → batch upsert to `rate_library`
+
+### File 5: `src/components/BoQTable.tsx` (UPDATE)
+Add to the pricing table:
+- Match status column: ✅ (library match) / 🟡 (suggestion) / 🔴 (not found)
+- For unpriced items: manual input field + "Save to Library" button
+- Progress bar showing % of priced vs unpriced items
+- Integrate budget distribution panel above the table
+
+### File 6: `src/pages/ProjectDetail.tsx` (UPDATE)
+- Add "Budget" tab or integrate `BudgetDistributionPanel` into the pricing view
+- Pass budget context to BoQTable
+
+### File 7: `src/lib/pricing/priceMatchService.ts` (NEW)
+Client-side matching service:
+- Calls the `match-price-item` edge function
+- Caches results per session
+- Provides `matchItemToLibrary(description, unit)` → returns matches with confidence
+- 300ms debounce wrapper for real-time search
+
+## Integration Flow
+
+```text
+User enters total budget
+  → BudgetDistributionPanel saves to project_budget_distribution
+  → Amounts shown in pricing context
+
+User opens BoQ for pricing
+  → Each item checked against rate_library via edge function
+  → ✅ Found → auto-fill price (approved rate used directly)
+  → 🟡 Suggestion → show suggested price, user confirms
+  → 🔴 Not found → empty price field with warning icon
+
+User enters manual price for unpriced item
+  → "Save to Library" button appears
+  → On click → upsert to rate_library + write price_change_log
+  → Item becomes ✅ for future use
+
+Price library page
+  → Full CRUD on rate_library
+  → Excel export/import
+  → Inline editing with change logging
+```
+
+## Technical Notes
+
+- SheetJS (`xlsx` package) is already available or will be added as a dependency for Excel operations
+- All mutations use React Query with `invalidateQueries` for automatic UI refresh
+- The edge function uses the existing `SUPABASE_SERVICE_ROLE_KEY` secret (already configured)
+- RLS policies ensure data isolation per user
+- The existing `rateSyncService.ts` continues to handle the auto-sync on price approval — the new "Save to Library" button in BoQTable will call the same service
 
