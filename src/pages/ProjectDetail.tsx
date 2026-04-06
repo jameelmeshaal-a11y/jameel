@@ -1,12 +1,13 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useMemo } from "react";
-import { ArrowLeft, FileText, FolderOpen, Settings, Loader2, Plus, ChevronDown, ChevronRight, Building2 } from "lucide-react";
+import { ArrowLeft, FileText, FolderOpen, Settings, Loader2, Plus, ChevronDown, ChevronRight, Building2, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
 import BoQTable from "@/components/BoQTable";
 import DocumentsTab from "@/components/DocumentsTab";
 import CreateBoQDialog from "@/components/CreateBoQDialog";
+import BudgetDistributionPanel from "@/components/BudgetDistributionPanel";
 import { useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { formatCurrency } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -46,6 +47,7 @@ export default function ProjectDetail() {
 
   const tabs = [
     { id: "boq", label: t("billsOfQuantities"), icon: FileText },
+    { id: "budget", label: "الميزانية", icon: Building2 },
     { id: "documents", label: t("documents"), icon: FolderOpen },
     { id: "settings", label: t("projectSettings"), icon: Settings },
   ];
@@ -226,6 +228,12 @@ export default function ProjectDetail() {
               projectId={project.id}
               projectCities={project.cities || []}
             />
+          </div>
+        )}
+
+        {activeTab === "budget" && (
+          <div className="max-w-3xl">
+            <BudgetDistributionPanel projectId={project.id} />
           </div>
         )}
 

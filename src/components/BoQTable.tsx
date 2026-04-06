@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
+import BudgetDistributionPanel from "./BudgetDistributionPanel";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -186,9 +187,29 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     );
   }
 
+  // Pricing progress stats
+  const pricedCount = items.filter(i => classifyBoQRow(i).type === "priced" && i.unit_rate && i.unit_rate > 0).length;
+  const priceableCount = items.filter(i => classifyBoQRow(i).type === "priced").length;
+  const pricingPercent = priceableCount > 0 ? Math.round((pricedCount / priceableCount) * 100) : 0;
+
   return (
     <div>
-      
+      <BudgetDistributionPanel projectId={projectId} />
+
+      {/* Pricing progress bar */}
+      {priceableCount > 0 && (
+        <div className="mb-4 p-3 border rounded-lg bg-card">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-medium">نسبة التسعير: {pricedCount}/{priceableCount} بند</span>
+            <span className="text-xs font-semibold">{pricingPercent}%</span>
+          </div>
+          <Progress value={pricingPercent} className="h-2" />
+          <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">✅ مسعّر: {pricedCount}</span>
+            <span className="flex items-center gap-1">🔴 غير مسعّر: {priceableCount - pricedCount}</span>
+          </div>
+        </div>
+      )}
 
       {/* Pricing progress */}
       {pricing && (
@@ -303,6 +324,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="w-8">#</th>
               <th className="protected-col">{t("itemNo")}</th>
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
+              <th className="w-16 text-center">المطابقة</th>
               <th className="protected-col w-16">{t("unit")}</th>
               <th className="protected-col w-24 text-right">{t("qty")}</th>
               <th className="pricing-col w-28">الفئة</th>
@@ -336,6 +358,19 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
+                </td>
+                <td className="text-center">
+                  {isPriced && (
+                    item.linked_rate_id ? (
+                      <span title="موجود في المكتبة">✅</span>
+                    ) : item.source === "library-medium" ? (
+                      <span title="اقتراح">🟡</span>
+                    ) : item.unit_rate && item.unit_rate > 0 ? (
+                      <span title="تسعير AI">🔵</span>
+                    ) : (
+                      <span title="غير مسعّر">🔴</span>
+                    )
+                  )}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
