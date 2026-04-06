@@ -241,6 +241,54 @@ export type Database = {
         }
         Relationships: []
       }
+      price_change_log: {
+        Row: {
+          change_reason: string | null
+          changed_by: string
+          created_at: string
+          id: string
+          item_id: string | null
+          new_price: number | null
+          old_price: number | null
+          rate_library_id: string | null
+        }
+        Insert: {
+          change_reason?: string | null
+          changed_by: string
+          created_at?: string
+          id?: string
+          item_id?: string | null
+          new_price?: number | null
+          old_price?: number | null
+          rate_library_id?: string | null
+        }
+        Update: {
+          change_reason?: string | null
+          changed_by?: string
+          created_at?: string
+          id?: string
+          item_id?: string | null
+          new_price?: number | null
+          old_price?: number | null
+          rate_library_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "price_change_log_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "boq_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "price_change_log_rate_library_id_fkey"
+            columns: ["rate_library_id"]
+            isOneToOne: false
+            referencedRelation: "rate_library"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pricing_audit_log: {
         Row: {
           action_type: string
@@ -344,6 +392,65 @@ export type Database = {
         }
         Relationships: []
       }
+      project_budget_distribution: {
+        Row: {
+          created_at: string
+          equipment_amount: number
+          equipment_percentage: number
+          id: string
+          labor_amount: number
+          labor_percentage: number
+          materials_amount: number
+          materials_percentage: number
+          other_amount: number
+          other_percentage: number
+          project_id: string
+          total_amount: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          equipment_amount?: number
+          equipment_percentage?: number
+          id?: string
+          labor_amount?: number
+          labor_percentage?: number
+          materials_amount?: number
+          materials_percentage?: number
+          other_amount?: number
+          other_percentage?: number
+          project_id: string
+          total_amount?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          equipment_amount?: number
+          equipment_percentage?: number
+          id?: string
+          labor_amount?: number
+          labor_percentage?: number
+          materials_amount?: number
+          materials_percentage?: number
+          other_amount?: number
+          other_percentage?: number
+          project_id?: string
+          total_amount?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_budget_distribution_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_documents: {
         Row: {
           created_at: string
@@ -426,6 +533,8 @@ export type Database = {
       }
       rate_library: {
         Row: {
+          approved_at: string | null
+          approved_by: string | null
           base_city: string
           base_rate: number
           category: string
@@ -439,6 +548,8 @@ export type Database = {
           includes_testing: boolean
           includes_transport_to_site: boolean
           is_locked: boolean
+          item_code: string | null
+          item_name_aliases: string[] | null
           keywords: string[]
           labor_pct: number
           last_reviewed_at: string | null
@@ -463,6 +574,8 @@ export type Database = {
           weight_class: string
         }
         Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
           base_city?: string
           base_rate: number
           category: string
@@ -476,6 +589,8 @@ export type Database = {
           includes_testing?: boolean
           includes_transport_to_site?: boolean
           is_locked?: boolean
+          item_code?: string | null
+          item_name_aliases?: string[] | null
           keywords?: string[]
           labor_pct?: number
           last_reviewed_at?: string | null
@@ -500,6 +615,8 @@ export type Database = {
           weight_class?: string
         }
         Update: {
+          approved_at?: string | null
+          approved_by?: string | null
           base_city?: string
           base_rate?: number
           category?: string
@@ -513,6 +630,8 @@ export type Database = {
           includes_testing?: boolean
           includes_transport_to_site?: boolean
           is_locked?: boolean
+          item_code?: string | null
+          item_name_aliases?: string[] | null
           keywords?: string[]
           labor_pct?: number
           last_reviewed_at?: string | null
