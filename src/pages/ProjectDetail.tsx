@@ -46,6 +46,7 @@ export default function ProjectDetail() {
 
   const tabs = [
     { id: "boq", label: t("billsOfQuantities"), icon: FileText },
+    { id: "budget", label: "الميزانية", icon: Building2 },
     { id: "documents", label: t("documents"), icon: FolderOpen },
     { id: "settings", label: t("projectSettings"), icon: Settings },
   ];
