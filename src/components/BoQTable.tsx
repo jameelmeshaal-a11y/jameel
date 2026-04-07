@@ -260,6 +260,28 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
+          {pricedCount > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1" disabled={pricing}>
+                  <RotateCcw className="w-3 h-3" /> إعادة التسعير
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent dir="rtl">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
+                    سيتم تسجيل جميع التغييرات في سجل المراجعة.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           {hasItems && (
             <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
               <Download className="w-3 h-3" /> {t("export")}

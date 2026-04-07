@@ -135,6 +135,15 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
       profit_pct: +((values.profit / unitRate) * 100).toFixed(1),
     } : {};
 
+    // Extract parent context from notes for item_description
+    const parentMatch = itemData.notes?.match(/\[PARENT:\s*(.+?)\]/);
+    const itemDescription = parentMatch ? parentMatch[1].trim() : "";
+    // Build aliases from short name + parent context snippet
+    const aliases: string[] = [];
+    if (itemDescription) {
+      aliases.push(itemData.description + " " + itemDescription.slice(0, 60));
+    }
+
     const { data: inserted, error } = await supabase
       .from("rate_library")
       .insert({
@@ -150,6 +159,8 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         source_type: "Field-Approved",
         base_city: realCity || "",
         keywords,
+        item_description: itemDescription,
+        item_name_aliases: aliases,
         last_reviewed_at: new Date().toISOString(),
       })
       .select("id")
