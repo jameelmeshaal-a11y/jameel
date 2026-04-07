@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -15,6 +15,8 @@ import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassificatio
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
 import BudgetDistributionPanel from "./BudgetDistributionPanel";
+import { supabase } from "@/integrations/supabase/client";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 type PricingMode = "review" | "smart" | "auto";
 
