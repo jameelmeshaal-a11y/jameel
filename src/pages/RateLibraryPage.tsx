@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Search, Plus, BookOpen, Download, Upload, Check, X, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Search, Plus, BookOpen, Download, Upload, Check, X, Pencil, Trash2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
