@@ -55,7 +55,7 @@ export function useCreateProject() {
 export function useUpdateProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { id: string; updates: Record<string, any> }) => {
+    mutationFn: async (input: { id: string; updates: { name?: string; status?: string; cities?: string[]; total_value?: number; boq_count?: number } }) => {
       const { error } = await supabase
         .from("projects")
         .update(input.updates)

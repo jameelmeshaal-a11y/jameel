@@ -38,7 +38,13 @@ export function useUpdatePriceItem() {
   return useMutation({
     mutationFn: async ({ id, updates, oldPrice, newPrice, userId }: {
       id: string;
-      updates: Record<string, any>;
+      updates: Partial<{
+        standard_name_ar: string; standard_name_en: string; category: string; unit: string;
+        base_rate: number; min_rate: number; max_rate: number; target_rate: number;
+        item_code: string | null; item_description: string | null; item_name_aliases: string[] | null;
+        approved_by: string | null; approved_at: string | null; source_type: string;
+        notes: string | null; is_locked: boolean;
+      }>;
       oldPrice?: number;
       newPrice?: number;
       userId?: string;
