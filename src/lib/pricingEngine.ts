@@ -1,21 +1,24 @@
 /**
- * Main pricing engine V1.4 — orchestrates category detection, rate library lookup,
- * AI fallback calculation, location factors, VAT, and project overhead.
+ * Main pricing engine V2.0 — DETERMINISTIC PRICING
  *
- * Priority: Rate Library → Historical Map → AI Calculation → General Fallback
+ * ALL prices come from the approved rate library. NO AI price generation.
+ * AI is used ONLY for item classification/matching — never for pricing.
  *
- * V1.4 changes:
- * - Approved rates used DIRECTLY (no complexity/qty multipliers)
- * - Deterministic historical mapping (Path A.5) before AI fallback
- * - Enhanced Arabic normalization for matching
- * - AI deviation cap at 150% of library reference
- * - Lower similarity thresholds (Path B: 30, Path C: 15)
+ * Priority: Rate Library (Path A → A.5 → B → C) → NO MATCH
+ *
+ * V2.0 changes:
+ * - Removed all AI price generation (calculateItemPrice deleted)
+ * - Removed priceFromLibrary() multipliers (complexity/quantity)
+ * - All matched items use target_rate EXACTLY via priceFromApprovedRate()
+ * - Raised thresholds: Path B ≥50, Path C ≥50
+ * - Unmatched items get unit_rate=NULL, status="unmatched"
+ * - Only "approved" (≥70) items contribute to totals
  */
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity } from "./pricing/similarItemMatcher";
 import { detectCategory } from "./pricing/categoryDetector";
-import { calculateItemPrice, type PricingContext, type PricedResult } from "./pricing/rateCalculator";
+import type { PricedResult } from "./pricing/rateCalculator";
 import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 import {
   fetchLocationFactors,
@@ -105,7 +108,7 @@ function findRateLibraryMatch(
     if (linked) return { item: linked, confidence: 95 };
   }
 
-  // Path B — Similarity scoring (0–100) — threshold lowered to 30
+  // Path B — Similarity scoring (0–100) — threshold raised to 50
   let bestMatch: RateLibraryItem | null = null;
   let bestScore = 0;
 
@@ -159,7 +162,7 @@ function findRateLibraryMatch(
 
     score = Math.min(score, 99);
 
-    if (score > bestScore && score >= 30) {
+    if (score > bestScore && score >= 50) {
       bestScore = score;
       bestMatch = candidate;
     }
@@ -169,7 +172,7 @@ function findRateLibraryMatch(
     return { item: bestMatch, confidence: bestScore };
   }
 
-  // Path C — Approved-rate fallback (threshold lowered to 15)
+  // Path C — Approved-rate fallback (threshold raised to 50)
   if (approvedRateIds && approvedRateIds.size > 0) {
     const normalizedUnit_ = normalizeUnit(unit);
 
@@ -194,7 +197,7 @@ function findRateLibraryMatch(
 
       const score = Math.min(Math.max(textScore, ngramScore) + kwScore, 55);
 
-      if (score >= 15 && score > bestScore) {  // Lowered from 20
+      if (score >= 50 && score > bestScore) {
         bestScore = score;
         bestMatch = candidate;
       }
@@ -208,45 +211,7 @@ function findRateLibraryMatch(
   return null;
 }
 
-// ─── Library Pricing (non-approved — keeps multipliers) ─────────────────────
-
-function priceFromLibrary(
-  libraryItem: RateLibraryItem,
-  quantity: number,
-  locationFactor: number,
-): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
-  let baseRate = libraryItem.target_rate;
-
-  const complexityFactors: Record<string, number> = { Low: 1.00, Medium: 1.08, High: 1.18 };
-  baseRate *= complexityFactors[libraryItem.complexity] ?? 1.08;
-
-  let qtyFactor = 1.00;
-  if (quantity > 500) qtyFactor = 0.94;
-  else if (quantity > 200) qtyFactor = 0.97;
-  else if (quantity < 20) qtyFactor = 1.06;
-  baseRate *= qtyFactor;
-
-  baseRate *= locationFactor;
-
-  const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
-    libraryItem.equipment_pct + libraryItem.logistics_pct;
-  const safePct = totalPct > 0 ? totalPct : 100;
-  const materials = +(baseRate * libraryItem.materials_pct / safePct).toFixed(2);
-  const labor = +(baseRate * libraryItem.labor_pct / safePct).toFixed(2);
-  const equipment = +(baseRate * libraryItem.equipment_pct / safePct).toFixed(2);
-  const logistics = +(baseRate * libraryItem.logistics_pct / safePct).toFixed(2);
-  const risk = +(baseRate * (libraryItem.risk_pct / 100)).toFixed(2);
-  const profit = +(baseRate * (libraryItem.profit_pct / 100)).toFixed(2);
-  const unitRate = +(materials + labor + equipment + logistics + risk + profit).toFixed(2);
-  const totalPrice = +(unitRate * quantity).toFixed(2);
-
-  return {
-    materials, labor, equipment, logistics, risk, profit,
-    unitRate, totalPrice,
-    confidence: 92,
-    locationFactor: +locationFactor.toFixed(4),
-  };
-}
+// ─── priceFromLibrary REMOVED — all items now use priceFromApprovedRate() ───
 
 // ─── Approved Rate Direct Pricing (NO multipliers) ──────────────────────────
 
@@ -428,7 +393,7 @@ export async function runPricingEngine(
   const locationMatch = resolveLocationFactor(cities, locationFactors);
   const locFactor = locationMatch.location_factor;
 
-  const context: PricingContext = { cities, profitMargin: 0.05, riskFactor: 0.03 };
+  // PricingContext no longer needed — no AI pricing
 
   // ── Semantic Row Grouping ──────────────────────────────────────────────
   const blocks = groupSemanticRows(items as any);
@@ -506,7 +471,6 @@ export async function runPricingEngine(
     const matchConfidence = libraryMatchResult?.confidence ?? 0;
 
     let cost: PricedResult;
-    let extremeDeviation = false;
 
     if (matchedItem) {
       libraryHits++;
@@ -561,9 +525,16 @@ export async function runPricingEngine(
           ].filter(Boolean).join(" | "),
         };
       } else {
-        // Non-approved: keep existing priceFromLibrary with multipliers
-        const effectiveLibraryItem = { ...matchedItem, target_rate: sourceResolution.resolvedRate };
-        const libResult = priceFromLibrary(effectiveLibraryItem, block.quantity, locFactor);
+        // Non-approved match: STILL use exact target_rate — NO multipliers
+        const effectiveRate = sourceResolution.resolvedRate || matchedItem.target_rate;
+        const libResult = priceFromApprovedRate(
+          effectiveRate,
+          matchedItem,
+          block.quantity,
+          locFactor,
+          matchedItem.base_city || "",
+          projectCity,
+        );
 
         const sourceLabel = sourceResolution.method === "weighted"
           ? `⚖️ Weighted (S:${sourceResolution.supplierAvg ?? "—"} H:${sourceResolution.historicalAvg ?? "—"})`
@@ -576,10 +547,10 @@ export async function runPricingEngine(
           explanation: [
             `📚 Library V2: "${matchedItem.standard_name_ar}"`,
             sourceLabel,
-            `Sources: ${displayedSourceCount}`,
+            `Sources: ${Math.max(1, sourceResolution.sourceCount)}`,
             sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
             `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
-            `Region: ${locationMatch.region_ar} (×${locFactor})`,
+            `Region: ${locationMatch.region_ar} (×${libResult.locationFactor})`,
             `Zone: ${locationMatch.zone_class}`,
             `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
             `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
@@ -591,69 +562,37 @@ export async function runPricingEngine(
         };
       }
     } else {
-      cost = calculateItemPrice(
-        block.mergedDescription,
-        block.mergedDescriptionEn,
-        block.primaryRow.unit,
-        block.quantity,
-        detection.category,
-        detection.confidence,
-        context,
-        block.primaryRow.row_index,
-      );
-      // Apply DB location factor for AI-priced items too
-      if (locFactor !== 1.0) {
-        const adjustedRate = +(cost.unitRate * locFactor / (cost.locationFactor || 1)).toFixed(2);
-        const adjustedTotal = +(adjustedRate * block.quantity).toFixed(2);
-        cost = { ...cost, unitRate: adjustedRate, totalPrice: adjustedTotal, locationFactor: locFactor };
-        cost.explanation += ` | 📍 Region: ${locationMatch.region_ar} (×${locFactor})`;
-      }
-      if (block.contributorRows.length > 0) {
-        cost.explanation += ` | 🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`;
-      }
+      // ═══ NO MATCH — no AI fallback, no price generation ═══
+      await supabase.from("boq_items").update({
+        unit_rate: null,
+        total_price: null,
+        materials: null,
+        labor: null,
+        equipment: null,
+        logistics: null,
+        risk: null,
+        profit: null,
+        confidence: 0,
+        source: "no_match",
+        linked_rate_id: null,
+        location_factor: null,
+        status: "unmatched",
+        notes: `🔴 NO MATCH — لم يتم العثور على البند في مكتبة الأسعار | "${block.mergedDescription.slice(0, 80)}"`,
+      }).eq("id", block.primaryRow.id);
 
-      // Deviation protection: compare AI price against closest library entry
-      // If >300% deviation → CAP to 150% of library reference
-      const normalizedUnit_ = normalizeUnit(block.primaryRow.unit);
-      const sameUnitRates = rateLibrary.filter(l => normalizeUnit(l.unit) === normalizedUnit_);
-      if (sameUnitRates.length > 0 && cost.unitRate > 0) {
-        const closest = sameUnitRates.reduce((a, b) =>
-          Math.abs(a.target_rate - cost.unitRate) < Math.abs(b.target_rate - cost.unitRate) ? a : b
-        );
-        if (closest.target_rate > 0) {
-          const deviation = Math.abs(cost.unitRate - closest.target_rate) / closest.target_rate;
-          if (deviation > 3.0) {
-            extremeDeviation = true;
-            // CAP the rate to 150% of library reference
-            const originalRate = cost.unitRate;
-            const cappedRate = +(closest.target_rate * 1.5).toFixed(2);
-            cost.unitRate = cappedRate;
-            cost.totalPrice = +(cappedRate * block.quantity).toFixed(2);
-            cost.confidence = Math.min(cost.confidence, 40);
-            cost.explanation += ` | ⚠️ AI capped: ${originalRate}→${cappedRate} SAR (library ref: ${closest.target_rate} SAR "${closest.standard_name_ar}")`;
-          }
-        }
-      }
+      processedCount++;
+      onProgress?.(processedCount, items.length);
+      continue;
     }
 
-    // 6. Confidence-based status assignment
+    // 6. Deterministic status assignment — no AI confidence checks
     let itemStatus: string;
-    if (matchedItem) {
-      if (matchConfidence >= 70) {
-        itemStatus = "approved";
-      } else {
-        itemStatus = "needs_review";
-        cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
-      }
-    } else if (extremeDeviation) {
-      itemStatus = "needs_review";
-      cost.explanation += " | 🚫 تسعير AI مرفوض — انحراف كبير عن مكتبة الأسعار";
-    } else if (detection.confidence < 60 || cost.confidence < 70) {
-      cost.confidence = Math.min(cost.confidence, 65);
-      itemStatus = "needs_review";
-      cost.explanation += " | ⚠️ تسعير بثقة منخفضة — وصف مدمج";
+    if (matchConfidence >= 70) {
+      itemStatus = "approved";
     } else {
-      itemStatus = cost.confidence >= 80 ? "approved" : "review";
+      // 50-69 range (guaranteed since unmatched items already continued above)
+      itemStatus = "needs_review";
+      cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
     }
 
     // 7. Owner-supplied materials: zero out materials and recalculate
@@ -679,9 +618,9 @@ export async function runPricingEngine(
         profit: cost.profit,
         unit_rate: cost.unitRate,
         total_price: cost.totalPrice,
-        confidence: Math.max(0, Math.min(100, Math.round(matchedItem ? matchConfidence : cost.confidence))),
+        confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
         location_factor: cost.locationFactor,
-        source: matchedItem ? (matchConfidence >= 70 ? "library-high" : "library-medium") : "ai",
+        source: matchConfidence >= 70 ? "library-high" : "library-medium",
         linked_rate_id: matchedItem?.id ?? null,
         status: itemStatus,
         notes: cost.explanation,
