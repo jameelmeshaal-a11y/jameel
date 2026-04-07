@@ -16,6 +16,7 @@ export interface ParsedBoQRow {
   unit: string;
   quantity: number;
   row_index: number;
+  parent_context: string;
 }
 
 /**
