@@ -469,6 +469,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
+                  {item.status === "unmatched" && (
+                    <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
+                  )}
                 </td>
                 <td className="text-center">
                   {isPriced && (
