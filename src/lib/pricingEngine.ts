@@ -410,11 +410,17 @@ export async function runPricingEngine(
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
   const projectCity = cities[0] || "";
 
-  // Build set of approved rate IDs from sources
+  // Build set of approved rate IDs from sources AND library-level approval
   const approvedRateIds = new Set<string>();
   for (const [rateId, sources] of sourcesMap.entries()) {
     if (sources.some(s => s.source_type === 'Approved')) {
       approvedRateIds.add(rateId);
+    }
+  }
+  // Also include library items with library-level approval metadata
+  for (const libItem of rateLibrary) {
+    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+      approvedRateIds.add(libItem.id);
     }
   }
 
