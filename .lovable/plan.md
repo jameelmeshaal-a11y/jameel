@@ -1,104 +1,80 @@
 
 
-# Comprehensive Pricing Fix: 3 Interconnected Problems
+# Deterministic Pricing System — Strict Enforcement (Revised)
 
-## Overview
+## Summary
 
-Three problems to solve together: (1) approved rates bypassed by multipliers, (2) BoQ parser loses parent context causing wrong matches, (3) missing alias/description matching + re-pricing support.
+Remove all AI price generation, enforce exact `target_rate` from library, raise thresholds, block unmatched from totals. **Fuzzy matching kept for item identification only** — never for price generation.
 
-## Execution Order
+## Changes
 
-### Step 1: Database Migration
+### 1. `src/lib/pricingEngine.ts` — 7 edits
 
-Add `item_description` column to `rate_library`:
+**1a. Remove AI fallback (lines ~593-637)**
+Replace the `else` block calling `calculateItemPrice()` with NO MATCH handler:
+- `unit_rate: null`, `total_price: null`, all breakdowns null
+- `source: "no_match"`, `status: "unmatched"`, `confidence: 0`
+- Note: `🔴 NO MATCH — لم يتم العثور على البند في مكتبة الأسعار`
 
-```sql
-ALTER TABLE rate_library ADD COLUMN IF NOT EXISTS item_description text DEFAULT '';
-```
+**1b. Remove `priceFromLibrary()` function (lines ~213-249)**
+Delete entirely — it applies complexity/quantity multipliers violating zero-deviation rule.
 
-No other tables needed — `project_budget_distribution` and `price_change_log` already exist.
+**1c. Force exact rate for all matches (lines ~563-592)**
+Replace non-approved branch with `priceFromApprovedRate()`. Every matched item uses `target_rate` exactly.
 
-### Step 2: Fix `src/lib/pricingEngine.ts` — 4 changes
+**1d. Raise matching thresholds (NOT remove fuzzy matching)**
+Keep all fuzzy matching logic (aliases, description, text similarity, n-grams, Jaccard) — these are for **item identification only**.
+- Change Path B threshold from `>= 30` to `>= 50`
+- Change Path C approved fallback threshold from `>= 15` to `>= 50`
+- Keep historical Pass 2 fuzzy (Jaccard ≥ 0.85) — it identifies items, doesn't generate prices
 
-**2a. Extend `approvedRateIds` set** (after line 397):
-Add library-level approval detection so items with `approved_at` or `source_type` in `['Approved','Field-Approved','Revised']` are included in the approved set — not just items with a `rate_sources` entry.
+Matching finds the library entry → `target_rate` used exactly. No price is ever generated.
 
-**2b. Extend `RateLibraryItem` interface** (line 44):
-Add `approved_at`, `approved_by`, `item_name_aliases`, `item_code`, `item_description` fields.
+**1e. Update status logic (lines ~639-657)**
+- `confidence >= 70` → `"approved"`
+- `confidence 50-69` → `"needs_review"`
+- No match → `"unmatched"` (handled in 1a)
+- Remove all AI confidence/deviation checks
 
-**2c. Add alias + description matching in `findRateLibraryMatch()`** (after line 136):
-For each candidate, check `item_name_aliases` array (weight: `aliasSim * 60`) and `item_description` field (weight: `descSim * 40`). Take the max across all text comparisons.
+**1f. Remove `calculateItemPrice` import (line 18)**
 
-**2d. Extend approved-rate branch** (line 491):
-After checking `sourceResolution.method === "approved"`, also check:
-```
-matchedItem.source_type in ['Approved','Field-Approved','Revised']
-|| !!matchedItem.approved_at
-```
-If any is true, use `priceFromApprovedRate()` with `matchedItem.target_rate` directly.
+**1g. Block unmatched from total (line ~693)**
+Only add to `totalValue` if matched. Unmatched = 0 contribution.
 
-### Step 3: Fix BoQ Parser — Parent Context Collection
+**1h. Audit fields on every DB write**
+Confirm each item stores: `source`, `linked_rate_id`, `confidence`, `updated_at`.
 
-**File: `src/lib/boqParser.ts`**
+### 2. `src/components/BoQTable.tsx` — Export + UI
 
-In `parseBoQExcel()`, after building the initial rows array (line 57), add a post-processing pass:
+- Export only `status === "approved"` items; warn about excluded count
+- 🔴 indicator for unmatched items with manual price input field
 
-1. Also detect a `unitPrice` column (patterns: `"price"`, `"سعر"`, `"unit price"`, `"سعر الوحدة"`)
-2. Walk rows in order. Track a `parentDescriptions: string[]` buffer
-3. For each row:
-   - If it has NO quantity AND NO unit price → it's a parent description row. Push its description to the buffer.
-   - If it HAS quantity OR unit price → it's a pricing row. Store `parentDescriptions.join(" | ")` as a new field `parent_context` on the parsed row. Reset the buffer.
-4. Update `ParsedBoQRow` interface to include `parent_context: string`.
-
-**Update `uploadAndParseBoQ()`** (line 138-148):
-When building DB insert objects, include `notes` field with parent context for later use by the pricing engine. The `description` field keeps the child text; parent context goes into `notes` as structured prefix like `[PARENT: ...]`.
-
-**Update `groupSemanticRows()`** in `boqRowGrouping.ts`:
-When building `mergedDescription`, also prepend any `[PARENT: ...]` text from `notes` field. This ensures the pricing engine sees the full parent+child description for matching.
-
-### Step 4: Update Rate Library Sync
-
-**File: `src/lib/pricing/rateSyncService.ts`**
-
-When syncing a manually priced item to `rate_library`, also populate `item_description` from the item's parent context (extracted from notes field).
-
-### Step 5: Add Re-Price Support
-
-**File: `src/components/BoQTable.tsx`**
-
-The existing "Start Pricing" button already calls `runPricingEngine()` which overwrites all prices. Add a separate "Re-Price" button (🔄 إعادة التسعير) that:
-
-1. Shows a confirmation dialog: "This will re-price all items using current library rates. Manual overrides will be preserved."
-2. Before re-pricing, snapshots current prices to `price_change_log` for audit
-3. Calls `runPricingEngine()` (same function — it already overwrites)
-4. After completion, shows summary: "X items updated, Y prices changed"
-
-**Audit trail**: Add a pre-pricing snapshot function that reads all current `boq_items` with `unit_rate > 0`, then after re-pricing, compares old vs new rates and bulk-inserts differences into `price_change_log`.
-
-### Step 6: Rate Library Page — Show `item_description`
-
-**File: `src/pages/RateLibraryPage.tsx`**
-
-Add an expandable row or tooltip showing `item_description` for each library item. When editing, allow editing `item_description`.
+### No database changes needed
 
 ## Files Changed
 
-| File | Change Type |
+| File | Change |
 |---|---|
-| Migration SQL | Add `item_description` column |
-| `src/lib/pricingEngine.ts` | Approved detection, alias matching, description matching |
-| `src/lib/boqParser.ts` | Parent context collection during parsing |
-| `src/lib/boqRowGrouping.ts` | Include parent context in merged descriptions |
-| `src/lib/pricing/rateSyncService.ts` | Sync `item_description` to library |
-| `src/components/BoQTable.tsx` | Re-price button + audit snapshot |
-| `src/pages/RateLibraryPage.tsx` | Show/edit `item_description` |
+| `src/lib/pricingEngine.ts` | Remove AI fallback + `priceFromLibrary()`, raise thresholds to 50, exact rates for all matches |
+| `src/components/BoQTable.tsx` | Export restriction, unmatched item UI |
 
-## Expected Outcome
+## Key Distinction
+
+| Action | Allowed? |
+|---|---|
+| Fuzzy/alias/description matching to **find** library item | Yes |
+| Historical Jaccard ≥0.85 to **identify** same item | Yes |
+| Using `target_rate` exactly once item is found | Yes |
+| AI generating a price when no match found | **No — removed** |
+| Multipliers adjusting matched rate | **No — removed** |
+
+## Validation
 
 | Scenario | Before | After |
 |---|---|---|
-| "تحت البلاطات" without parent context | Matches slab → 852 SAR | Parent "معالجة التربة ضد النمل" → matches termite → 31 SAR |
-| Library item with `approved_at` set, no `rate_sources` entry | Gets multipliers → inflated | Direct rate, no multipliers |
-| Same item, different alias wording | Falls to AI | Alias match → library rate |
-| Re-pricing old BoQ | No button, must re-upload | One-click re-price with audit trail |
+| Library item at 31 SAR | 31 × 1.08 × 1.06 = 35.5 | **31 SAR exactly** |
+| No library match | AI generates 852 SAR | **NULL — 🔴 manual** |
+| Similarity 55% via alias match | Auto-approved | **needs_review** |
+| Similarity 40% | Matched via Path C | **NO MATCH** |
+| Historical fuzzy 0.87 Jaccard | Matched + multiplied | **Matched → exact rate** |
 
