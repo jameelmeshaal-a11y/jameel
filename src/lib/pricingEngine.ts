@@ -516,10 +516,19 @@ export async function runPricingEngine(
 
       const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
 
-      if (sourceResolution.method === "approved") {
+      // Check if this item is approved via sources OR library-level metadata
+      const isApprovedRate = sourceResolution.method === "approved"
+        || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+        || !!matchedItem.approved_at;
+
+      if (isApprovedRate) {
         // ✅ APPROVED = use rate directly, NO multipliers
+        const approvedRate = sourceResolution.method === "approved"
+          ? sourceResolution.resolvedRate
+          : matchedItem.target_rate;
+
         const libResult = priceFromApprovedRate(
-          sourceResolution.resolvedRate,
+          approvedRate,
           matchedItem,
           block.quantity,
           locFactor,
@@ -527,7 +536,9 @@ export async function runPricingEngine(
           projectCity,
         );
 
-        const sourceLabel = `✅ Approved Rate: ${sourceResolution.approvedRate} SAR (used directly)`;
+        const sourceLabel = sourceResolution.method === "approved"
+          ? `✅ Approved Rate: ${sourceResolution.approvedRate} SAR (used directly)`
+          : `✅ Library-Approved (${matchedItem.source_type}): ${approvedRate} SAR (used directly)`;
 
         cost = {
           ...libResult,
