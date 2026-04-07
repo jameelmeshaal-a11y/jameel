@@ -63,6 +63,11 @@ interface RateLibraryItem {
   weight_class: string;
   complexity: string;
   source_type: string;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  item_name_aliases?: string[] | null;
+  item_code?: string | null;
+  item_description?: string | null;
 }
 
 export interface PricingResult {
