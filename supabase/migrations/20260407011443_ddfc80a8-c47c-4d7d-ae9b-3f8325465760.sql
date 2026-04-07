@@ -1,0 +1,1 @@
+ALTER TABLE rate_library ADD COLUMN IF NOT EXISTS item_description text DEFAULT '';
