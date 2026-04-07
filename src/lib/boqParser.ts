@@ -158,17 +158,22 @@ export async function uploadAndParseBoQ(
   }
 
   onProgress?.(`Saving ${parsed.length} items...`);
-  const items = parsed.map(row => ({
-    boq_file_id: boqFile.id,
-    item_no: row.item_no,
-    description: row.description,
-    description_en: row.description_en,
-    unit: row.unit,
-    quantity: row.quantity,
-    row_index: row.row_index,
-    status: getRowPersistenceStatus(row),
-    notes: getRowClassificationNote(row),
-  }));
+  const items = parsed.map(row => {
+    const parentNote = row.parent_context ? `[PARENT: ${row.parent_context}]` : "";
+    const classNote = getRowClassificationNote(row);
+    const combinedNote = [parentNote, classNote].filter(Boolean).join(" ");
+    return {
+      boq_file_id: boqFile.id,
+      item_no: row.item_no,
+      description: row.description,
+      description_en: row.description_en,
+      unit: row.unit,
+      quantity: row.quantity,
+      row_index: row.row_index,
+      status: getRowPersistenceStatus(row),
+      notes: combinedNote || null,
+    };
+  });
 
   // Insert in batches of 100
   for (let i = 0; i < items.length; i += 100) {

@@ -201,3 +201,23 @@ export function hasManualOverride(item: BoQItemLike): boolean {
   }
   return false;
 }
+
+/**
+ * Extract parent context from notes field.
+ * Notes may contain `[PARENT: ...]` prefix from the parser.
+ */
+function extractParentContext(notes?: string | null): string {
+  if (!notes) return "";
+  const match = notes.match(/\[PARENT:\s*(.+?)\]/);
+  return match ? match[1].trim() : "";
+}
+  if (item.source === "manual_override") return true;
+  if (
+    item.manual_overrides &&
+    typeof item.manual_overrides === "object" &&
+    Object.keys(item.manual_overrides).length > 0
+  ) {
+    return true;
+  }
+  return false;
+}
