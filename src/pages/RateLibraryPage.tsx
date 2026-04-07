@@ -47,6 +47,7 @@ export default function RateLibraryPage() {
       unit: item.unit,
       base_rate: item.base_rate,
       item_code: item.item_code || "",
+      item_description: item.item_description || "",
     });
   };
 
