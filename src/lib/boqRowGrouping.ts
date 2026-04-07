@@ -147,7 +147,10 @@ export function groupSemanticRows(items: BoQItemLike[]): SemanticBlock[] {
     }
 
     // Build merged description from related rows + priced row
+    // Also prepend parent context from notes if available
+    const parentContext = extractParentContext(item.notes);
     const descParts = relatedRows.map((r) => r.description.trim()).filter(Boolean);
+    if (parentContext) descParts.unshift(parentContext);
     descParts.push(item.description.trim());
     const mergedDescription = descParts.join(" — ");
 
