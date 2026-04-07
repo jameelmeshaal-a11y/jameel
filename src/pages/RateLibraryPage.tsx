@@ -21,6 +21,7 @@ export default function RateLibraryPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Debounce search
   const [timer, setTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
