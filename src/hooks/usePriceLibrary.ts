@@ -43,7 +43,7 @@ export function useUpdatePriceItem() {
         base_rate: number; min_rate: number; max_rate: number; target_rate: number;
         item_code: string | null; item_description: string | null; item_name_aliases: string[] | null;
         approved_by: string | null; approved_at: string | null; source_type: string;
-        notes: string | null; is_locked: boolean;
+        notes: string | null; is_locked: boolean; updated_at: string;
       }>;
       oldPrice?: number;
       newPrice?: number;
