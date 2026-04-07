@@ -22,6 +22,7 @@ export interface BoQItemLike {
   row_index: number;
   source?: string | null;
   manual_overrides?: Record<string, unknown> | null;
+  notes?: string | null;
   [key: string]: unknown;
 }
 
