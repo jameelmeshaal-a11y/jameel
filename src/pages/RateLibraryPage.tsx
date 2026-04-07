@@ -166,7 +166,8 @@ export default function RateLibraryPage() {
                   const isEditing = editingId === rate.id;
                   const isApproved = !!rate.approved_at;
                   return (
-                    <tr key={rate.id} className="group">
+                    <React.Fragment key={rate.id}>
+                    <tr className="group">
                       <td className="text-xs text-muted-foreground">{idx + 1}</td>
                       <td className="font-mono text-xs">
                         {isEditing ? (
@@ -181,7 +182,16 @@ export default function RateLibraryPage() {
                       <td className="text-sm" dir="rtl">
                         {isEditing ? (
                           <Input value={editValues.standard_name_ar} onChange={(e) => setEditValues({...editValues, standard_name_ar: e.target.value})} className="h-7 text-xs" dir="rtl" />
-                        ) : rate.standard_name_ar}
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span>{rate.standard_name_ar}</span>
+                            {rate.item_description && (
+                              <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => setExpandedId(expandedId === rate.id ? null : rate.id)}>
+                                {expandedId === rate.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                              </Button>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="text-xs text-center">
                         {isEditing ? (
@@ -240,7 +250,6 @@ export default function RateLibraryPage() {
                         )}
                       </td>
                     </tr>
-                    {/* Expandable item_description row */}
                     {(expandedId === rate.id || isEditing) && (
                       <tr className="bg-muted/20">
                         <td colSpan={9} className="px-4 py-2" dir="rtl">
@@ -264,6 +273,7 @@ export default function RateLibraryPage() {
                         </td>
                       </tr>
                     )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
