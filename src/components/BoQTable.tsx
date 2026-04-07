@@ -67,6 +67,79 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, cities, qc]);
 
+  const handleRePrice = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    try {
+      // 1. Snapshot current prices for audit trail
+      const pricedItems = items.filter(i => i.unit_rate && i.unit_rate > 0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && pricedItems.length > 0) {
+        const snapshots = pricedItems.map(item => ({
+          item_id: item.id,
+          old_price: item.unit_rate,
+          new_price: null,
+          changed_by: user.id,
+          change_reason: "إعادة تسعير المشروع",
+        }));
+        // Insert in batches
+        for (let i = 0; i < snapshots.length; i += 100) {
+          await supabase.from("price_change_log").insert(snapshots.slice(i, i + 100));
+        }
+      }
+
+      // 2. Run pricing engine (overwrites all prices)
+      const result = await runPricingEngine(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      });
+
+      // 3. Update audit trail with new prices
+      if (user) {
+        const { data: updatedItems } = await supabase
+          .from("boq_items")
+          .select("id, unit_rate")
+          .eq("boq_file_id", boqFileId);
+        
+        if (updatedItems) {
+          const updates = pricedItems
+            .map(old => {
+              const updated = updatedItems.find(u => u.id === old.id);
+              if (updated && updated.unit_rate !== old.unit_rate) {
+                return supabase.from("price_change_log")
+                  .update({ new_price: updated.unit_rate })
+                  .eq("item_id", old.id)
+                  .eq("changed_by", user.id)
+                  .eq("change_reason", "إعادة تسعير المشروع")
+                  .is("new_price", null);
+              }
+              return null;
+            })
+            .filter(Boolean);
+          if (updates.length > 0) await Promise.all(updates);
+        }
+      }
+
+      const changedCount = pricedItems.filter(old => {
+        const newItem = items.find(i => i.id === old.id);
+        return newItem && newItem.unit_rate !== old.unit_rate;
+      }).length;
+
+      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
+      
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+    }
+  }, [boqFileId, cities, items, qc, projectId]);
+
   const handleExport = async () => {
     if (items.length === 0) return;
     
