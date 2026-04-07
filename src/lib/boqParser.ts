@@ -16,6 +16,7 @@ export interface ParsedBoQRow {
   unit: string;
   quantity: number;
   row_index: number;
+  parent_context: string;
 }
 
 /**
@@ -36,25 +37,47 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
 
   const colMap = detectColumns(headers);
 
-  const rows: ParsedBoQRow[] = [];
+  // Also detect unitPrice column for parent context logic
+  const unitPricePatterns = ["price", "سعر", "unit price", "سعر الوحدة", "unit rate", "rate"];
+  const unitPriceCol = headers.findIndex(h => unitPricePatterns.some(p => h.includes(p)));
+
+  const rawRows: ParsedBoQRow[] = [];
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const row = raw[i];
     const desc = String(row[colMap.description] ?? "").trim();
     const qty = parseFloat(String(row[colMap.quantity] ?? "0")) || 0;
+    const unitPrice = unitPriceCol >= 0 ? (parseFloat(String(row[unitPriceCol] ?? "0")) || 0) : 0;
 
     if (!desc && qty === 0) continue; // skip empty rows
 
-    rows.push({
+    rawRows.push({
       item_no: String(row[colMap.itemNo] ?? "").trim(),
       description: desc,
       description_en: "",
       unit: String(row[colMap.unit] ?? "").trim(),
       quantity: qty,
       row_index: i,
+      parent_context: "", // will be filled in post-processing
     });
   }
 
-  return rows;
+  // Post-processing: collect parent context for pricing rows
+  const parentDescriptions: string[] = [];
+  for (const row of rawRows) {
+    const hasPricing = row.quantity > 0;
+    if (!hasPricing) {
+      // Parent description row — buffer it
+      if (row.description.trim()) {
+        parentDescriptions.push(row.description.trim());
+      }
+    } else {
+      // Pricing row — attach parent context then reset
+      row.parent_context = parentDescriptions.join(" | ");
+      parentDescriptions.length = 0;
+    }
+  }
+
+  return rawRows;
 }
 
 function findHeaderRow(data: any[][]): number {
@@ -135,17 +158,22 @@ export async function uploadAndParseBoQ(
   }
 
   onProgress?.(`Saving ${parsed.length} items...`);
-  const items = parsed.map(row => ({
-    boq_file_id: boqFile.id,
-    item_no: row.item_no,
-    description: row.description,
-    description_en: row.description_en,
-    unit: row.unit,
-    quantity: row.quantity,
-    row_index: row.row_index,
-    status: getRowPersistenceStatus(row),
-    notes: getRowClassificationNote(row),
-  }));
+  const items = parsed.map(row => {
+    const parentNote = row.parent_context ? `[PARENT: ${row.parent_context}]` : "";
+    const classNote = getRowClassificationNote(row);
+    const combinedNote = [parentNote, classNote].filter(Boolean).join(" ");
+    return {
+      boq_file_id: boqFile.id,
+      item_no: row.item_no,
+      description: row.description,
+      description_en: row.description_en,
+      unit: row.unit,
+      quantity: row.quantity,
+      row_index: row.row_index,
+      status: getRowPersistenceStatus(row),
+      notes: combinedNote || null,
+    };
+  });
 
   // Insert in batches of 100
   for (let i = 0; i < items.length; i += 100) {

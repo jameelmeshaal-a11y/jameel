@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Search, Plus, BookOpen, Download, Upload, Check, X, Pencil, Trash2, Loader2 } from "lucide-react";
+import React, { useState, useCallback } from "react";
+import { Search, Plus, BookOpen, Download, Upload, Check, X, Pencil, Trash2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ export default function RateLibraryPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Debounce search
   const [timer, setTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
@@ -46,6 +47,7 @@ export default function RateLibraryPage() {
       unit: item.unit,
       base_rate: item.base_rate,
       item_code: item.item_code || "",
+      item_description: item.item_description || "",
     });
   };
 
@@ -164,7 +166,8 @@ export default function RateLibraryPage() {
                   const isEditing = editingId === rate.id;
                   const isApproved = !!rate.approved_at;
                   return (
-                    <tr key={rate.id} className="group">
+                    <React.Fragment key={rate.id}>
+                    <tr className="group">
                       <td className="text-xs text-muted-foreground">{idx + 1}</td>
                       <td className="font-mono text-xs">
                         {isEditing ? (
@@ -179,7 +182,16 @@ export default function RateLibraryPage() {
                       <td className="text-sm" dir="rtl">
                         {isEditing ? (
                           <Input value={editValues.standard_name_ar} onChange={(e) => setEditValues({...editValues, standard_name_ar: e.target.value})} className="h-7 text-xs" dir="rtl" />
-                        ) : rate.standard_name_ar}
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span>{rate.standard_name_ar}</span>
+                            {rate.item_description && (
+                              <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => setExpandedId(expandedId === rate.id ? null : rate.id)}>
+                                {expandedId === rate.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                              </Button>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="text-xs text-center">
                         {isEditing ? (
@@ -238,6 +250,30 @@ export default function RateLibraryPage() {
                         )}
                       </td>
                     </tr>
+                    {(expandedId === rate.id || isEditing) && (
+                      <tr className="bg-muted/20">
+                        <td colSpan={9} className="px-4 py-2" dir="rtl">
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">وصف تفصيلي:</span>
+                              <Input
+                                value={editValues.item_description}
+                                onChange={(e) => setEditValues({...editValues, item_description: e.target.value})}
+                                className="h-7 text-xs flex-1"
+                                dir="rtl"
+                                placeholder="وصف تفصيلي للبند (السياق الأصلي من جدول الكميات)"
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium">وصف تفصيلي: </span>
+                              {rate.item_description || "—"}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

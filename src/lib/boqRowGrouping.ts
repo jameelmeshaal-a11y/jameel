@@ -22,6 +22,7 @@ export interface BoQItemLike {
   row_index: number;
   source?: string | null;
   manual_overrides?: Record<string, unknown> | null;
+  notes?: string | null;
   [key: string]: unknown;
 }
 
@@ -146,7 +147,10 @@ export function groupSemanticRows(items: BoQItemLike[]): SemanticBlock[] {
     }
 
     // Build merged description from related rows + priced row
+    // Also prepend parent context from notes if available
+    const parentContext = extractParentContext(item.notes);
     const descParts = relatedRows.map((r) => r.description.trim()).filter(Boolean);
+    if (parentContext) descParts.unshift(parentContext);
     descParts.push(item.description.trim());
     const mergedDescription = descParts.join(" — ");
 
@@ -196,4 +200,14 @@ export function hasManualOverride(item: BoQItemLike): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Extract parent context from notes field.
+ * Notes may contain `[PARENT: ...]` prefix from the parser.
+ */
+function extractParentContext(notes?: string | null): string {
+  if (!notes) return "";
+  const match = notes.match(/\[PARENT:\s*(.+?)\]/);
+  return match ? match[1].trim() : "";
 }

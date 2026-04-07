@@ -63,6 +63,11 @@ interface RateLibraryItem {
   weight_class: string;
   complexity: string;
   source_type: string;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  item_name_aliases?: string[] | null;
+  item_code?: string | null;
+  item_description?: string | null;
 }
 
 export interface PricingResult {
@@ -110,10 +115,27 @@ function findRateLibraryMatch(
     let score = 0;
 
     // Text similarity via Jaccard (max 60 pts)
-    const textScore = Math.max(
+    let textScore = Math.max(
       textSimilarity(description, candidate.standard_name_ar || ""),
       textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
     ) * 60;
+
+    // Check item_name_aliases (weight: aliasSim * 60)
+    if (candidate.item_name_aliases?.length) {
+      for (const alias of candidate.item_name_aliases) {
+        const aliasSim = textSimilarity(description, alias);
+        textScore = Math.max(textScore, aliasSim * 60);
+      }
+    }
+
+    // Check item_description (weight: descSim * 40)
+    if (candidate.item_description) {
+      const descSim = Math.max(
+        textSimilarity(description, candidate.item_description),
+        textSimilarity(descriptionEn || "", candidate.item_description),
+      );
+      textScore = Math.max(textScore, descSim * 40);
+    }
 
     // Character n-gram similarity as secondary scorer (max 30 pts)
     const ngramScore = Math.max(
@@ -137,7 +159,7 @@ function findRateLibraryMatch(
 
     score = Math.min(score, 99);
 
-    if (score > bestScore && score >= 30) {  // Lowered from 40
+    if (score > bestScore && score >= 30) {
       bestScore = score;
       bestMatch = candidate;
     }
@@ -388,11 +410,17 @@ export async function runPricingEngine(
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
   const projectCity = cities[0] || "";
 
-  // Build set of approved rate IDs from sources
+  // Build set of approved rate IDs from sources AND library-level approval
   const approvedRateIds = new Set<string>();
   for (const [rateId, sources] of sourcesMap.entries()) {
     if (sources.some(s => s.source_type === 'Approved')) {
       approvedRateIds.add(rateId);
+    }
+  }
+  // Also include library items with library-level approval metadata
+  for (const libItem of rateLibrary) {
+    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+      approvedRateIds.add(libItem.id);
     }
   }
 
@@ -488,10 +516,19 @@ export async function runPricingEngine(
 
       const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
 
-      if (sourceResolution.method === "approved") {
+      // Check if this item is approved via sources OR library-level metadata
+      const isApprovedRate = sourceResolution.method === "approved"
+        || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+        || !!matchedItem.approved_at;
+
+      if (isApprovedRate) {
         // ✅ APPROVED = use rate directly, NO multipliers
+        const approvedRate = sourceResolution.method === "approved"
+          ? sourceResolution.resolvedRate
+          : matchedItem.target_rate;
+
         const libResult = priceFromApprovedRate(
-          sourceResolution.resolvedRate,
+          approvedRate,
           matchedItem,
           block.quantity,
           locFactor,
@@ -499,7 +536,9 @@ export async function runPricingEngine(
           projectCity,
         );
 
-        const sourceLabel = `✅ Approved Rate: ${sourceResolution.approvedRate} SAR (used directly)`;
+        const sourceLabel = sourceResolution.method === "approved"
+          ? `✅ Approved Rate: ${sourceResolution.approvedRate} SAR (used directly)`
+          : `✅ Library-Approved (${matchedItem.source_type}): ${approvedRate} SAR (used directly)`;
 
         cost = {
           ...libResult,

@@ -549,6 +549,7 @@ export type Database = {
           includes_transport_to_site: boolean
           is_locked: boolean
           item_code: string | null
+          item_description: string | null
           item_name_aliases: string[] | null
           keywords: string[]
           labor_pct: number
@@ -590,6 +591,7 @@ export type Database = {
           includes_transport_to_site?: boolean
           is_locked?: boolean
           item_code?: string | null
+          item_description?: string | null
           item_name_aliases?: string[] | null
           keywords?: string[]
           labor_pct?: number
@@ -631,6 +633,7 @@ export type Database = {
           includes_transport_to_site?: boolean
           is_locked?: boolean
           item_code?: string | null
+          item_description?: string | null
           item_name_aliases?: string[] | null
           keywords?: string[]
           labor_pct?: number

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -15,6 +15,8 @@ import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassificatio
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
 import BudgetDistributionPanel from "./BudgetDistributionPanel";
+import { supabase } from "@/integrations/supabase/client";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -64,6 +66,79 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       setPricing(false);
     }
   }, [boqFileId, cities, qc]);
+
+  const handleRePrice = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    try {
+      // 1. Snapshot current prices for audit trail
+      const pricedItems = items.filter(i => i.unit_rate && i.unit_rate > 0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && pricedItems.length > 0) {
+        const snapshots = pricedItems.map(item => ({
+          item_id: item.id,
+          old_price: item.unit_rate,
+          new_price: null,
+          changed_by: user.id,
+          change_reason: "إعادة تسعير المشروع",
+        }));
+        // Insert in batches
+        for (let i = 0; i < snapshots.length; i += 100) {
+          await supabase.from("price_change_log").insert(snapshots.slice(i, i + 100));
+        }
+      }
+
+      // 2. Run pricing engine (overwrites all prices)
+      const result = await runPricingEngine(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      });
+
+      // 3. Update audit trail with new prices
+      if (user) {
+        const { data: updatedItems } = await supabase
+          .from("boq_items")
+          .select("id, unit_rate")
+          .eq("boq_file_id", boqFileId);
+        
+        if (updatedItems) {
+          const updates = pricedItems
+            .map(old => {
+              const updated = updatedItems.find(u => u.id === old.id);
+              if (updated && updated.unit_rate !== old.unit_rate) {
+                return supabase.from("price_change_log")
+                  .update({ new_price: updated.unit_rate })
+                  .eq("item_id", old.id)
+                  .eq("changed_by", user.id)
+                  .eq("change_reason", "إعادة تسعير المشروع")
+                  .is("new_price", null);
+              }
+              return null;
+            })
+            .filter(Boolean);
+          if (updates.length > 0) await Promise.all(updates);
+        }
+      }
+
+      const changedCount = pricedItems.filter(old => {
+        const newItem = items.find(i => i.id === old.id);
+        return newItem && newItem.unit_rate !== old.unit_rate;
+      }).length;
+
+      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
+      
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+    }
+  }, [boqFileId, cities, items, qc, projectId]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
@@ -258,6 +333,28 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
             <Play className="w-3 h-3" /> {t("priceAll")}
           </Button>
+          {pricedCount > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1" disabled={pricing}>
+                  <RotateCcw className="w-3 h-3" /> إعادة التسعير
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent dir="rtl">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
+                    سيتم تسجيل جميع التغييرات في سجل المراجعة.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           {hasItems && (
             <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
               <Download className="w-3 h-3" /> {t("export")}
