@@ -240,6 +240,30 @@ export default function RateLibraryPage() {
                         )}
                       </td>
                     </tr>
+                    {/* Expandable item_description row */}
+                    {(expandedId === rate.id || isEditing) && (
+                      <tr className="bg-muted/20">
+                        <td colSpan={9} className="px-4 py-2" dir="rtl">
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">وصف تفصيلي:</span>
+                              <Input
+                                value={editValues.item_description}
+                                onChange={(e) => setEditValues({...editValues, item_description: e.target.value})}
+                                className="h-7 text-xs flex-1"
+                                dir="rtl"
+                                placeholder="وصف تفصيلي للبند (السياق الأصلي من جدول الكميات)"
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium">وصف تفصيلي: </span>
+                              {rate.item_description || "—"}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                   );
                 })}
               </tbody>
