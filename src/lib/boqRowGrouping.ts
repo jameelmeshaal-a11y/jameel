@@ -211,13 +211,3 @@ function extractParentContext(notes?: string | null): string {
   const match = notes.match(/\[PARENT:\s*(.+?)\]/);
   return match ? match[1].trim() : "";
 }
-  if (item.source === "manual_override") return true;
-  if (
-    item.manual_overrides &&
-    typeof item.manual_overrides === "object" &&
-    Object.keys(item.manual_overrides).length > 0
-  ) {
-    return true;
-  }
-  return false;
-}
