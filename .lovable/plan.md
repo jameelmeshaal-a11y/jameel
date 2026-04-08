@@ -1,98 +1,54 @@
 
 
-# Fix: 0.08 Pricing Multiplier Bug + BoQ Data Reset
+# Fix: Matching Engine Improvements for Unpriced BoQ Items
 
-## Root Cause
+## Problem Analysis
 
-In `priceFromApprovedRate()` (pricingEngine.ts, line 236-245):
+The current `findRateLibraryMatch()` in `pricingEngine.ts` uses **Jaccard similarity** (`intersection / union`) which severely penalizes cases where:
+- BoQ description is **shorter** than library item (e.g., 3 tokens vs 10 tokens → max Jaccard = 0.3 even with perfect overlap)
+- BoQ uses a **model/reference code** (TSD-2, HOK-2) that isn't matched as a strong key
+- BoQ text is a **subset** of the library description (e.g., "قواعد خرسانية للماكينات" is contained in the full library entry)
 
-```text
-totalPct = materials_pct + labor_pct + equipment_pct + logistics_pct
-safePct = totalPct > 0 ? totalPct : 100
-
-materials = rate × (materials_pct / safePct)   ← 0/100 = 0
-labor     = rate × (labor_pct / safePct)       ← 0/100 = 0
-equipment = rate × (equipment_pct / safePct)   ← 0/100 = 0
-logistics = rate × (logistics_pct / safePct)   ← 0/100 = 0
-risk      = rate × (risk_pct / 100)            ← 3/100 = 0.03
-profit    = rate × (profit_pct / 100)          ← 5/100 = 0.05
-
-unitRate = 0 + 0 + 0 + 0 + 0.03×rate + 0.05×rate = 0.08 × rate
-```
-
-When library items have default percentage breakdowns (all zeros), the approved rate gets reduced to 8%.
-
-## Fix Strategy
-
-Replace `priceFromApprovedRate()` with correct logic:
-
-1. **If breakdown percentages are all zero**: use the approved rate directly as `unitRate`. Set `materials = approvedRate` (the full cost), all others = 0. Risk and profit are already included in the approved rate per the system policy.
-2. **If breakdown percentages exist (sum > 0)**: distribute the approved rate proportionally across components. Risk/profit are treated as part of the distribution, not as additional multipliers on top.
-
-The key principle: **the approved rate IS the unit rate**. Breakdown is for display only — it must never reduce the total.
+The `textSimilarity()` function returns `intersection / union` — this is the root cause of missed matches.
 
 ## Changes
 
-### 1. `src/lib/pricingEngine.ts` — Fix `priceFromApprovedRate()`
+### 1. `src/lib/pricing/similarItemMatcher.ts` — Add overlap coefficient + code extractor
 
-Replace lines 222-254 with corrected logic:
+**Add `overlapCoefficient()`**: Returns `intersection / min(|A|, |B|)` — scores 1.0 when all tokens of the shorter text exist in the longer text. This directly fixes the "short BoQ vs long library" problem.
 
-```typescript
-function priceFromApprovedRate(
-  approvedRate: number,
-  libraryItem: RateLibraryItem,
-  quantity: number,
-  locationFactor: number,
-  baseCity: string,
-  projectCity: string,
-): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
-  // Only apply location factor if cities differ
-  const needsLocationAdj = baseCity && projectCity &&
-    baseCity.toLowerCase().trim() !== projectCity.toLowerCase().trim();
-  const adjustedRate = needsLocationAdj 
-    ? +(approvedRate * locationFactor).toFixed(2) 
-    : approvedRate;
+**Add `extractModelCodes()`**: Regex to extract alphanumeric reference codes (e.g., `TSD-2`, `HOK-2`, `REF-1`, `CA-1`, `WT01`, `نموذج -1`) from text. Returns array of normalized codes.
 
-  // Breakdown is DISPLAY ONLY — adjustedRate IS the unit rate
-  const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
-    libraryItem.equipment_pct + libraryItem.logistics_pct +
-    libraryItem.risk_pct + libraryItem.profit_pct;
+**Update `textSimilarity()`**: Return the **max** of Jaccard and overlap coefficient, so short-but-correct descriptions still score high.
 
-  let materials, labor, equipment, logistics, risk, profit;
+### 2. `src/lib/pricingEngine.ts` — Enhance `findRateLibraryMatch()` with 3 new matching paths
 
-  if (totalPct > 0) {
-    // Distribute the rate proportionally (all components sum to adjustedRate)
-    materials  = +(adjustedRate * libraryItem.materials_pct / totalPct).toFixed(2);
-    labor      = +(adjustedRate * libraryItem.labor_pct / totalPct).toFixed(2);
-    equipment  = +(adjustedRate * libraryItem.equipment_pct / totalPct).toFixed(2);
-    logistics  = +(adjustedRate * libraryItem.logistics_pct / totalPct).toFixed(2);
-    risk       = +(adjustedRate * libraryItem.risk_pct / totalPct).toFixed(2);
-    profit     = +(adjustedRate * libraryItem.profit_pct / totalPct).toFixed(2);
-  } else {
-    // No breakdown info — full rate goes to materials (display convention)
-    materials = adjustedRate;
-    labor = 0; equipment = 0; logistics = 0; risk = 0; profit = 0;
-  }
+Add to the scoring loop (before final score calculation):
 
-  const unitRate = adjustedRate;  // ALWAYS equals the approved rate
-  const totalPrice = +(unitRate * quantity).toFixed(2);
+**a) Model/code match (+40 pts)**:
+Extract codes from BoQ description. If any code matches a code in the library item's `item_code`, `item_name_aliases`, `standard_name_ar`, or `item_description`, add 40 points. This ensures items like "TSD-2" or "نموذج -1" get strong matches.
 
-  return {
-    materials, labor, equipment, logistics, risk, profit,
-    unitRate, totalPrice,
-    confidence: 95,
-    locationFactor: needsLocationAdj ? +locationFactor.toFixed(4) : 1.0,
-  };
-}
-```
+**b) Containment bonus (+20 pts)**:
+If `overlapCoefficient >= 0.8` (meaning ≥80% of the shorter text's tokens exist in the longer text), add 20 bonus points. This handles "قواعد خرسانية للماكينات" matching a longer library entry.
 
-### 2. `src/lib/pricingEngine.ts` — Improve matching for unmatched items
+**c) Library keywords field matching (+15 pts)**:
+Currently `candidate.keywords` from `rate_library` is never checked. Add: extract BoQ tokens, check overlap with `candidate.keywords` array, award up to 15 points.
 
-In `findRateLibraryMatch()`, add `item_description` field matching with higher weight so items with full descriptions in the library get matched even when primary names differ slightly. Already partially implemented but the `item_description` path caps at `descSim * 40` — raise to `descSim * 60` to match alias weight.
+**Scoring summary after changes**:
+- Text similarity (Jaccard OR overlap coeff) × 60 = max 60 pts
+- Character n-gram × 30 = max 30 pts (existing)
+- Category match = +15 pts (existing)
+- Token overlap × 5 = max 25 pts (existing)
+- Model/code match = +40 pts (new)
+- Containment bonus = +20 pts (new)
+- Keywords match = +15 pts (new)
+- Cap at 99
 
-### 3. Data Reset — Delete BoQ data
+### 3. `src/lib/pricing/similarItemMatcher.ts` — Update `textSimilarity()`
 
-Clear `boq_items`, `boq_files`, `price_change_log`, `pricing_audit_log` so the user can re-upload and re-price with the fixed engine.
+Change return from pure Jaccard to `Math.max(jaccard, overlapCoefficient)`.
+
+### 4. Data Reset — Delete BoQ data for re-upload
 
 ```sql
 DELETE FROM boq_items;
@@ -102,18 +58,33 @@ DELETE FROM pricing_audit_log;
 UPDATE projects SET boq_count = 0, total_value = 0;
 ```
 
-## What Is NOT Changed
+## Technical Detail: Model Code Regex
 
-- Rate library data — preserved
-- Schema/tables — no changes
-- Authentication — untouched
-- AI policy — still zero AI pricing
-- Edge functions — untouched
+```typescript
+function extractModelCodes(text: string): string[] {
+  // Matches patterns like TSD-2, HOK-2, REF-1, CA-1, WT01, نموذج -1, نموذج-21
+  const codes: string[] = [];
+  // Latin codes: 2+ letters followed by optional separator and digits
+  const latinPattern = /\b([A-Za-z]{2,}\s*-?\s*\d+)\b/g;
+  // Arabic model pattern: نموذج followed by separator and number
+  const modelPattern = /نموذج\s*[-.‐]\s*(\d+)/g;
+  // ... extract, normalize (strip spaces, lowercase), return unique codes
+  return codes;
+}
+```
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `src/lib/pricingEngine.ts` | Fix `priceFromApprovedRate()` to use approved rate directly; improve `item_description` matching weight |
-| Data operation | Clear BoQ data tables for re-upload |
+| `src/lib/pricing/similarItemMatcher.ts` | Add `overlapCoefficient()`, `extractModelCodes()`, update `textSimilarity()` |
+| `src/lib/pricingEngine.ts` | Add model-code, containment, and keywords scoring paths in `findRateLibraryMatch()` |
+| Data operation | Clear BoQ data for re-upload |
+
+## What Is NOT Changed
+
+- Rate library data — preserved
+- Schema/tables — no changes
+- `priceFromApprovedRate()` — already fixed
+- Auth, RLS, edge functions — untouched
 
