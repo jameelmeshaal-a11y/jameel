@@ -41,6 +41,8 @@ export default function RateLibraryPage() {
   const bulkApprove = useBulkApprovePending();
 
   const pendingCount = items.filter((i: any) => !i.approved_at).length;
+
+  const startEdit = (item: any) => {
     setEditingId(item.id);
     setEditValues({
       standard_name_ar: item.standard_name_ar,
