@@ -1,37 +1,62 @@
 
 
-# Clear Stale BoQ Data
+# Professional BoQ Excel Export
 
-## What
+## Summary
 
-Delete all rows from `boq_items` and `boq_files` tables so you can re-upload fresh. No code changes. Rate library stays intact.
+Replace the current export logic with a fully styled, RTL Arabic Excel export that matches the UI table layout exactly. Since `xlsx` (SheetJS community edition) does not support cell styling, we need to switch to `exceljs` which provides full formatting control.
 
-## Steps
+## Changes
 
-1. **Delete all `boq_items`** (1,839 rows) — must go first since items reference files
-2. **Delete all `boq_files`** (5 rows)
-3. **Reset project totals** to 0 and `boq_count` to 0 on all projects (so the UI doesn't show stale totals)
+### 1. Install `exceljs` package
 
-## SQL Operations
+Add `exceljs` as a dependency. It supports cell styles, RTL sheets, freeze panes, and conditional formatting — all required features that `xlsx` community edition cannot provide.
 
-```sql
--- Step 1: Clear all BoQ items
-DELETE FROM boq_items;
+### 2. Create `src/lib/boqExcelExport.ts` — New dedicated export module
 
--- Step 2: Clear all BoQ files  
-DELETE FROM boq_files;
+A new file containing the full styled export logic:
 
--- Step 3: Reset project counters
-UPDATE projects SET total_value = 0, boq_count = 0;
-```
+**Main sheet (BoQ data):**
+- RTL sheet direction, frozen header row
+- 16 columns in order: رقم البند, الوصف, المطابقة, الوحدة, الكمية, الفئة, سعر الوحدة, الإجمالي, مواد, عمالة, معدات, نقل, مخاطر, ربح, الثقة%, الحالة
+- Header: Bold Calibri 12, white text on navy (#1e3a5f)
+- Row coloring: white for matched (✅), #ffe6e6 for unmatched (🔴), #fff9e6 for needs_review (🟡)
+- Confidence color coding: green ≥90%, orange 70-89%, red <70%
+- Unmatched items: "غير موجود في المكتبة" in unit price and total cells
+- Numbers with thousands separator, SAR prefix on price columns
+- Auto-fit column widths (min 15 chars for description)
+- Totals row at bottom: bold, light gray background, sums for numeric columns
+- Sheet name: `[ProjectName] - [BoQFileName]`
 
-## What stays unchanged
+**Summary sheet (ملخص التسعير):**
+- Total priced items count
+- Total unmatched items count (🔴)
+- Total needs_review count (🟡)
+- Grand total value (SAR)
+- Breakdown by category (sum per category)
 
-- `rate_library` — completely untouched
-- `pricingEngine.ts` — no code changes
-- All other tables (documents, profiles, etc.)
+**File name:** `[ProjectName]_BoQ_[YYYY-MM-DD].xlsx`
 
-## After completion
+**Key rules:**
+- Export ALL items (approved + needs_review + unmatched) — user needs to see what requires manual entry
+- No locked/protected cells
 
-You re-upload each BoQ file fresh. The deterministic engine will price every item using exact `target_rate` from the library, with no AI fallback.
+### 3. Update `src/components/BoQTable.tsx` — `handleExport`
+
+- Remove the approved-only filter — export all items
+- Call the new `exportStyledBoQ()` from `boqExcelExport.ts` instead of `exportBoQExcel()`
+- Pass project name, BoQ file name, and all items
+- Keep warning toasts for unmatched/needs_review counts
+
+### 4. Update `src/lib/boqParser.ts` — Keep existing function
+
+Keep `exportBoQExcel` for backward compatibility but the new export path will use the new module. No changes needed here.
+
+## Files Changed
+
+| File | Change |
+|---|---|
+| `package.json` | Add `exceljs` dependency |
+| `src/lib/boqExcelExport.ts` | New file — full styled export with ExcelJS |
+| `src/components/BoQTable.tsx` | Update `handleExport` to use new export, include all items |
 
