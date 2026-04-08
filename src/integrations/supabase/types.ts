@@ -23,6 +23,7 @@ export type Database = {
           facility_type: string
           file_path: string
           id: string
+          is_archived: boolean
           location_factor: number
           name: string
           notes: string
@@ -44,6 +45,7 @@ export type Database = {
           facility_type?: string
           file_path: string
           id?: string
+          is_archived?: boolean
           location_factor?: number
           name: string
           notes?: string
@@ -65,6 +67,7 @@ export type Database = {
           facility_type?: string
           file_path?: string
           id?: string
+          is_archived?: boolean
           location_factor?: number
           name?: string
           notes?: string
