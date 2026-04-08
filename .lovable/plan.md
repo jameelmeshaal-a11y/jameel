@@ -1,35 +1,52 @@
 
 
-# Fix Porcelain Item Units and Reprice
+# منع اعتماد بنود مكتبة الأسعار بسعر صفر
 
-## Problem
-Two porcelain BoQ items have incorrect units due to a parsing/typographical error:
-- **بورسلين أرضيات... نموذج -1**: unit = `م131` (should be `م²`)
-- **بورسلين أرضيات... نموذج -21**: unit = `م132` (should be `م²`)
+## الملخص
 
-## Changes
+إضافة حماية تمنع اعتماد أي بند في مكتبة الأسعار إذا كان `base_rate = 0` أو `target_rate = 0`، في كل من الاعتماد الفردي والاعتماد الجماعي.
 
-### 1. Database Migration — Fix units
-```sql
-UPDATE boq_items SET unit = 'م²' WHERE id = 'b3352e25-0270-431c-a8fe-c5d859c04d68';
-UPDATE boq_items SET unit = 'م²' WHERE id = 'e84df4cd-2a09-4710-8108-b025e47eb945';
+## التغييرات
+
+### 1. `src/hooks/usePriceLibrary.ts` — حماية الاعتماد الفردي
+
+في `useApprovePriceItem()` (سطر 72-86): قبل تنفيذ التحديث، جلب البند والتحقق من أن `base_rate > 0`. إذا كان صفراً، رمي خطأ بدلاً من الاعتماد.
+
+### 2. `src/hooks/usePriceLibrary.ts` — حماية الاعتماد الجماعي
+
+في `useBulkApprovePending()` (سطر 226-245): إضافة شرط `base_rate.gt.0` في الاستعلام حتى لا يتم اعتماد البنود ذات السعر الصفري. إرجاع عدد البنود المتخطاة للمستخدم.
+
+### 3. `src/pages/RateLibraryPage.tsx` — تنبيه المستخدم
+
+- عند الاعتماد الفردي لبند بسعر صفر: عرض رسالة خطأ "لا يمكن اعتماد بند بسعر صفر"
+- عند الاعتماد الجماعي: عرض عدد البنود المتخطاة بسبب السعر الصفري
+- إضافة تحذير مرئي على البنود ذات السعر الصفري في الجدول
+
+## التفاصيل التقنية
+
+**الاعتماد الفردي:**
+```typescript
+// useApprovePriceItem - fetch item first, check rate
+const { data: item } = await supabase.from("rate_library").select("base_rate").eq("id", id).single();
+if (!item || item.base_rate <= 0) throw new Error("ZERO_RATE");
 ```
 
-### 2. Reprice these two items
-After fixing the units, call the `repriceUnpricedItems` function (already implemented) on `boq_file_id = fbd1ba8d-09fc-408c-9383-7a2e85e1c2a8`. Since these two items have `unit_rate = NULL` and `status = 'pending'`, they will be picked up and matched against the rate library. With the correct unit (`م²`), they should now match the library entries.
+**الاعتماد الجماعي:**
+```typescript
+// useBulkApprovePending - add filter to exclude zero-rate items
+.is("approved_at", null)
+.gt("base_rate", 0)  // ← new filter
+```
 
-### 3. Parser improvement — Handle merged unit+number in future uploads
-Add a cleanup rule in `boqParser.ts` to detect and fix common parsing artifacts where a unit character gets concatenated with adjacent cell numbers (e.g., `م131` → `م²`). This prevents recurrence.
+## الملفات المتأثرة
 
-## Files Changed
-
-| File | Change |
+| الملف | التغيير |
 |---|---|
-| Migration SQL | Fix unit for 2 items to `م²` |
-| `src/lib/boqParser.ts` | Add unit cleanup for merged unit+number artifacts |
+| `src/hooks/usePriceLibrary.ts` | إضافة فحص السعر في الاعتماد الفردي والجماعي |
+| `src/pages/RateLibraryPage.tsx` | عرض رسائل خطأ/تحذير للمستخدم |
 
-## What Is NOT Changed
-- Already priced rows — untouched
-- Rate library — untouched
-- Export logic — untouched
+## ما لن يتغير
+- منطق التسعير — بدون تعديل
+- منطق الاستيراد — بدون تعديل
+- جداول قاعدة البيانات — بدون تعديل
 
