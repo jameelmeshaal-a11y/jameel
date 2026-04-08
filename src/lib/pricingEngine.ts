@@ -131,13 +131,13 @@ function findRateLibraryMatch(
       }
     }
 
-    // Check item_description (weight: descSim * 40)
+    // Check item_description (weight: descSim * 60)
     if (candidate.item_description) {
       const descSim = Math.max(
         textSimilarity(description, candidate.item_description),
         textSimilarity(descriptionEn || "", candidate.item_description),
       );
-      textScore = Math.max(textScore, descSim * 40);
+      textScore = Math.max(textScore, descSim * 60);
     }
 
     // Character n-gram similarity as secondary scorer (max 30 pts)
@@ -232,17 +232,28 @@ function priceFromApprovedRate(
     baseCity.toLowerCase().trim() !== projectCity.toLowerCase().trim();
   const adjustedRate = needsLocationAdj ? +(approvedRate * locationFactor).toFixed(2) : approvedRate;
 
-  // Split using library percentages — NO complexity/qty multipliers
+  // Breakdown is DISPLAY ONLY — adjustedRate IS the unit rate
   const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
-    libraryItem.equipment_pct + libraryItem.logistics_pct;
-  const safePct = totalPct > 0 ? totalPct : 100;
-  const materials = +(adjustedRate * libraryItem.materials_pct / safePct).toFixed(2);
-  const labor = +(adjustedRate * libraryItem.labor_pct / safePct).toFixed(2);
-  const equipment = +(adjustedRate * libraryItem.equipment_pct / safePct).toFixed(2);
-  const logistics = +(adjustedRate * libraryItem.logistics_pct / safePct).toFixed(2);
-  const risk = +(adjustedRate * (libraryItem.risk_pct / 100)).toFixed(2);
-  const profit = +(adjustedRate * (libraryItem.profit_pct / 100)).toFixed(2);
-  const unitRate = +(materials + labor + equipment + logistics + risk + profit).toFixed(2);
+    libraryItem.equipment_pct + libraryItem.logistics_pct +
+    libraryItem.risk_pct + libraryItem.profit_pct;
+
+  let materials: number, labor: number, equipment: number, logistics: number, risk: number, profit: number;
+
+  if (totalPct > 0) {
+    // Distribute the rate proportionally (all components sum to adjustedRate)
+    materials  = +(adjustedRate * libraryItem.materials_pct / totalPct).toFixed(2);
+    labor      = +(adjustedRate * libraryItem.labor_pct / totalPct).toFixed(2);
+    equipment  = +(adjustedRate * libraryItem.equipment_pct / totalPct).toFixed(2);
+    logistics  = +(adjustedRate * libraryItem.logistics_pct / totalPct).toFixed(2);
+    risk       = +(adjustedRate * libraryItem.risk_pct / totalPct).toFixed(2);
+    profit     = +(adjustedRate * libraryItem.profit_pct / totalPct).toFixed(2);
+  } else {
+    // No breakdown info — full rate goes to materials (display convention)
+    materials = adjustedRate;
+    labor = 0; equipment = 0; logistics = 0; risk = 0; profit = 0;
+  }
+
+  const unitRate = adjustedRate;  // ALWAYS equals the approved rate
   const totalPrice = +(unitRate * quantity).toFixed(2);
 
   return {
