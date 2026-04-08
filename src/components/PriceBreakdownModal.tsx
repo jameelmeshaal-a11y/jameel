@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { X, CheckCircle, MapPin, BookOpen, Cpu, Pencil, RotateCcw, Shield, AlertTriangle, Lock } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { X, CheckCircle, MapPin, BookOpen, Cpu, Pencil, RotateCcw, Shield, AlertTriangle, Lock, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,11 @@ import { Switch } from "@/components/ui/switch";
 import { formatNumber } from "@/lib/mockData";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { recalculateBreakdown, getUnitRate, type BreakdownValues, type BreakdownField } from "@/lib/pricing/smartRecalculator";
+import {
+  recalculateBreakdown, getUnitRate, distributeTotal,
+  resolveRatiosFromValues, resolveRatiosFromLibrary,
+  type BreakdownValues, type BreakdownField, type RatioSource, type RatioResolution,
+} from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
 import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
 
@@ -46,6 +50,8 @@ interface Props {
   onUpdated?: () => void;
 }
 
+const ALL_FIELDS: BreakdownField[] = ["materials", "labor", "equipment", "logistics", "risk", "profit"];
+
 export default function PriceBreakdownModal({ item, projectId, ownerMaterials = false, onClose, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,19 +71,159 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
     new Set(Object.keys(item.manual_overrides || {}) as BreakdownField[])
   );
 
+  // Total Cost Distribution state
+  const [totalCostInput, setTotalCostInput] = useState("");
+  const [ratioSource, setRatioSource] = useState<RatioSource>("none");
+  const [ratioResolution, setRatioResolution] = useState<RatioResolution | null>(null);
+  const [ratioWarning, setRatioWarning] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
   const detected = detectCategory(item.description, item.description_en);
+
+  // Resolve ratios on mount
+  useEffect(() => {
+    resolveRatios();
+  }, []);
+
+  async function resolveRatios() {
+    // Priority 1: Current item's saved breakdown
+    const fromItem = resolveRatiosFromValues(initial);
+    if (fromItem) {
+      setRatioResolution(fromItem);
+      setRatioSource("current_item");
+      if (fromItem.normalized) {
+        setRatioWarning("تم تطبيع نسب التوزيع المحفوظة قبل التوزيع");
+      }
+      return;
+    }
+
+    // Priority 2: Linked rate library
+    if (item.linked_rate_id) {
+      try {
+        const { data } = await supabase
+          .from("rate_library")
+          .select("materials_pct, labor_pct, equipment_pct, logistics_pct, risk_pct, profit_pct")
+          .eq("id", item.linked_rate_id)
+          .single();
+
+        if (data) {
+          const fromLib = resolveRatiosFromLibrary(data);
+          if (fromLib) {
+            setRatioResolution(fromLib);
+            setRatioSource("linked_library");
+            if (fromLib.normalized) {
+              setRatioWarning("تم تطبيع نسب التوزيع المحفوظة قبل التوزيع");
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("[RatioResolve] Library fetch failed:", e);
+      }
+    }
+
+    // Priority 3: Check if item has ai_generated source (previously generated)
+    if (item.source === "ai_generated") {
+      const fromItem2 = resolveRatiosFromValues(initial);
+      if (fromItem2) {
+        fromItem2.source = "ai_generated";
+        setRatioResolution(fromItem2);
+        setRatioSource("ai_generated");
+        return;
+      }
+    }
+
+    // No ratios found — will trigger AI on demand
+    setRatioSource("none");
+  }
+
+  async function generateAiRatios(): Promise<RatioResolution | null> {
+    setAiLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-breakdown", {
+        body: {
+          description: item.description,
+          description_en: item.description_en,
+          unit: item.unit,
+          category: detected.category,
+        },
+      });
+
+      if (error || !data?.percentages) {
+        console.error("[AI Breakdown] Error:", error || "No percentages returned");
+        setRatioWarning("فشل توليد النسب — يمكنك الإدخال يدوياً");
+        return null;
+      }
+
+      const pcts = data.percentages;
+      const resolution = resolveRatiosFromLibrary(pcts);
+      if (!resolution) return null;
+
+      resolution.source = "ai_generated";
+
+      // PERSIST AI ratios to item immediately (scaled to sum=100 as breakdown values)
+      const scaledValues: BreakdownValues = {
+        materials: Math.round(pcts.materials_pct * 100) / 100,
+        labor: Math.round(pcts.labor_pct * 100) / 100,
+        equipment: Math.round(pcts.equipment_pct * 100) / 100,
+        logistics: Math.round(pcts.logistics_pct * 100) / 100,
+        risk: Math.round(pcts.risk_pct * 100) / 100,
+        profit: Math.round(pcts.profit_pct * 100) / 100,
+      };
+
+      await supabase
+        .from("boq_items")
+        .update({
+          materials: scaledValues.materials,
+          labor: scaledValues.labor,
+          equipment: scaledValues.equipment,
+          logistics: scaledValues.logistics,
+          risk: scaledValues.risk,
+          profit: scaledValues.profit,
+          source: "ai_generated",
+        })
+        .eq("id", item.id);
+
+      setRatioResolution(resolution);
+      setRatioSource("ai_generated");
+      setRatioWarning("لا توجد نسب محفوظة — تم استخدام توزيع الذكاء الاصطناعي");
+
+      return resolution;
+    } catch (e: any) {
+      console.error("[AI Breakdown] Exception:", e);
+      setRatioWarning("فشل توليد النسب — يمكنك الإدخال يدوياً");
+      return null;
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  const handleTotalCostChange = useCallback(async (inputValue: string) => {
+    setTotalCostInput(inputValue);
+    const totalCost = parseFloat(inputValue);
+    if (!totalCost || totalCost <= 0) return;
+
+    let resolution = ratioResolution;
+
+    // If no ratios resolved yet, trigger AI
+    if (!resolution && ratioSource === "none") {
+      resolution = await generateAiRatios();
+      if (!resolution) return; // AI failed, user must enter manually
+    }
+
+    if (!resolution) return;
+
+    const distributed = distributeTotal(totalCost, resolution.ratios);
+    setValues(distributed);
+  }, [ratioResolution, ratioSource]);
 
   const handleFieldChange = useCallback((field: BreakdownField, newValue: number) => {
     if (newValue < 0) return;
     setManualFields(prev => new Set([...prev, field]));
+    setTotalCostInput(""); // Clear total cost input when manually editing
 
     if (autoRebalance) {
       const recalculated = recalculateBreakdown(values, field, newValue, detected.category, false);
-      console.log(`[SmartRecalc] Field: ${field}, New: ${newValue}, Category: ${detected.category}`, {
-        previous: { ...values },
-        recalculated,
-        unitRate: getUnitRate(recalculated),
-      });
       setValues(recalculated);
       toast.info("Cost breakdown recalculated based on new " + field.charAt(0).toUpperCase() + field.slice(1) + " value", { duration: 2000 });
     } else {
@@ -111,7 +257,6 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       const overridesObj: Record<string, boolean> = {};
       manualFields.forEach(f => { overridesObj[f] = true; });
 
-      // Step 1: Save to boq_items with status "approved"
       const { error } = await supabase
         .from("boq_items")
         .update({
@@ -136,7 +281,6 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         return;
       }
 
-      // Step 2: Sync to rate library — AWAITED, not fire-and-forget
       const syncResult = await syncToRateLibrary({
         itemId: item.id,
         boqFileId: item.boq_file_id,
@@ -145,14 +289,11 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       });
 
       if (!syncResult) {
-        // Partial success: boq_items saved but library sync failed
-        // Still recalculate project total since total_price was already saved
         await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).then(() => {}, () => {});
         toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
         return;
       }
 
-      // Full success — recalculate project total
       await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
       toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
       setEditing(false);
@@ -168,6 +309,20 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
 
   const isLocked = item.status === "approved";
   const overrideType = item.override_type;
+
+  const ratioSourceLabel: Record<RatioSource, string> = {
+    current_item: "من البند الحالي",
+    linked_library: "من مكتبة الأسعار",
+    ai_generated: "توزيع ذكاء اصطناعي",
+    none: "غير متوفر",
+  };
+
+  const ratioSourceColor: Record<RatioSource, string> = {
+    current_item: "default",
+    linked_library: "secondary",
+    ai_generated: "outline",
+    none: "destructive",
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 backdrop-blur-sm" onClick={onClose}>
@@ -238,6 +393,65 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
             </div>
           )}
 
+          {/* Total Cost Distribution (editing only) */}
+          {editing && (
+            <div className="space-y-3 p-4 rounded-lg border-2 border-primary/30 bg-primary/5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">التكلفة الإجمالية / Total Cost</span>
+                  {aiLoading && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
+                </div>
+                <Badge variant={ratioSourceColor[ratioSource] as any} className="text-[10px]">
+                  {ratioSourceLabel[ratioSource]}
+                </Badge>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="أدخل التكلفة الإجمالية..."
+                  className="flex-1 h-10 text-right font-mono text-base font-semibold"
+                  value={totalCostInput}
+                  onChange={(e) => handleTotalCostChange(e.target.value)}
+                  disabled={aiLoading}
+                  dir="ltr"
+                />
+                <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">SAR</span>
+              </div>
+
+              {/* Ratio source info + percentages */}
+              {ratioResolution && (
+                <div className="flex flex-wrap gap-1.5">
+                  {ALL_FIELDS.map(f => (
+                    <span key={f} className="text-[10px] px-1.5 py-0.5 rounded bg-secondary font-mono">
+                      {f.slice(0, 3)}: {(ratioResolution.ratios[f] * 100).toFixed(1)}%
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Warnings */}
+              {ratioWarning && (
+                <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${
+                  ratioSource === "ai_generated"
+                    ? "bg-warning/10 border border-warning/20 text-warning"
+                    : ratioSource === "none"
+                    ? "bg-destructive/10 border border-destructive/20 text-destructive"
+                    : "bg-warning/10 border border-warning/20 text-warning"
+                }`}>
+                  {ratioSource === "ai_generated" ? (
+                    <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  )}
+                  <span dir="rtl">{ratioWarning}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Bar breakdown */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -269,13 +483,20 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
                   </div>
                   <div className="flex items-center gap-3">
                     {editing ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        className="w-28 h-7 text-right font-mono text-sm"
-                        value={values[b.key]}
-                        onChange={(e) => handleFieldChange(b.key, parseFloat(e.target.value) || 0)}
-                      />
+                      <>
+                        {ratioResolution && (
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {(ratioResolution.ratios[b.key] * 100).toFixed(1)}%
+                          </span>
+                        )}
+                        <Input
+                          type="number"
+                          step="0.01"
+                          className="w-28 h-7 text-right font-mono text-sm"
+                          value={values[b.key]}
+                          onChange={(e) => handleFieldChange(b.key, parseFloat(e.target.value) || 0)}
+                        />
+                      </>
                     ) : (
                       <>
                         <span className="text-muted-foreground text-xs">
@@ -339,7 +560,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
                 <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
                   <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ"}
                 </Button>
-                <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setEditing(false); }}>
+                <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setTotalCostInput(""); setEditing(false); }}>
                   إلغاء
                 </Button>
               </div>
