@@ -159,9 +159,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     try {
       const projectName = project?.name || "Project";
-      const boqFile = items[0]?.boq_file_id || boqFileId;
       await exportStyledBoQ(items as any, projectName, boqFileName || "BoQ");
       toast.success("تم تنزيل ملف Excel بنجاح");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleExportUnpriced = async () => {
+    const unpricedItems = items.filter(i => !i.unit_rate || i.unit_rate === 0);
+    if (unpricedItems.length === 0) {
+      toast.info("لا توجد بنود غير مسعّرة للتصدير");
+      return;
+    }
+    try {
+      const projectName = project?.name || "Project";
+      const date = new Date().toISOString().split("T")[0];
+      await exportStyledBoQ(unpricedItems as any, `${projectName}_unpriced_${date}`, boqFileName || "BoQ");
+      toast.success(`تم تصدير ${unpricedItems.length} بند غير مسعّر`);
     } catch (err: any) {
       toast.error(err.message);
     }
