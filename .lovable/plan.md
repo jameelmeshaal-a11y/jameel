@@ -1,62 +1,35 @@
 
 
-# Reprice Unpriced BoQ Items Only
+# Fix Porcelain Item Units and Reprice
 
-## Summary
-
-Add a new button "تسعير البنود غير المسعرة" in the BoQ table that re-runs the pricing engine exclusively on unpriced rows, leaving all existing priced rows untouched.
+## Problem
+Two porcelain BoQ items have incorrect units due to a parsing/typographical error:
+- **بورسلين أرضيات... نموذج -1**: unit = `م131` (should be `م²`)
+- **بورسلين أرضيات... نموذج -21**: unit = `م132` (should be `م²`)
 
 ## Changes
 
-### 1. `src/lib/pricingEngine.ts` — Add `repriceUnpricedItems()` function
-
-New exported function that:
-- Fetches only unpriced items from `boq_items` where `boq_file_id` matches AND (`unit_rate IS NULL` OR `unit_rate = 0` OR `status = 'unmatched'`) AND `quantity > 0`
-- Fetches the latest `rate_library`, location factors, sources, and historical map (same as `runPricingEngine`)
-- Runs the same matching + pricing logic (semantic grouping, `findRateLibraryMatch`, `priceFromApprovedRate`) on only those rows
-- Updates only the rows that get a match; leaves still-unmatched rows as-is
-- Calls `recalculate_project_total` at the end
-- Returns count of newly priced items and count of still-unmatched items
-
-### 2. `src/components/BoQTable.tsx` — Add button + handler
-
-**Handler `handleRepriceUnpriced`**:
-- Calls `repriceUnpricedItems(boqFileId, cities, onProgress)`
-- Shows toast with results: "تم تسعير X بند — Y بند لا يزال بدون سعر"
-- Refetches queries
-
-**Button placement**: After the "إعادة التسعير" button, before export buttons. Shows only when there are unpriced items (`priceableCount - pricedCount > 0`).
-
-```
-<Button variant="secondary" size="sm" className="gap-1" onClick={handleRepriceUnpriced} disabled={pricing}>
-  <Play className="w-3 h-3" /> تسعير البنود غير المسعرة ({unpricedCount})
-</Button>
-```
-
-### Technical Detail
-
-The `repriceUnpricedItems` function filters at the DB level:
+### 1. Database Migration — Fix units
 ```sql
-SELECT * FROM boq_items 
-WHERE boq_file_id = ? 
-  AND quantity > 0 
-  AND (unit_rate IS NULL OR unit_rate = 0 OR status = 'unmatched')
-ORDER BY row_index
+UPDATE boq_items SET unit = 'م²' WHERE id = 'b3352e25-0270-431c-a8fe-c5d859c04d68';
+UPDATE boq_items SET unit = 'م²' WHERE id = 'e84df4cd-2a09-4710-8108-b025e47eb945';
 ```
 
-It reuses the same `findRateLibraryMatch` + `priceFromApprovedRate` pipeline. Already-priced rows are never fetched, so they cannot be modified.
+### 2. Reprice these two items
+After fixing the units, call the `repriceUnpricedItems` function (already implemented) on `boq_file_id = fbd1ba8d-09fc-408c-9383-7a2e85e1c2a8`. Since these two items have `unit_rate = NULL` and `status = 'pending'`, they will be picked up and matched against the rate library. With the correct unit (`م²`), they should now match the library entries.
+
+### 3. Parser improvement — Handle merged unit+number in future uploads
+Add a cleanup rule in `boqParser.ts` to detect and fix common parsing artifacts where a unit character gets concatenated with adjacent cell numbers (e.g., `م131` → `م²`). This prevents recurrence.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `src/lib/pricingEngine.ts` | Add `repriceUnpricedItems()` export |
-| `src/components/BoQTable.tsx` | Add button + handler for repricing unpriced items |
+| Migration SQL | Fix unit for 2 items to `م²` |
+| `src/lib/boqParser.ts` | Add unit cleanup for merged unit+number artifacts |
 
 ## What Is NOT Changed
-
-- `runPricingEngine` — untouched
+- Already priced rows — untouched
+- Rate library — untouched
 - Export logic — untouched
-- Already priced rows — never queried or modified
-- Schema/tables — no changes
 
