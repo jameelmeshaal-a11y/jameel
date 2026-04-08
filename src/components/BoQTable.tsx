@@ -143,32 +143,22 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const handleExport = async () => {
     if (items.length === 0) return;
-    
-    if (!exportSummary.canExport) {
-      toast.error(exportSummary.errorMessage ?? "No priced items found");
-      return;
+
+    const unmatchedCount = items.filter(i => i.status === "unmatched" || i.source === "no_match").length;
+    const reviewCount = items.filter(i => i.status === "needs_review").length;
+
+    if (unmatchedCount > 0) {
+      toast.warning(`${unmatchedCount} بند غير مطابق 🔴 — مضمّن في التصدير للمراجعة اليدوية`);
+    }
+    if (reviewCount > 0) {
+      toast.warning(`${reviewCount} بند يحتاج مراجعة 🟡`);
     }
 
-    // Filter: only export approved items
-    const approvedItems = items.filter(i => i.status === "approved");
-    const excludedCount = items.filter(i => i.status === "needs_review" || i.status === "unmatched").length;
-
-    if (approvedItems.length === 0) {
-      toast.error("لا توجد بنود معتمدة للتصدير — يجب مراجعة جميع البنود أولاً");
-      return;
-    }
-
-    if (excludedCount > 0) {
-      toast.warning(`${excludedCount} بند مستبعد — يتم تصدير البنود المعتمدة فقط`);
-    }
-
-    if (exportSummary.warningRows.length > 0) {
-      setBlockingRowsOpen(true);
-    }
     try {
-      if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
-      await exportBoQExcel(approvedItems, `Priced_BoQ_${Date.now()}.xlsx`, boqFileId);
-      toast.success("Excel file downloaded");
+      const projectName = project?.name || "Project";
+      const boqFile = items[0]?.boq_file_id || boqFileId;
+      await exportStyledBoQ(items as any, projectName, boqFileName || "BoQ");
+      toast.success("تم تنزيل ملف Excel بنجاح");
     } catch (err: any) {
       toast.error(err.message);
     }
