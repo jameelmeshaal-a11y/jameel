@@ -1,62 +1,53 @@
 
 
-# Professional BoQ Excel Export
+# Add Section Number Column with Dynamic Detection
 
 ## Summary
 
-Replace the current export logic with a fully styled, RTL Arabic Excel export that matches the UI table layout exactly. Since `xlsx` (SheetJS community edition) does not support cell styling, we need to switch to `exceljs` which provides full formatting control.
+Add `section_no` column to `boq_items`, detect it dynamically during parsing from the uploaded file's header row, display it in the UI table, and include it in the Excel export as the first column (17 columns total).
+
+## Database Migration
+
+```sql
+ALTER TABLE boq_items ADD COLUMN section_no text NOT NULL DEFAULT '';
+```
 
 ## Changes
 
-### 1. Install `exceljs` package
+### 1. `src/lib/boqParser.ts` — Detect and populate section_no
 
-Add `exceljs` as a dependency. It supports cell styles, RTL sheets, freeze panes, and conditional formatting — all required features that `xlsx` community edition cannot provide.
+**ParsedBoQRow interface**: Add `section_no: string` field.
 
-### 2. Create `src/lib/boqExcelExport.ts` — New dedicated export module
+**detectColumns function**: Add detection for a section/division column using keywords: `"division"`, `"section"`, `"قسم"`, `"رقم القسم"`, `"div"`. This is separate from the existing `itemNo` detection. Return type gains `sectionNo: number` (can be `-1` if not found in the file).
 
-A new file containing the full styled export logic:
+**parseBoQExcel function**: Read `section_no` from the detected column index. If no section column exists in the file, default to empty string `""`.
 
-**Main sheet (BoQ data):**
-- RTL sheet direction, frozen header row
-- 16 columns in order: رقم البند, الوصف, المطابقة, الوحدة, الكمية, الفئة, سعر الوحدة, الإجمالي, مواد, عمالة, معدات, نقل, مخاطر, ربح, الثقة%, الحالة
-- Header: Bold Calibri 12, white text on navy (#1e3a5f)
-- Row coloring: white for matched (✅), #ffe6e6 for unmatched (🔴), #fff9e6 for needs_review (🟡)
-- Confidence color coding: green ≥90%, orange 70-89%, red <70%
-- Unmatched items: "غير موجود في المكتبة" in unit price and total cells
-- Numbers with thousands separator, SAR prefix on price columns
-- Auto-fit column widths (min 15 chars for description)
-- Totals row at bottom: bold, light gray background, sums for numeric columns
-- Sheet name: `[ProjectName] - [BoQFileName]`
+**uploadAndParseBoQ function** (line ~165): Include `section_no: row.section_no` in the insert object alongside existing fields.
 
-**Summary sheet (ملخص التسعير):**
-- Total priced items count
-- Total unmatched items count (🔴)
-- Total needs_review count (🟡)
-- Grand total value (SAR)
-- Breakdown by category (sum per category)
+### 2. `src/components/BoQTable.tsx` — Add column to UI table
 
-**File name:** `[ProjectName]_BoQ_[YYYY-MM-DD].xlsx`
+Add "رقم القسم" as the first data column in the table header and rows, displaying `item.section_no`. Only show the column if at least one item has a non-empty `section_no` (to avoid an empty column when the uploaded file didn't have one).
 
-**Key rules:**
-- Export ALL items (approved + needs_review + unmatched) — user needs to see what requires manual entry
-- No locked/protected cells
+### 3. `src/lib/boqExcelExport.ts` — Add column to Excel export
 
-### 3. Update `src/components/BoQTable.tsx` — `handleExport`
+- Add `section_no` to `BoQExportItem` interface
+- Update HEADERS: insert "رقم القسم" as first column (17 total)
+- Update data row: `item.section_no` as first cell
+- Shift all cell index references by +1 (currency formatting cols become 8-15, confidence becomes 16)
+- Update column widths array: add 12 for section_no at index 0
+- Update totals row: add empty first cell
+- Only include the column if data has non-empty section numbers (same conditional as UI)
 
-- Remove the approved-only filter — export all items
-- Call the new `exportStyledBoQ()` from `boqExcelExport.ts` instead of `exportBoQExcel()`
-- Pass project name, BoQ file name, and all items
-- Keep warning toasts for unmatched/needs_review counts
+### 4. Handling dynamic column structure
 
-### 4. Update `src/lib/boqParser.ts` — Keep existing function
-
-Keep `exportBoQExcel` for backward compatibility but the new export path will use the new module. No changes needed here.
+The key design: the parser already uses keyword-based header detection (not fixed column indices). The new `sectionNo` detection follows the same pattern — scan headers for matching keywords. If the uploaded file has no section column, `section_no` stays as `""` and the column is hidden in both UI and export. This naturally handles varying BoQ layouts across projects.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `package.json` | Add `exceljs` dependency |
-| `src/lib/boqExcelExport.ts` | New file — full styled export with ExcelJS |
-| `src/components/BoQTable.tsx` | Update `handleExport` to use new export, include all items |
+| Migration SQL | Add `section_no` column to `boq_items` |
+| `src/lib/boqParser.ts` | Add section column detection + populate `section_no` |
+| `src/components/BoQTable.tsx` | Conditionally show "رقم القسم" column |
+| `src/lib/boqExcelExport.ts` | Conditionally add "رقم القسم" as first column |
 
