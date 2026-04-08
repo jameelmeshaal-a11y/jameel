@@ -6,7 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -143,6 +143,32 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       setPricing(false);
     }
   }, [boqFileId, cities, items, qc, projectId]);
+
+  const handleRepriceUnpriced = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    try {
+      const result = await repriceUnpricedItems(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      });
+      if (result.pricedCount > 0) {
+        toast.success(`تم تسعير ${result.pricedCount} بند — ${result.stillUnpricedCount} بند لا يزال بدون سعر`);
+      } else {
+        toast.info("لم يتم العثور على تطابقات جديدة للبنود غير المسعّرة");
+      }
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+    }
+  }, [boqFileId, cities, qc, projectId]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
@@ -379,6 +405,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+              )}
+              {priceableCount - pricedCount > 0 && (
+                <Button variant="secondary" size="sm" className="gap-1" onClick={handleRepriceUnpriced} disabled={pricing}>
+                  <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
+                </Button>
               )}
             </>
           )}
