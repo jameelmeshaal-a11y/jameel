@@ -1,54 +1,82 @@
 
 
-# Fix: Matching Engine Improvements for Unpriced BoQ Items
+# Fix: Inherit Parent Description into Child Items
 
-## Problem Analysis
+## Root Cause (Two Bugs)
 
-The current `findRateLibraryMatch()` in `pricingEngine.ts` uses **Jaccard similarity** (`intersection / union`) which severely penalizes cases where:
-- BoQ description is **shorter** than library item (e.g., 3 tokens vs 10 tokens → max Jaccard = 0.3 even with perfect overlap)
-- BoQ uses a **model/reference code** (TSD-2, HOK-2) that isn't matched as a strong key
-- BoQ text is a **subset** of the library description (e.g., "قواعد خرسانية للماكينات" is contained in the full library entry)
+### Bug 1: Parent context resets after first child
+In `parseBoQExcel()` (line 78), `parentDescriptions.length = 0` clears the parent buffer after the **first** child row consumes it. Subsequent sibling rows under the same parent get empty `parent_context`.
 
-The `textSimilarity()` function returns `intersection / union` — this is the root cause of missed matches.
+```text
+Parent row: "توريد وتنفيذ خرسانة مسلحة..." (qty=0)
+  Child 1: الأعمدة (qty>0) → gets parent ✅
+  Child 2: الكمرات (qty>0) → parent already cleared ❌
+  Child 3: بلاطات الأسقف (qty>0) → empty ❌
+  Child 4: قواعد خرسانية (qty>0) → empty ❌
+```
 
-## Changes
+### Bug 2: CreateBoQDialog drops parent context
+`CreateBoQDialog.tsx` (line 195) stores items using only `getRowClassificationNote(row)` — it never includes `[PARENT: row.parent_context]` in notes. So even when the parser produces parent context, this upload path loses it.
 
-### 1. `src/lib/pricing/similarItemMatcher.ts` — Add overlap coefficient + code extractor
+## Fix Strategy
 
-**Add `overlapCoefficient()`**: Returns `intersection / min(|A|, |B|)` — scores 1.0 when all tokens of the shorter text exist in the longer text. This directly fixes the "short BoQ vs long library" problem.
+### 1. `src/lib/boqParser.ts` — Keep parent context for all siblings
 
-**Add `extractModelCodes()`**: Regex to extract alphanumeric reference codes (e.g., `TSD-2`, `HOK-2`, `REF-1`, `CA-1`, `WT01`, `نموذج -1`) from text. Returns array of normalized codes.
+Change the post-processing loop: do NOT clear `parentDescriptions` after each child. Instead, only clear when a **new parent section** begins (i.e., when a new zero-qty descriptive row appears after a priced row).
 
-**Update `textSimilarity()`**: Return the **max** of Jaccard and overlap coefficient, so short-but-correct descriptions still score high.
+```text
+Before: parent resets after first child
+After:  parent persists for all consecutive children until next parent
+```
 
-### 2. `src/lib/pricingEngine.ts` — Enhance `findRateLibraryMatch()` with 3 new matching paths
+Additionally, store the combined description directly in the `description` field for payable rows, while preserving the original short description in `parent_context` metadata. This ensures the pricing engine always sees the full description regardless of which upload path is used.
 
-Add to the scoring loop (before final score calculation):
+**Revised logic:**
+```typescript
+let activeParent = "";
+let parentBuffer: string[] = [];
 
-**a) Model/code match (+40 pts)**:
-Extract codes from BoQ description. If any code matches a code in the library item's `item_code`, `item_name_aliases`, `standard_name_ar`, or `item_description`, add 40 points. This ensures items like "TSD-2" or "نموذج -1" get strong matches.
+for (const row of rawRows) {
+  if (row.quantity <= 0) {
+    // Descriptive row — accumulate as potential parent
+    if (row.description.trim()) {
+      parentBuffer.push(row.description.trim());
+    }
+  } else {
+    // Payable row — finalize active parent from buffer (if any)
+    if (parentBuffer.length > 0) {
+      activeParent = parentBuffer.join(" | ");
+      parentBuffer = [];
+    }
+    // Attach active parent to this child
+    row.parent_context = activeParent;
+  }
+}
+```
 
-**b) Containment bonus (+20 pts)**:
-If `overlapCoefficient >= 0.8` (meaning ≥80% of the shorter text's tokens exist in the longer text), add 20 bonus points. This handles "قواعد خرسانية للماكينات" matching a longer library entry.
+This way all children under the same parent section inherit the same parent description.
 
-**c) Library keywords field matching (+15 pts)**:
-Currently `candidate.keywords` from `rate_library` is never checked. Add: extract BoQ tokens, check overlap with `candidate.keywords` array, award up to 15 points.
+### 2. `src/lib/boqParser.ts` — Store combined description for payable rows
 
-**Scoring summary after changes**:
-- Text similarity (Jaccard OR overlap coeff) × 60 = max 60 pts
-- Character n-gram × 30 = max 30 pts (existing)
-- Category match = +15 pts (existing)
-- Token overlap × 5 = max 25 pts (existing)
-- Model/code match = +40 pts (new)
-- Containment bonus = +20 pts (new)
-- Keywords match = +15 pts (new)
-- Cap at 99
+After the parent-context pass, for every row with `quantity > 0` and non-empty `parent_context`:
+- Set `row.description = parent_context + " — " + original_description`
+- This ensures the DB `description` column contains the full inherited text
 
-### 3. `src/lib/pricing/similarItemMatcher.ts` — Update `textSimilarity()`
+This eliminates reliance on the `[PARENT: ...]` notes extraction — the full description is always in the primary field.
 
-Change return from pure Jaccard to `Math.max(jaccard, overlapCoefficient)`.
+### 3. `src/components/CreateBoQDialog.tsx` — Include parent context in notes
 
-### 4. Data Reset — Delete BoQ data for re-upload
+Update item mapping (line 186-196) to match the pattern used in `uploadAndParseBoQ`:
+
+```typescript
+const parentNote = row.parent_context ? `[PARENT: ${row.parent_context}]` : "";
+const classNote = getRowClassificationNote(row);
+const combinedNote = [parentNote, classNote].filter(Boolean).join(" ");
+```
+
+This ensures both upload paths store parent context consistently.
+
+### 4. Data Reset — Clear BoQ data for re-upload
 
 ```sql
 DELETE FROM boq_items;
@@ -58,33 +86,34 @@ DELETE FROM pricing_audit_log;
 UPDATE projects SET boq_count = 0, total_value = 0;
 ```
 
-## Technical Detail: Model Code Regex
+## Expected Result After Fix
 
-```typescript
-function extractModelCodes(text: string): string[] {
-  // Matches patterns like TSD-2, HOK-2, REF-1, CA-1, WT01, نموذج -1, نموذج-21
-  const codes: string[] = [];
-  // Latin codes: 2+ letters followed by optional separator and digits
-  const latinPattern = /\b([A-Za-z]{2,}\s*-?\s*\d+)\b/g;
-  // Arabic model pattern: نموذج followed by separator and number
-  const modelPattern = /نموذج\s*[-.‐]\s*(\d+)/g;
-  // ... extract, normalize (strip spaces, lowercase), return unique codes
-  return codes;
-}
-```
+For the example parent:
+> توريد وتنفيذ خرسانة مسلحة مصبوبة فى الموقع فوق سطح الأرض باستخدام اسمنت بورتلاندى عادي...
+
+All four children will be stored as:
+
+| item_no | stored description |
+|---|---|
+| 033000-11 | parent — الأعمدة من بلاطة أرضية الدور الأرضى إلى أعلى |
+| 033000-12 | parent — الكمرات |
+| 033000-13 | parent — بلاطات الأسقف فى جميع الأدوار |
+| 033000-14 | parent — قواعد خرسانية للماكينات |
+
+The pricing engine's `findRateLibraryMatch()` receives the full combined description — no separate extraction needed.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `src/lib/pricing/similarItemMatcher.ts` | Add `overlapCoefficient()`, `extractModelCodes()`, update `textSimilarity()` |
-| `src/lib/pricingEngine.ts` | Add model-code, containment, and keywords scoring paths in `findRateLibraryMatch()` |
+| `src/lib/boqParser.ts` | Fix parent context persistence for all siblings; store combined description in payable rows |
+| `src/components/CreateBoQDialog.tsx` | Include `[PARENT: ...]` in notes for consistency |
 | Data operation | Clear BoQ data for re-upload |
 
 ## What Is NOT Changed
 
 - Rate library data — preserved
+- Pricing engine logic — already uses `mergedDescription` which now gets the full text
 - Schema/tables — no changes
-- `priceFromApprovedRate()` — already fixed
-- Auth, RLS, edge functions — untouched
+- `boqRowGrouping.ts` — still extracts parent from notes as a fallback, but primary fix is in the description field itself
 
