@@ -16,7 +16,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
-import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity } from "./pricing/similarItemMatcher";
+import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
 import { detectCategory } from "./pricing/categoryDetector";
 import type { PricedResult } from "./pricing/rateCalculator";
 import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
