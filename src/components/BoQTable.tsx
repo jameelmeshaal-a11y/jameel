@@ -363,7 +363,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             </AlertDialog>
           )}
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={items.length === 0}>
               <Download className="w-3 h-3" /> {t("export")}
             </Button>
           )}
