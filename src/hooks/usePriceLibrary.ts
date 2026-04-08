@@ -73,6 +73,15 @@ export function useApprovePriceItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, userId }: { id: string; userId: string }) => {
+      // Check base_rate before approving
+      const { data: item, error: fetchErr } = await supabase
+        .from("rate_library")
+        .select("base_rate")
+        .eq("id", id)
+        .single();
+      if (fetchErr) throw fetchErr;
+      if (!item || item.base_rate <= 0) throw new Error("ZERO_RATE");
+
       const { error } = await supabase.from("rate_library").update({
         approved_by: userId,
         approved_at: new Date().toISOString(),
@@ -227,6 +236,15 @@ export function useBulkApprovePending() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (userId: string) => {
+      // Count skipped zero-rate items first
+      const { data: zeroItems } = await supabase
+        .from("rate_library")
+        .select("id")
+        .is("approved_at", null)
+        .lte("base_rate", 0);
+      const skipped = zeroItems?.length || 0;
+
+      // Only approve items with base_rate > 0
       const { data, error } = await supabase
         .from("rate_library")
         .update({
@@ -235,9 +253,10 @@ export function useBulkApprovePending() {
           source_type: "Approved",
         })
         .is("approved_at", null)
+        .gt("base_rate", 0)
         .select("id");
       if (error) throw error;
-      return data?.length || 0;
+      return { approved: data?.length || 0, skipped };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["price-library"] });
