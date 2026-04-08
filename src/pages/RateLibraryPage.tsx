@@ -100,6 +100,34 @@ export default function RateLibraryPage() {
             <p className="page-subtitle">{t("rateLibrarySubtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
+            {pendingCount > 0 && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+                    <Check className="w-4 h-4" /> اعتماد جميع البنود المعلقة ({pendingCount})
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent dir="rtl">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>اعتماد البنود المعلقة</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      سيتم اعتماد {pendingCount} بند معلق. هل تريد المتابعة؟
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => {
+                      bulkApprove.mutate(user!.id, {
+                        onSuccess: (count) => toast.success(`تم اعتماد ${count} بند`),
+                        onError: () => toast.error("فشل اعتماد البنود"),
+                      });
+                    }}>
+                      اعتماد الكل
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={items.length === 0}>
               <Download className="w-4 h-4" /> تنزيل Excel
             </Button>
