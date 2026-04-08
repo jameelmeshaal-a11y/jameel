@@ -38,8 +38,9 @@ export default function RateLibraryPage() {
   const approveItem = useApprovePriceItem();
   const deleteItem = useDeletePriceItem();
   const addItem = useAddPriceItem();
+  const bulkApprove = useBulkApprovePending();
 
-  const startEdit = (item: any) => {
+  const pendingCount = items.filter((i: any) => !i.approved_at).length;
     setEditingId(item.id);
     setEditValues({
       standard_name_ar: item.standard_name_ar,
