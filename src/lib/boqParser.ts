@@ -56,7 +56,7 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
       section_no: colMap.sectionNo >= 0 ? String(row[colMap.sectionNo] ?? "").trim() : "",
       description: desc,
       description_en: "",
-      unit: String(row[colMap.unit] ?? "").trim(),
+      unit: cleanUnit(String(row[colMap.unit] ?? "").trim()),
       quantity: qty,
       row_index: i,
       parent_context: "", // will be filled in post-processing
