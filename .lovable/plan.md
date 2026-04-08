@@ -1,57 +1,119 @@
 
 
-# Reset Price Library + Bulk Approve Pending Items
+# Fix: 0.08 Pricing Multiplier Bug + BoQ Data Reset
 
-## Summary
+## Root Cause
 
-1. Clear all data from `rate_library` and `rate_sources` (data only, no schema changes)
-2. Add a "اعتماد جميع البنود المعلقة" (Approve All Pending) button to the Rate Library page
-3. Preserve all existing individual item actions (edit, approve, delete)
+In `priceFromApprovedRate()` (pricingEngine.ts, line 236-245):
 
-## Current Approval Model
+```text
+totalPct = materials_pct + labor_pct + equipment_pct + logistics_pct
+safePct = totalPct > 0 ? totalPct : 100
 
-Items use `approved_at` (timestamp) and `approved_by` (uuid) fields — not a `status` column. An item is "pending" when `approved_at IS NULL`.
+materials = rate × (materials_pct / safePct)   ← 0/100 = 0
+labor     = rate × (labor_pct / safePct)       ← 0/100 = 0
+equipment = rate × (equipment_pct / safePct)   ← 0/100 = 0
+logistics = rate × (logistics_pct / safePct)   ← 0/100 = 0
+risk      = rate × (risk_pct / 100)            ← 3/100 = 0.03
+profit    = rate × (profit_pct / 100)          ← 5/100 = 0.05
+
+unitRate = 0 + 0 + 0 + 0 + 0.03×rate + 0.05×rate = 0.08 × rate
+```
+
+When library items have default percentage breakdowns (all zeros), the approved rate gets reduced to 8%.
+
+## Fix Strategy
+
+Replace `priceFromApprovedRate()` with correct logic:
+
+1. **If breakdown percentages are all zero**: use the approved rate directly as `unitRate`. Set `materials = approvedRate` (the full cost), all others = 0. Risk and profit are already included in the approved rate per the system policy.
+2. **If breakdown percentages exist (sum > 0)**: distribute the approved rate proportionally across components. Risk/profit are treated as part of the distribution, not as additional multipliers on top.
+
+The key principle: **the approved rate IS the unit rate**. Breakdown is for display only — it must never reduce the total.
 
 ## Changes
 
-### 1. Data Reset (via insert tool)
+### 1. `src/lib/pricingEngine.ts` — Fix `priceFromApprovedRate()`
 
-```sql
-DELETE FROM rate_sources;
-DELETE FROM rate_library;
+Replace lines 222-254 with corrected logic:
+
+```typescript
+function priceFromApprovedRate(
+  approvedRate: number,
+  libraryItem: RateLibraryItem,
+  quantity: number,
+  locationFactor: number,
+  baseCity: string,
+  projectCity: string,
+): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
+  // Only apply location factor if cities differ
+  const needsLocationAdj = baseCity && projectCity &&
+    baseCity.toLowerCase().trim() !== projectCity.toLowerCase().trim();
+  const adjustedRate = needsLocationAdj 
+    ? +(approvedRate * locationFactor).toFixed(2) 
+    : approvedRate;
+
+  // Breakdown is DISPLAY ONLY — adjustedRate IS the unit rate
+  const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
+    libraryItem.equipment_pct + libraryItem.logistics_pct +
+    libraryItem.risk_pct + libraryItem.profit_pct;
+
+  let materials, labor, equipment, logistics, risk, profit;
+
+  if (totalPct > 0) {
+    // Distribute the rate proportionally (all components sum to adjustedRate)
+    materials  = +(adjustedRate * libraryItem.materials_pct / totalPct).toFixed(2);
+    labor      = +(adjustedRate * libraryItem.labor_pct / totalPct).toFixed(2);
+    equipment  = +(adjustedRate * libraryItem.equipment_pct / totalPct).toFixed(2);
+    logistics  = +(adjustedRate * libraryItem.logistics_pct / totalPct).toFixed(2);
+    risk       = +(adjustedRate * libraryItem.risk_pct / totalPct).toFixed(2);
+    profit     = +(adjustedRate * libraryItem.profit_pct / totalPct).toFixed(2);
+  } else {
+    // No breakdown info — full rate goes to materials (display convention)
+    materials = adjustedRate;
+    labor = 0; equipment = 0; logistics = 0; risk = 0; profit = 0;
+  }
+
+  const unitRate = adjustedRate;  // ALWAYS equals the approved rate
+  const totalPrice = +(unitRate * quantity).toFixed(2);
+
+  return {
+    materials, labor, equipment, logistics, risk, profit,
+    unitRate, totalPrice,
+    confidence: 95,
+    locationFactor: needsLocationAdj ? +locationFactor.toFixed(4) : 1.0,
+  };
+}
 ```
 
-No schema changes. Tables remain intact.
+### 2. `src/lib/pricingEngine.ts` — Improve matching for unmatched items
 
-### 2. `src/hooks/usePriceLibrary.ts` — Add `useBulkApprovePending` hook
+In `findRateLibraryMatch()`, add `item_description` field matching with higher weight so items with full descriptions in the library get matched even when primary names differ slightly. Already partially implemented but the `item_description` path caps at `descSim * 40` — raise to `descSim * 60` to match alias weight.
 
-New mutation that:
-- Updates all `rate_library` rows where `approved_at IS NULL`
-- Sets `approved_at = now()`, `approved_by = userId`, `source_type = 'Approved'`
-- Returns count of affected items
-- Invalidates `price-library` query cache
+### 3. Data Reset — Delete BoQ data
 
-### 3. `src/pages/RateLibraryPage.tsx` — Add bulk approve button
+Clear `boq_items`, `boq_files`, `price_change_log`, `pricing_audit_log` so the user can re-upload and re-price with the fixed engine.
 
-- Add a "✅ اعتماد جميع البنود المعلقة" button in the header action bar (next to export/import buttons)
-- Only visible when there are pending items (`items.filter(i => !i.approved_at).length > 0`)
-- Shows confirmation dialog before execution
-- Shows count: "اعتماد X بند معلق؟"
-- After success: toast with count of approved items
-- All existing individual actions (pencil edit, single approve ✓, delete 🗑) remain unchanged
+```sql
+DELETE FROM boq_items;
+DELETE FROM boq_files;
+DELETE FROM price_change_log;
+DELETE FROM pricing_audit_log;
+UPDATE projects SET boq_count = 0, total_value = 0;
+```
 
-### Flow After Implementation
+## What Is NOT Changed
 
-1. Upload new price library via "رفع ملف أسعار" → items arrive as pending
-2. Review items in the table
-3. Click "اعتماد جميع البنود المعلقة" → all pending → approved in one action
-4. Individual items can still be edited, approved one-by-one, or deleted as before
+- Rate library data — preserved
+- Schema/tables — no changes
+- Authentication — untouched
+- AI policy — still zero AI pricing
+- Edge functions — untouched
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| Data operation | DELETE from `rate_sources`, `rate_library` |
-| `src/hooks/usePriceLibrary.ts` | Add `useBulkApprovePending` mutation |
-| `src/pages/RateLibraryPage.tsx` | Add bulk approve button with confirmation |
+| `src/lib/pricingEngine.ts` | Fix `priceFromApprovedRate()` to use approved rate directly; improve `item_description` matching weight |
+| Data operation | Clear BoQ data tables for re-upload |
 
