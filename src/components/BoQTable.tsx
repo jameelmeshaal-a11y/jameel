@@ -3,8 +3,9 @@ import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loa
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBoQItems, useProject } from "@/hooks/useSupabase";
+import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
+import { exportStyledBoQ } from "@/lib/boqExcelExport";
 import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
@@ -42,6 +43,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
+  const { data: boqFiles = [] } = useBoQFiles(projectId);
+  const boqFileName = useMemo(() => boqFiles.find(f => f.id === boqFileId)?.name || "BoQ", [boqFiles, boqFileId]);
 
   // Upload is now handled by CreateBoQDialog at project level
 
@@ -142,32 +145,22 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const handleExport = async () => {
     if (items.length === 0) return;
-    
-    if (!exportSummary.canExport) {
-      toast.error(exportSummary.errorMessage ?? "No priced items found");
-      return;
+
+    const unmatchedCount = items.filter(i => i.status === "unmatched" || i.source === "no_match").length;
+    const reviewCount = items.filter(i => i.status === "needs_review").length;
+
+    if (unmatchedCount > 0) {
+      toast.warning(`${unmatchedCount} بند غير مطابق 🔴 — مضمّن في التصدير للمراجعة اليدوية`);
+    }
+    if (reviewCount > 0) {
+      toast.warning(`${reviewCount} بند يحتاج مراجعة 🟡`);
     }
 
-    // Filter: only export approved items
-    const approvedItems = items.filter(i => i.status === "approved");
-    const excludedCount = items.filter(i => i.status === "needs_review" || i.status === "unmatched").length;
-
-    if (approvedItems.length === 0) {
-      toast.error("لا توجد بنود معتمدة للتصدير — يجب مراجعة جميع البنود أولاً");
-      return;
-    }
-
-    if (excludedCount > 0) {
-      toast.warning(`${excludedCount} بند مستبعد — يتم تصدير البنود المعتمدة فقط`);
-    }
-
-    if (exportSummary.warningRows.length > 0) {
-      setBlockingRowsOpen(true);
-    }
     try {
-      if (exportSummary.warningMessage) toast.warning(exportSummary.warningMessage);
-      await exportBoQExcel(approvedItems, `Priced_BoQ_${Date.now()}.xlsx`, boqFileId);
-      toast.success("Excel file downloaded");
+      const projectName = project?.name || "Project";
+      const boqFile = items[0]?.boq_file_id || boqFileId;
+      await exportStyledBoQ(items as any, projectName, boqFileName || "BoQ");
+      toast.success("تم تنزيل ملف Excel بنجاح");
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -370,7 +363,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             </AlertDialog>
           )}
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={!canExport}>
+            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={items.length === 0}>
               <Download className="w-3 h-3" /> {t("export")}
             </Button>
           )}
