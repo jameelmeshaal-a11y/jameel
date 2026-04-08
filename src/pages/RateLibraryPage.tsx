@@ -7,7 +7,8 @@ import AppLayout from "@/components/AppLayout";
 import { formatNumber } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem } from "@/hooks/usePriceLibrary";
+import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem, useBulkApprovePending } from "@/hooks/usePriceLibrary";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import PriceLibraryImportDialog from "@/components/PriceLibraryImportDialog";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -37,6 +38,9 @@ export default function RateLibraryPage() {
   const approveItem = useApprovePriceItem();
   const deleteItem = useDeletePriceItem();
   const addItem = useAddPriceItem();
+  const bulkApprove = useBulkApprovePending();
+
+  const pendingCount = items.filter((i: any) => !i.approved_at).length;
 
   const startEdit = (item: any) => {
     setEditingId(item.id);
@@ -98,6 +102,34 @@ export default function RateLibraryPage() {
             <p className="page-subtitle">{t("rateLibrarySubtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
+            {pendingCount > 0 && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+                    <Check className="w-4 h-4" /> اعتماد جميع البنود المعلقة ({pendingCount})
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent dir="rtl">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>اعتماد البنود المعلقة</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      سيتم اعتماد {pendingCount} بند معلق. هل تريد المتابعة؟
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => {
+                      bulkApprove.mutate(user!.id, {
+                        onSuccess: (count) => toast.success(`تم اعتماد ${count} بند`),
+                        onError: () => toast.error("فشل اعتماد البنود"),
+                      });
+                    }}>
+                      اعتماد الكل
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={items.length === 0}>
               <Download className="w-4 h-4" /> تنزيل Excel
             </Button>
