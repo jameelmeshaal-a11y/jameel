@@ -222,6 +222,29 @@ export function useBulkUpsertPriceItems() {
   });
 }
 
+// Bulk approve all pending items
+export function useBulkApprovePending() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { data, error } = await supabase
+        .from("rate_library")
+        .update({
+          approved_at: new Date().toISOString(),
+          approved_by: userId,
+          source_type: "Approved",
+        })
+        .is("approved_at", null)
+        .select("id");
+      if (error) throw error;
+      return data?.length || 0;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["price-library"] });
+    },
+  });
+}
+
 // Match price item hook with debounce
 export function useMatchPriceItem() {
   const [results, setResults] = useState<any[]>([]);
