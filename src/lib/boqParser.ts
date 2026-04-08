@@ -25,6 +25,19 @@ export interface ParsedBoQRow {
  *  - item number, description (Arabic), unit, quantity
  * Returns parsed rows without modifying the original structure.
  */
+/**
+ * Clean unit strings that got corrupted during Excel parsing.
+ * e.g. "م131" (م + row number 131) → "م²", "م3" → "م³"
+ */
+function cleanUnit(raw: string): string {
+  // If unit is a single Arabic م followed by digits (row number artifact), fix it
+  if (/^م\d{2,}$/.test(raw)) return "م²";
+  // Normalize common Arabic square/cubic meter variants
+  return raw
+    .replace(/^م2$/, "م²")
+    .replace(/^م3$/, "م³");
+}
+
 export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
   const wb = XLSX.read(buffer, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -56,7 +69,7 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
       section_no: colMap.sectionNo >= 0 ? String(row[colMap.sectionNo] ?? "").trim() : "",
       description: desc,
       description_en: "",
-      unit: String(row[colMap.unit] ?? "").trim(),
+      unit: cleanUnit(String(row[colMap.unit] ?? "").trim()),
       quantity: qty,
       row_index: i,
       parent_context: "", // will be filled in post-processing
