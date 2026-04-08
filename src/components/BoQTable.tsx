@@ -3,7 +3,7 @@ import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loa
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBoQItems, useProject } from "@/hooks/useSupabase";
+import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
 import { runPricingEngine, detectCategory, isPriceableItem } from "@/lib/pricingEngine";
