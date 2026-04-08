@@ -43,6 +43,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
+  const { data: boqFiles = [] } = useBoQFiles(projectId);
+  const boqFileName = useMemo(() => boqFiles.find(f => f.id === boqFileId)?.name || "BoQ", [boqFiles, boqFileId]);
 
   // Upload is now handled by CreateBoQDialog at project level
 
