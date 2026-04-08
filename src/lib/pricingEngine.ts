@@ -112,12 +112,16 @@ function findRateLibraryMatch(
   let bestMatch: RateLibraryItem | null = null;
   let bestScore = 0;
 
+  // Extract model codes from BoQ description once
+  const boqCodes = extractModelCodes(description + " " + (descriptionEn || ""));
+  const boqTokens = tokenize(description + " " + (descriptionEn || ""));
+
   for (const candidate of rateLibrary) {
     if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
 
     let score = 0;
 
-    // Text similarity via Jaccard (max 60 pts)
+    // Text similarity via max(Jaccard, overlap coeff) (max 60 pts)
     let textScore = Math.max(
       textSimilarity(description, candidate.standard_name_ar || ""),
       textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
@@ -155,10 +159,42 @@ function findRateLibraryMatch(
     }
 
     // Keyword overlap via tokenize (max 25 pts)
-    const srcTokens = tokenize(description + " " + (descriptionEn || ""));
     const candTokens = tokenize((candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || ""));
-    const overlapCount = srcTokens.filter(t => candTokens.includes(t)).length;
+    const overlapCount = boqTokens.filter(t => candTokens.includes(t)).length;
     score += Math.min(25, overlapCount * 5);
+
+    // ── NEW: Model/code match (+40 pts) ──
+    if (boqCodes.length > 0) {
+      const candText = [
+        candidate.standard_name_ar || "",
+        candidate.standard_name_en || "",
+        candidate.item_code || "",
+        candidate.item_description || "",
+        ...(candidate.item_name_aliases || []),
+      ].join(" ");
+      const candCodes = extractModelCodes(candText);
+      const hasCodeMatch = boqCodes.some(c => candCodes.includes(c));
+      if (hasCodeMatch) {
+        score += 40;
+      }
+    }
+
+    // ── NEW: Containment bonus (+20 pts) ──
+    const overlapCoeff = Math.max(
+      overlapCoefficient(description, candidate.standard_name_ar || ""),
+      overlapCoefficient(description, candidate.item_description || ""),
+      overlapCoefficient(descriptionEn || "", candidate.standard_name_en || ""),
+    );
+    if (overlapCoeff >= 0.8) {
+      score += 20;
+    }
+
+    // ── NEW: Library keywords field matching (+15 pts) ──
+    if (candidate.keywords?.length > 0) {
+      const kwSet = new Set(candidate.keywords.map(k => k.toLowerCase()));
+      const kwHits = boqTokens.filter(t => kwSet.has(t)).length;
+      score += Math.min(15, kwHits * 5);
+    }
 
     score = Math.min(score, 99);
 
