@@ -120,7 +120,12 @@ export default function RateLibraryPage() {
                     <AlertDialogCancel>إلغاء</AlertDialogCancel>
                     <AlertDialogAction onClick={() => {
                       bulkApprove.mutate(user!.id, {
-                        onSuccess: (count) => toast.success(`تم اعتماد ${count} بند`),
+                        onSuccess: (result: any) => {
+                          toast.success(`تم اعتماد ${result.approved} بند`);
+                          if (result.skipped > 0) {
+                            toast.warning(`تم تخطي ${result.skipped} بند بسبب سعر صفر — يجب إدخال السعر أولاً`);
+                          }
+                        },
                         onError: () => toast.error("فشل اعتماد البنود"),
                       });
                     }}>
@@ -236,7 +241,11 @@ export default function RateLibraryPage() {
                       <td className="text-right font-mono text-sm font-semibold">
                         {isEditing ? (
                           <Input type="number" value={editValues.base_rate} onChange={(e) => setEditValues({...editValues, base_rate: +e.target.value})} className="h-7 text-xs w-24 ml-auto" />
-                        ) : formatNumber(rate.base_rate)}
+                        ) : (
+                          <span className={rate.base_rate <= 0 ? "text-destructive" : ""}>
+                            {rate.base_rate <= 0 ? "⚠️ 0" : formatNumber(rate.base_rate)}
+                          </span>
+                        )}
                       </td>
                       <td className="text-center">
                         {isApproved ? (
@@ -264,6 +273,13 @@ export default function RateLibraryPage() {
                               <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
                                 approveItem.mutate({ id: rate.id, userId: user!.id }, {
                                   onSuccess: () => toast.success("تم الاعتماد"),
+                                  onError: (err: any) => {
+                                    if (err?.message === "ZERO_RATE") {
+                                      toast.error("لا يمكن اعتماد بند بسعر صفر — يجب إدخال السعر أولاً");
+                                    } else {
+                                      toast.error("فشل الاعتماد");
+                                    }
+                                  },
                                 });
                               }}>
                                 <Check className="w-3.5 h-3.5 text-emerald-600" />
