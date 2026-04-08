@@ -147,6 +147,114 @@ export function useBoQFiles(projectId: string | undefined) {
 
 // ─── BoQ Items ───
 
+// ─── BoQ Management Mutations ───
+
+export function useDeleteBoQ() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (boqFileId: string) => {
+      // 1. Delete all items
+      const { error: itemsErr } = await supabase
+        .from("boq_items")
+        .delete()
+        .eq("boq_file_id", boqFileId);
+      if (itemsErr) throw itemsErr;
+      // 2. Delete the BoQ file record
+      const { error: fileErr } = await supabase
+        .from("boq_files")
+        .delete()
+        .eq("id", boqFileId);
+      if (fileErr) throw fileErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["boq-files"] });
+      qc.invalidateQueries({ queryKey: ["boq-items"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (projectId: string) => {
+      // 1. Get all BoQ files for this project
+      const { data: boqFiles } = await supabase
+        .from("boq_files")
+        .select("id")
+        .eq("project_id", projectId);
+      // 2. Delete all items for each BoQ
+      if (boqFiles && boqFiles.length > 0) {
+        const boqIds = boqFiles.map(f => f.id);
+        for (const bid of boqIds) {
+          await supabase.from("boq_items").delete().eq("boq_file_id", bid);
+        }
+        // 3. Delete all BoQ files
+        for (const bid of boqIds) {
+          await supabase.from("boq_files").delete().eq("id", bid);
+        }
+      }
+      // 4. Delete project documents
+      await supabase.from("project_documents").delete().eq("project_id", projectId);
+      // 5. Delete budget distributions
+      await supabase.from("project_budget_distribution").delete().eq("project_id", projectId);
+      // 6. Delete project
+      const { error } = await supabase.from("projects").delete().eq("id", projectId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["boq-files"] });
+      qc.invalidateQueries({ queryKey: ["boq-items"] });
+      qc.invalidateQueries({ queryKey: ["documents"] });
+    },
+  });
+}
+
+export function useArchiveBoQ() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (boqFileId: string) => {
+      const { error } = await supabase
+        .from("boq_files")
+        .update({ is_archived: true } as any)
+        .eq("id", boqFileId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["boq-files"] }),
+  });
+}
+
+export function useRestoreBoQ() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (boqFileId: string) => {
+      const { error } = await supabase
+        .from("boq_files")
+        .update({ is_archived: false } as any)
+        .eq("id", boqFileId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["boq-files"] }),
+  });
+}
+
+export function useRenameBoQ() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; name: string }) => {
+      const { error } = await supabase
+        .from("boq_files")
+        .update({ name: input.name })
+        .eq("id", input.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["boq-files"] }),
+  });
+}
+
+// ─── BoQ Items ───
+
 export function useBoQItems(boqFileId: string | undefined) {
   return useQuery({
     queryKey: ["boq-items", boqFileId],
