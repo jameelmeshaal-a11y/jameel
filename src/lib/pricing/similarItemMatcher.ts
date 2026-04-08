@@ -102,8 +102,63 @@ export function normalizeUnit(unit: string): string {
     .replace(/عدد|no|pcs/g, "no");
 }
 
+// ─── Overlap Coefficient ────────────────────────────────────────────────────
+
+/**
+ * Overlap coefficient: intersection / min(|A|, |B|).
+ * Scores 1.0 when all tokens of the shorter text exist in the longer text.
+ * Fixes the "short BoQ vs long library" mismatch problem.
+ */
+export function overlapCoefficient(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const tokensA = tokenize(a);
+  const tokensB = tokenize(b);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  const intersection = [...setA].filter(w => setB.has(w)).length;
+  const minSize = Math.min(setA.size, setB.size);
+  return minSize > 0 ? intersection / minSize : 0;
+}
+
+// ─── Model/Code Extraction ─────────────────────────────────────────────────
+
+/**
+ * Extract alphanumeric model/reference codes from text.
+ * Matches: TSD-2, HOK-2, REF-1, CA-1, WT01, نموذج -1, نموذج-21
+ */
+export function extractModelCodes(text: string): string[] {
+  if (!text) return [];
+  const codes: string[] = [];
+
+  // Latin codes: 2+ letters followed by optional separator and digits
+  const latinPattern = /\b([A-Za-z]{2,}\s*-?\s*\d+)\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = latinPattern.exec(text)) !== null) {
+    codes.push(match[1].replace(/\s+/g, "").toLowerCase());
+  }
+
+  // Arabic model pattern: نموذج followed by separator and number
+  const modelPattern = /نموذج\s*[-.‐–]\s*(\d+)/g;
+  while ((match = modelPattern.exec(text)) !== null) {
+    codes.push(`model-${match[1]}`);
+  }
+
+  // Standalone patterns like "مقاس 30X600X600" → extract dimension code
+  const dimPattern = /(\d+[Xx×]\d+[Xx×]?\d*)/g;
+  while ((match = dimPattern.exec(text)) !== null) {
+    codes.push(match[1].toLowerCase().replace(/[x×]/g, "x"));
+  }
+
+  return [...new Set(codes)];
+}
+
 // ─── Text Similarity ────────────────────────────────────────────────────────
 
+/**
+ * Returns max of Jaccard similarity and overlap coefficient.
+ * This ensures short-but-correct descriptions still score high.
+ */
 export function textSimilarity(a: string, b: string): number {
   if (!a || !b) return 0;
   const tokensA = tokenize(a);
@@ -113,7 +168,10 @@ export function textSimilarity(a: string, b: string): number {
   const setB = new Set(tokensB);
   const intersection = [...setA].filter(w => setB.has(w)).length;
   const union = new Set([...setA, ...setB]).size;
-  return intersection / union; // Jaccard similarity
+  const jaccard = union > 0 ? intersection / union : 0;
+  const minSize = Math.min(setA.size, setB.size);
+  const overlap = minSize > 0 ? intersection / minSize : 0;
+  return Math.max(jaccard, overlap);
 }
 
 // ─── Similar Item Search ────────────────────────────────────────────────────
