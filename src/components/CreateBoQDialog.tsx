@@ -183,17 +183,22 @@ export default function CreateBoQDialog({ open, onOpenChange, projectId, project
         throw new Error("No valid BoQ rows detected in the file.");
       }
 
-      const items = parsed.map(row => ({
-        boq_file_id: boqFileId,
-        item_no: row.item_no,
-        description: row.description,
-        description_en: row.description_en,
-        unit: row.unit,
-        quantity: row.quantity,
-        row_index: row.row_index,
-        status: getRowPersistenceStatus(row),
-        notes: getRowClassificationNote(row),
-      }));
+      const items = parsed.map(row => {
+        const parentNote = row.parent_context ? `[PARENT: ${row.parent_context}]` : "";
+        const classNote = getRowClassificationNote(row);
+        const combinedNote = [parentNote, classNote].filter(Boolean).join(" ");
+        return {
+          boq_file_id: boqFileId,
+          item_no: row.item_no,
+          description: row.description,
+          description_en: row.description_en,
+          unit: row.unit,
+          quantity: row.quantity,
+          row_index: row.row_index,
+          status: getRowPersistenceStatus(row),
+          notes: combinedNote || null,
+        };
+      });
 
       for (let i = 0; i < items.length; i += 100) {
         const batch = items.slice(i, i + 100);

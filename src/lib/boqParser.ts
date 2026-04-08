@@ -64,18 +64,30 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
   }
 
   // Post-processing: collect parent context for pricing rows
-  const parentDescriptions: string[] = [];
+  // activeParent persists for ALL consecutive children until a new parent section begins
+  let activeParent = "";
+  let parentBuffer: string[] = [];
+
   for (const row of rawRows) {
     const hasPricing = row.quantity > 0;
     if (!hasPricing) {
-      // Parent description row — buffer it
+      // Descriptive row — accumulate as potential parent
       if (row.description.trim()) {
-        parentDescriptions.push(row.description.trim());
+        parentBuffer.push(row.description.trim());
       }
     } else {
-      // Pricing row — attach parent context then reset
-      row.parent_context = parentDescriptions.join(" | ");
-      parentDescriptions.length = 0;
+      // Payable row — finalize active parent from buffer (if any new descriptive rows appeared)
+      if (parentBuffer.length > 0) {
+        activeParent = parentBuffer.join(" | ");
+        parentBuffer = [];
+      }
+      // Attach active parent to this child (persists for all siblings)
+      row.parent_context = activeParent;
+
+      // Store combined description so pricing engine always sees full context
+      if (activeParent) {
+        row.description = `${activeParent} — ${row.description}`;
+      }
     }
   }
 
