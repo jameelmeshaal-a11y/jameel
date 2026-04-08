@@ -40,24 +40,7 @@ const UNMATCHED_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColo
 const REVIEW_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: YELLOW_BG } };
 const TOTALS_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: GRAY_BG } };
 
-const HEADERS = [
-  "رقم البند",
-  "الوصف",
-  "المطابقة",
-  "الوحدة",
-  "الكمية",
-  "الفئة",
-  "سعر الوحدة",
-  "الإجمالي",
-  "مواد",
-  "عمالة",
-  "معدات",
-  "نقل",
-  "مخاطر",
-  "ربح",
-  "الثقة %",
-  "الحالة",
-];
+// Headers are built dynamically in exportStyledBoQ based on whether section_no exists
 
 function detectCategory(item: BoQExportItem): string {
   const desc = (item.description + " " + (item.description_en || "")).toLowerCase();
