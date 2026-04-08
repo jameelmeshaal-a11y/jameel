@@ -11,6 +11,7 @@ import {
 
 export interface ParsedBoQRow {
   item_no: string;
+  section_no: string;
   description: string;
   description_en: string;
   unit: string;
@@ -52,6 +53,7 @@ export function parseBoQExcel(buffer: ArrayBuffer): ParsedBoQRow[] {
 
     rawRows.push({
       item_no: String(row[colMap.itemNo] ?? "").trim(),
+      section_no: colMap.sectionNo >= 0 ? String(row[colMap.sectionNo] ?? "").trim() : "",
       description: desc,
       description_en: "",
       unit: String(row[colMap.unit] ?? "").trim(),
@@ -90,7 +92,7 @@ function findHeaderRow(data: any[][]): number {
   return 0;
 }
 
-function detectColumns(headers: string[]): { itemNo: number; description: number; unit: number; quantity: number } {
+function detectColumns(headers: string[]): { itemNo: number; description: number; unit: number; quantity: number; sectionNo: number } {
   const find = (patterns: string[]): number => {
     for (const p of patterns) {
       const idx = headers.findIndex(h => h.includes(p));
@@ -99,10 +101,16 @@ function detectColumns(headers: string[]): { itemNo: number; description: number
     return -1;
   };
 
+  // Detect section/division column first (more specific patterns)
+  let sectionNo = find(["division", "section", "قسم", "رقم القسم", "div"]);
+
   let itemNo = find(["item", "no", "رقم", "م", "#"]);
   let description = find(["description", "وصف", "بند", "desc", "بيان"]);
   let unit = find(["unit", "وحدة"]);
   let quantity = find(["qty", "quantity", "كمية", "الكمية"]);
+
+  // Avoid sectionNo colliding with itemNo
+  if (sectionNo >= 0 && sectionNo === itemNo) sectionNo = -1;
 
   // Fallback: assume columns 0-3
   if (itemNo < 0) itemNo = 0;
@@ -110,7 +118,7 @@ function detectColumns(headers: string[]): { itemNo: number; description: number
   if (unit < 0) unit = 2;
   if (quantity < 0) quantity = 3;
 
-  return { itemNo, description, unit, quantity };
+  return { itemNo, description, unit, quantity, sectionNo };
 }
 
 /**
@@ -165,6 +173,7 @@ export async function uploadAndParseBoQ(
     return {
       boq_file_id: boqFile.id,
       item_no: row.item_no,
+      section_no: row.section_no,
       description: row.description,
       description_en: row.description_en,
       unit: row.unit,
