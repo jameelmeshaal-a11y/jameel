@@ -113,6 +113,7 @@ export type Database = {
           quantity: number
           risk: number | null
           row_index: number
+          section_no: string
           source: string | null
           status: string
           total_price: number | null
@@ -143,6 +144,7 @@ export type Database = {
           quantity?: number
           risk?: number | null
           row_index?: number
+          section_no?: string
           source?: string | null
           status?: string
           total_price?: number | null
@@ -173,6 +175,7 @@ export type Database = {
           quantity?: number
           risk?: number | null
           row_index?: number
+          section_no?: string
           source?: string | null
           status?: string
           total_price?: number | null

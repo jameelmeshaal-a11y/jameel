@@ -1,0 +1,1 @@
+ALTER TABLE boq_items ADD COLUMN section_no text NOT NULL DEFAULT '';
