@@ -1,107 +1,85 @@
 
 
-# Total Cost Distribution with Deterministic AI Fallback
+# BoQ Management Module — UI/UX Enhancement Plan
 
 ## Summary
 
-Add a "التكلفة الإجمالية / Total Cost" input to the Price Breakdown Modal. When entered, distribute across breakdown components using item-specific ratios. AI fallback generates ratios only once — they are persisted to the item and reused forever.
+Layer BoQ management features (archive, delete, filtered export, pricing sync, rename, breadcrumbs) on top of the existing project/BoQ infrastructure. No changes to pricing engine internals.
 
-## Architecture
+## What Already Exists (No Changes Needed)
+- Project CRUD, BoQ file upload/parse, BoQ items table, Excel export, pricing engine
 
-```text
-User enters Total Cost
-        │
-  Resolve Ratios (priority)
-        │
-  1. Current item breakdown → compute ratios
-  2. Linked rate_library → use *_pct columns
-  3. Item's saved ai_generated ratios → reuse (NO re-generation)
-  4. AI generates once → persist to item → distribute
-        │
-  Normalize → Distribute → Round → Remainder to last field
-        │
-  Sum === Total Cost (exact, deterministic)
+## New Features to Build
+
+### 1. Database: Add `is_archived` boolean to `boq_files`
+
+```sql
+ALTER TABLE boq_files ADD COLUMN is_archived boolean NOT NULL DEFAULT false;
 ```
 
-## Changes
+Using a separate boolean instead of overloading `status` (which tracks processing state). No new tables needed — `pricingStatus` will be computed client-side from items data.
 
-### 1. `src/lib/pricing/smartRecalculator.ts` — Add distribution logic
+### 2. `src/hooks/useSupabase.ts` — Add mutations
 
-New types and functions:
+- **`useDeleteBoQ`**: Delete all `boq_items` where `boq_file_id = id`, delete the `boq_files` row, invalidate all related query keys (`boq-files`, `boq-items`, `projects`)
+- **`useDeleteProject`**: Delete all items for all BoQs in project, delete all BoQs, delete project, invalidate and navigate to `/projects`
+- **`useArchiveBoQ`**: Update `is_archived = true`, invalidate queries
+- **`useRestoreBoQ`**: Update `is_archived = false`, invalidate queries
+- **`useRenameBoQ`**: Update `name` field, invalidate queries
+- **`useBoQFiles`**: Update to accept optional `archived` filter parameter
 
-```typescript
-type RatioSource = 'current_item' | 'linked_library' | 'ai_generated' | 'none';
+### 3. `src/pages/ProjectDetail.tsx` — Major UI updates
 
-interface RatioResolution {
-  ratios: Record<BreakdownField, number>;  // normalized to sum=1.0
-  source: RatioSource;
-  normalized: boolean;
-}
+**Breadcrumb**: Always-visible breadcrumb: `المشاريع > [Project Name] > [BoQ Name]` (BoQ name appears when one is selected)
 
-function distributeTotal(totalCost: number, ratios: Record<BreakdownField, number>): BreakdownValues
-```
+**Active/Archived tabs**: Two tabs above the BoQ list filtering by `is_archived`. Show counts for each.
 
-- `distributeTotal`: normalize ratios to sum=1.0, multiply × totalCost, round to 2 decimals, apply remainder to last non-zero component
-- `resolveRatiosFromValues(values: BreakdownValues)`: compute ratios from current item if any field > 0
-- `resolveRatiosFromLibrary(pcts)`: convert `*_pct` fields to ratio map
+**BoQ card actions**: Add action buttons per BoQ card:
+- 🗄 Archive (active tab) / Restore (archived tab)
+- 🗑 Delete (with confirmation dialog)
+- Inline rename (click-to-edit on BoQ name)
 
-### 2. `supabase/functions/generate-breakdown/index.ts` — New edge function (AI fallback)
+**Pricing status badge**: Computed from items — count items with `unit_rate > 0` vs total priceable items → show "غير مسعّر" / "مسعّر جزئياً" / "مسعّر بالكامل"
 
-Called ONLY when no saved ratios exist anywhere. Uses Lovable AI gateway (`google/gemini-3-flash-preview`).
+**Delete Project button**: In the Settings tab with confirmation dialog
 
-- Input: `{ description, description_en, unit, category }`
-- System prompt: Saudi construction cost estimator generating realistic breakdown percentages
-- Uses tool calling to extract structured output: `{ materials_pct, labor_pct, equipment_pct, logistics_pct, risk_pct, profit_pct }`
-- Returns normalized percentages
+### 4. `src/components/BoQTable.tsx` — New action buttons
 
-**AI determinism guarantee**: The modal calls this ONCE, then immediately persists the returned ratios to `boq_items` (as breakdown values based on a unit total of 100). On next open, ratios are read from the item — AI is never called again for the same item.
+**Export Unpriced Only**: New button that filters `items.filter(i => !i.unit_rate || i.unit_rate === 0)` and calls `exportStyledBoQ` with only those items. File name: `[BoQName]_unpriced_[date].xlsx`
 
-### 3. `src/components/PriceBreakdownModal.tsx` — Add Total Cost field + distribution UI
+**Apply Pricing from Library**: New button that runs pricing engine ONLY on items where `unit_rate` is null/0. After completion, shows summary toast: "X items priced, Y items still unpriced". This reuses the existing `runPricingEngine` but passes a filter flag.
 
-**New state:**
-- `totalCostInput: string`
-- `ratioSource: RatioSource`
-- `ratioWarning: string | null`
-- `ratioPercentages: Record<BreakdownField, number>` — for display
+**Archive button**: Archive/restore the current BoQ from within the detail view.
 
-**Ratio resolution on modal open (editing mode):**
-1. Compute from `initial` values (current item) — if sum > 0, use these
-2. If all zeros + `linked_rate_id` exists → fetch `rate_library` row for `*_pct` columns
-3. If still no ratios → check if item already has AI-generated ratios stored (source field or manual_overrides flag)
-4. If truly nothing → call `generate-breakdown` edge function → **immediately persist** generated ratios to `boq_items` as breakdown values (scaled to sum=100) so they're saved for reuse. Set `source` to `"ai_generated"` on the item.
+**Delete button**: Delete current BoQ with confirmation, navigate back to BoQ list.
 
-**Determinism flow:**
-- First time with no ratios: AI generates → ratios saved to item → distributed
-- Every subsequent time: ratios read from item → distributed (AI never called again)
-- If user later edits and saves manually, those become the new ratios
+**Read-only mode**: If BoQ is archived, disable pricing buttons, show "archived" banner, keep export buttons enabled.
 
-**UI additions (editing mode):**
-- "التكلفة الإجمالية / Total Cost" prominent input field with SAR label, above component rows
-- On change: `distributeTotal()` → update all component values live
-- Each component row shows percentage beside value
-- Ratio source badge: "من البند الحالي" / "من مكتبة الأسعار" / "توزيع ذكاء اصطناعي"
-- Warning banners:
-  - Yellow: "تم تطبيع نسب التوزيع المحفوظة" (normalized)
-  - Orange: "لا توجد نسب محفوظة — تم استخدام توزيع الذكاء الاصطناعي" (AI used, first time only)
-  - Red: "لا توجد نسب ولا يمكن توليدها" (edge function failed — allow manual entry only)
+### 5. `src/pages/ProjectsPage.tsx` — Minor updates
 
-**Save behavior:**
-- Existing `handleSave` persists all breakdown fields — no change needed
-- If AI ratios were generated, they're already persisted before distribution
-- Total = sum of components (no new column)
+- Add delete project button per project card (with cascade confirmation dialog)
+- Show BoQ count badge (already exists)
+- Clear all query cache after deletion
 
-## Guarantees
+### 6. `src/lib/pricingEngine.ts` — Add unpriced-only filter
 
-- **Deterministic AI**: AI generates ratios once per item. Ratios are persisted to the item record. Same item always gets same ratios across sessions.
-- **Sum accuracy**: Rounding remainder applied to last component. `sum === totalCost` always.
-- **No generic defaults**: Each item uses its own structure. AI generates item-specific ratios based on description and category.
-- **Priority enforcement**: Current item → Library → Persisted AI → Generate (once) → Manual only
+Add optional parameter `unpricedOnly?: boolean` to `runPricingEngine`. When true, only process items where `unit_rate` is null or 0. This is a filter on the item selection, not a change to pricing logic itself.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `src/lib/pricing/smartRecalculator.ts` | Add `distributeTotal()`, `resolveRatiosFromValues()`, types |
-| `src/components/PriceBreakdownModal.tsx` | Add Total Cost input, ratio resolution with AI persistence, live distribution, warnings |
-| `supabase/functions/generate-breakdown/index.ts` | New edge function for one-time AI ratio generation |
+| Migration SQL | Add `is_archived` to `boq_files` |
+| `src/hooks/useSupabase.ts` | Add delete/archive/restore/rename mutations |
+| `src/pages/ProjectDetail.tsx` | Breadcrumbs, active/archived tabs, action buttons, pricing status, delete project |
+| `src/pages/ProjectsPage.tsx` | Delete project button per card |
+| `src/components/BoQTable.tsx` | Export unpriced, apply pricing (unpriced only), archive/delete buttons, read-only mode |
+| `src/lib/pricingEngine.ts` | Add `unpricedOnly` filter parameter (no logic change) |
+
+## Strict Boundaries Respected
+- No changes to pricing algorithm internals
+- No changes to rate library
+- No changes to auth or settings
+- No new AI features
+- Existing components only modified where explicitly required
 
