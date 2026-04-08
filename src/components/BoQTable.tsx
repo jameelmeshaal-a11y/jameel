@@ -144,6 +144,32 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, cities, items, qc, projectId]);
 
+  const handleRepriceUnpriced = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    try {
+      const result = await repriceUnpricedItems(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      });
+      if (result.pricedCount > 0) {
+        toast.success(`تم تسعير ${result.pricedCount} بند — ${result.stillUnpricedCount} بند لا يزال بدون سعر`);
+      } else {
+        toast.info("لم يتم العثور على تطابقات جديدة للبنود غير المسعّرة");
+      }
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+    }
+  }, [boqFileId, cities, qc, projectId]);
+
   const handleExport = async () => {
     if (items.length === 0) return;
 
