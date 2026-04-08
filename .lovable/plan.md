@@ -1,47 +1,57 @@
 
 
-# حذف بيانات مكتبة الأسعار وجداول الكميات — إعادة تعيين البيانات فقط
+# Reset Price Library + Bulk Approve Pending Items
 
-## الهدف
+## Summary
 
-حذف جميع البيانات من:
-- `rate_library` — مكتبة الأسعار (لرفع بنود جديدة بأوصاف كاملة)
-- `rate_sources` — مصادر الأسعار المرتبطة
-- `boq_items` — بنود جداول الكميات
-- `boq_files` — ملفات جداول الكميات
-- `price_change_log` — سجل تغييرات الأسعار
-- `pricing_audit_log` — سجل مراجعة التسعير
+1. Clear all data from `rate_library` and `rate_sources` (data only, no schema changes)
+2. Add a "اعتماد جميع البنود المعلقة" (Approve All Pending) button to the Rate Library page
+3. Preserve all existing individual item actions (edit, approve, delete)
 
-## ما لن يُمس
+## Current Approval Model
 
-- هيكل الجداول والأعمدة — بدون تغيير
-- سياسات الأمان (RLS) — بدون تغيير
-- محرك التسعير والمنطق البرمجي — بدون تغيير
-- المشاريع — تبقى مع إعادة تعيين العدادات فقط
-- المستندات — تبقى كما هي
-- المصادقة والمستخدمين — بدون تغيير
+Items use `approved_at` (timestamp) and `approved_by` (uuid) fields — not a `status` column. An item is "pending" when `approved_at IS NULL`.
 
-## العمليات المطلوبة
+## Changes
+
+### 1. Data Reset (via insert tool)
 
 ```sql
-DELETE FROM boq_items;
-DELETE FROM boq_files;
-DELETE FROM price_change_log;
-DELETE FROM pricing_audit_log;
 DELETE FROM rate_sources;
 DELETE FROM rate_library;
-UPDATE projects SET boq_count = 0, total_value = 0;
 ```
 
-## التسلسل بعد الحذف
+No schema changes. Tables remain intact.
 
-1. رفع مكتبة أسعار جديدة (بأوصاف كاملة)
-2. رفع جدول كميات جديد
-3. تشغيل التسعير — النظام يعمل بنفس السياسة المعتمدة على البيانات الجديدة
+### 2. `src/hooks/usePriceLibrary.ts` — Add `useBulkApprovePending` hook
 
-## التغييرات
+New mutation that:
+- Updates all `rate_library` rows where `approved_at IS NULL`
+- Sets `approved_at = now()`, `approved_by = userId`, `source_type = 'Approved'`
+- Returns count of affected items
+- Invalidates `price-library` query cache
 
-| الملف | التغيير |
+### 3. `src/pages/RateLibraryPage.tsx` — Add bulk approve button
+
+- Add a "✅ اعتماد جميع البنود المعلقة" button in the header action bar (next to export/import buttons)
+- Only visible when there are pending items (`items.filter(i => !i.approved_at).length > 0`)
+- Shows confirmation dialog before execution
+- Shows count: "اعتماد X بند معلق؟"
+- After success: toast with count of approved items
+- All existing individual actions (pencil edit, single approve ✓, delete 🗑) remain unchanged
+
+### Flow After Implementation
+
+1. Upload new price library via "رفع ملف أسعار" → items arrive as pending
+2. Review items in the table
+3. Click "اعتماد جميع البنود المعلقة" → all pending → approved in one action
+4. Individual items can still be edited, approved one-by-one, or deleted as before
+
+## Files Changed
+
+| File | Change |
 |---|---|
-| عمليات حذف بيانات فقط | لا تغييرات على الكود أو الهيكل |
+| Data operation | DELETE from `rate_sources`, `rate_library` |
+| `src/hooks/usePriceLibrary.ts` | Add `useBulkApprovePending` mutation |
+| `src/pages/RateLibraryPage.tsx` | Add bulk approve button with confirmation |
 
