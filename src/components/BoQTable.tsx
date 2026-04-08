@@ -26,9 +26,10 @@ interface BoQTableProps {
   projectId: string;
   cities: string[];
   ownerMaterials?: boolean;
+  isArchived?: boolean;
 }
 
-export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials = false }: BoQTableProps) {
+export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials = false, isArchived = false }: BoQTableProps) {
   const { t } = useLanguage();
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
