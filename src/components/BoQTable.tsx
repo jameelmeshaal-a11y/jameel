@@ -406,6 +406,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   </AlertDialogContent>
                 </AlertDialog>
               )}
+              {priceableCount - pricedCount > 0 && (
+                <Button variant="secondary" size="sm" className="gap-1" onClick={handleRepriceUnpriced} disabled={pricing}>
+                  <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
+                </Button>
+              )}
             </>
           )}
           {hasItems && (
