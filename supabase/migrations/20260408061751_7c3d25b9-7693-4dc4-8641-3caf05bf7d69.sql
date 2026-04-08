@@ -1,0 +1,1 @@
+ALTER TABLE boq_files ADD COLUMN is_archived boolean NOT NULL DEFAULT false;

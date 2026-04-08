@@ -26,9 +26,10 @@ interface BoQTableProps {
   projectId: string;
   cities: string[];
   ownerMaterials?: boolean;
+  isArchived?: boolean;
 }
 
-export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials = false }: BoQTableProps) {
+export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials = false, isArchived = false }: BoQTableProps) {
   const { t } = useLanguage();
   const qc = useQueryClient();
   const [mode, setMode] = useState<PricingMode>("review");
@@ -158,9 +159,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     try {
       const projectName = project?.name || "Project";
-      const boqFile = items[0]?.boq_file_id || boqFileId;
       await exportStyledBoQ(items as any, projectName, boqFileName || "BoQ");
       toast.success("تم تنزيل ملف Excel بنجاح");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleExportUnpriced = async () => {
+    const unpricedItems = items.filter(i => !i.unit_rate || i.unit_rate === 0);
+    if (unpricedItems.length === 0) {
+      toast.info("لا توجد بنود غير مسعّرة للتصدير");
+      return;
+    }
+    try {
+      const projectName = project?.name || "Project";
+      const date = new Date().toISOString().split("T")[0];
+      await exportStyledBoQ(unpricedItems as any, `${projectName}_unpriced_${date}`, boqFileName || "BoQ");
+      toast.success(`تم تصدير ${unpricedItems.length} بند غير مسعّر`);
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -337,35 +353,44 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
         <div className="flex items-center gap-2">
           {totalValue > 0 && <span className="text-sm font-semibold">{t("total")} {formatCurrency(totalValue)}</span>}
-          <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
-            <Play className="w-3 h-3" /> {t("priceAll")}
-          </Button>
-          {pricedCount > 0 && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1" disabled={pricing}>
-                  <RotateCcw className="w-3 h-3" /> إعادة التسعير
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent dir="rtl">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
-                    سيتم تسجيل جميع التغييرات في سجل المراجعة.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+          {!isArchived && (
+            <>
+              <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
+                <Play className="w-3 h-3" /> {t("priceAll")}
+              </Button>
+              {pricedCount > 0 && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1" disabled={pricing}>
+                      <RotateCcw className="w-3 h-3" /> إعادة التسعير
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent dir="rtl">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
+                        سيتم تسجيل جميع التغييرات في سجل المراجعة.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </>
           )}
           {hasItems && (
-            <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={items.length === 0}>
-              <Download className="w-3 h-3" /> {t("export")}
-            </Button>
+            <>
+              <Button variant="outline" size="sm" className="gap-1" onClick={handleExport} disabled={items.length === 0}>
+                <Download className="w-3 h-3" /> {t("export")}
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1" onClick={handleExportUnpriced}>
+                <ListX className="w-3 h-3" /> تصدير غير المسعّر
+              </Button>
+            </>
           )}
         </div>
       </div>
