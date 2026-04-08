@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Building2, MapPin, ArrowRight, FolderOpen, Loader2 } from "lucide-react";
+import { Plus, Search, Building2, MapPin, ArrowRight, FolderOpen, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import AppLayout from "@/components/AppLayout";
 import CreateProjectDialog from "@/components/CreateProjectDialog";
-import { useProjects } from "@/hooks/useSupabase";
+import { useProjects, useDeleteProject } from "@/hooks/useSupabase";
 import { formatCurrency } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -17,6 +19,15 @@ export default function ProjectsPage() {
   const [filter, setFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const { data: projects = [], isLoading } = useProjects();
+  const deleteProject = useDeleteProject();
+
+  const handleDeleteProject = useCallback(async (projectId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteProject.mutateAsync(projectId);
+      toast.success("تم حذف المشروع");
+    } catch { toast.error("فشل حذف المشروع"); }
+  }, [deleteProject]);
 
   const filterLabels: Record<string, string> = {
     all: t("all"),
@@ -87,15 +98,40 @@ export default function ProjectsPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filtered.map((project) => (
-                  <div key={project.id} onClick={() => navigate(`/projects/${project.id}`)} className="stat-card cursor-pointer group">
+                  <div key={project.id} onClick={() => navigate(`/projects/${project.id}`)} className="stat-card cursor-pointer group relative">
                     <div className="flex items-start justify-between mb-3">
                       <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                         <Building2 className="w-5 h-5 text-primary" />
                       </div>
-                      <Badge variant={project.status === "active" ? "default" : "secondary"}
-                        className={project.status === "active" ? "bg-emerald-500 text-white" : ""}>
-                        {project.status}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={project.status === "active" ? "default" : "secondary"}
+                          className={project.status === "active" ? "bg-emerald-500 text-white" : ""}>
+                          {project.status}
+                        </Badge>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent dir="rtl" onClick={(e) => e.stopPropagation()}>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>حذف المشروع</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                هل أنت متأكد من حذف مشروع "{project.name}" وجميع جداول الكميات المرتبطة؟ لا يمكن التراجع عن هذا الإجراء.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={(e) => handleDeleteProject(project.id, e)}>
+                                حذف المشروع
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </div>
                     <h3 className="font-semibold mb-2" dir="auto">{project.name}</h3>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
