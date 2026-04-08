@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 
 interface BoQExportItem {
   item_no: string;
+  section_no?: string;
   description: string;
   description_en?: string;
   unit: string;
@@ -39,24 +40,7 @@ const UNMATCHED_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColo
 const REVIEW_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: YELLOW_BG } };
 const TOTALS_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: GRAY_BG } };
 
-const HEADERS = [
-  "رقم البند",
-  "الوصف",
-  "المطابقة",
-  "الوحدة",
-  "الكمية",
-  "الفئة",
-  "سعر الوحدة",
-  "الإجمالي",
-  "مواد",
-  "عمالة",
-  "معدات",
-  "نقل",
-  "مخاطر",
-  "ربح",
-  "الثقة %",
-  "الحالة",
-];
+// Headers are built dynamically in exportStyledBoQ based on whether section_no exists
 
 function detectCategory(item: BoQExportItem): string {
   const desc = (item.description + " " + (item.description_en || "")).toLowerCase();
@@ -103,6 +87,31 @@ export async function exportStyledBoQ(
   const wb = new ExcelJS.Workbook();
   wb.creator = "Lovable BoQ System";
 
+  const hasSectionNo = items.some(i => i.section_no && i.section_no !== "");
+
+  // Build headers dynamically
+  const headers = [
+    ...(hasSectionNo ? ["رقم القسم"] : []),
+    "رقم البند",
+    "الوصف",
+    "المطابقة",
+    "الوحدة",
+    "الكمية",
+    "الفئة",
+    "سعر الوحدة",
+    "الإجمالي",
+    "مواد",
+    "عمالة",
+    "معدات",
+    "نقل",
+    "مخاطر",
+    "ربح",
+    "الثقة %",
+    "الحالة",
+  ];
+
+  const offset = hasSectionNo ? 1 : 0; // column index offset
+
   // ---- Main Sheet ----
   const sheetName = `${projectName} - ${boqFileName}`.substring(0, 31);
   const ws = wb.addWorksheet(sheetName, {
@@ -110,7 +119,7 @@ export async function exportStyledBoQ(
   });
 
   // Headers
-  const headerRow = ws.addRow(HEADERS);
+  const headerRow = ws.addRow(headers);
   headerRow.eachCell((cell) => {
     cell.font = HEADER_FONT;
     cell.fill = HEADER_FILL;
@@ -129,7 +138,8 @@ export async function exportStyledBoQ(
     const unitPriceVal = isUnmatched ? "غير موجود في المكتبة" : fmtNum(item.unit_rate);
     const totalVal = isUnmatched ? "غير موجود في المكتبة" : fmtNum(item.total_price);
 
-    const row = ws.addRow([
+    const rowData = [
+      ...(hasSectionNo ? [item.section_no || ""] : []),
       item.item_no,
       item.description,
       matchIcon(item),
@@ -146,7 +156,9 @@ export async function exportStyledBoQ(
       fmtNum(item.profit),
       item.confidence != null ? item.confidence / 100 : 0,
       statusLabel(item.status),
-    ]);
+    ];
+
+    const row = ws.addRow(rowData);
 
     row.eachCell((cell) => {
       cell.font = DATA_FONT;
@@ -160,13 +172,16 @@ export async function exportStyledBoQ(
       row.eachCell((cell) => { cell.fill = REVIEW_FILL; });
     }
 
-    // Confidence color
-    const confCell = row.getCell(15);
+    // Confidence color (column index: 15 + offset for 0-based, +1 for 1-based)
+    const confCellIdx = 16 + offset;
+    const confCell = row.getCell(confCellIdx);
     confCell.font = confidenceColor(item.confidence);
     confCell.numFmt = "0%";
 
-    // Number format for currency columns
-    for (const ci of [7, 8, 9, 10, 11, 12, 13, 14]) {
+    // Number format for currency columns (سعر الوحدة through ربح)
+    const currencyStart = 8 + offset;
+    const currencyEnd = 15 + offset;
+    for (let ci = currencyStart; ci <= currencyEnd; ci++) {
       const c = row.getCell(ci);
       if (typeof c.value === "number") {
         c.numFmt = '#,##0.00" SAR"';
@@ -174,12 +189,12 @@ export async function exportStyledBoQ(
     }
 
     // Quantity format
-    row.getCell(5).numFmt = "#,##0.00";
+    row.getCell(6 + offset).numFmt = "#,##0.00";
   }
 
   // Totals row
-  const lastDataRow = items.length + 1;
-  const totalsRow = ws.addRow([
+  const totalsRowData = [
+    ...(hasSectionNo ? [""] : []),
     "",
     "الإجمالي",
     "",
@@ -196,7 +211,8 @@ export async function exportStyledBoQ(
     items.reduce((s, i) => s + (i.profit || 0), 0),
     "",
     "",
-  ]);
+  ];
+  const totalsRow = ws.addRow(totalsRowData);
   totalsRow.eachCell((cell) => {
     cell.font = BOLD_FONT;
     cell.fill = TOTALS_FILL;
@@ -206,7 +222,10 @@ export async function exportStyledBoQ(
   });
 
   // Column widths
-  const colWidths = [12, 45, 8, 8, 10, 14, 16, 16, 12, 12, 12, 10, 10, 10, 10, 14];
+  const colWidths = [
+    ...(hasSectionNo ? [12] : []),
+    12, 45, 8, 8, 10, 14, 16, 16, 12, 12, 12, 10, 10, 10, 10, 14,
+  ];
   ws.columns.forEach((col, i) => { col.width = colWidths[i] || 12; });
 
   // ---- Summary Sheet ----
