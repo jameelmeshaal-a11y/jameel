@@ -708,3 +708,136 @@ export async function runPricingEngine(
     summary,
   };
 }
+
+// ─── Reprice Unpriced Items Only ────────────────────────────────────────────
+
+export async function repriceUnpricedItems(
+  boqFileId: string,
+  cities: string[],
+  onProgress?: (current: number, total: number) => void,
+): Promise<{ pricedCount: number; stillUnpricedCount: number }> {
+  // 1. Fetch ONLY unpriced rows
+  const { data: unpricedRows, error: fetchErr } = await supabase
+    .from("boq_items")
+    .select("*")
+    .eq("boq_file_id", boqFileId)
+    .gt("quantity", 0)
+    .or("unit_rate.is.null,unit_rate.eq.0,status.eq.unmatched")
+    .order("row_index", { ascending: true });
+
+  if (fetchErr) throw new Error(`Failed to fetch unpriced items: ${fetchErr.message}`);
+  if (!unpricedRows || unpricedRows.length === 0) {
+    return { pricedCount: 0, stillUnpricedCount: 0 };
+  }
+
+  // 2. Fetch library, location factors, sources, historical map in parallel
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+    supabase.from("rate_library").select("*"),
+    fetchLocationFactors(),
+    fetchAllSources(),
+    supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
+    buildHistoricalMap(),
+  ]);
+
+  const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
+  const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
+  const projectCity = cities[0] || "";
+
+  // Build approved rate IDs
+  const approvedRateIds = new Set<string>();
+  for (const [rateId, sources] of sourcesMap.entries()) {
+    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
+  }
+  for (const libItem of rateLibrary) {
+    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+      approvedRateIds.add(libItem.id);
+    }
+  }
+
+  const locationMatch = resolveLocationFactor(cities, locationFactors);
+  const locFactor = locationMatch.location_factor;
+
+  let newlyPriced = 0;
+  let stillUnpriced = 0;
+
+  for (let i = 0; i < unpricedRows.length; i++) {
+    const row = unpricedRows[i];
+    onProgress?.(i + 1, unpricedRows.length);
+
+    const description = row.description || "";
+    const descriptionEn = row.description_en || "";
+    const detection = detectCategory(description, descriptionEn);
+
+    // Try library match
+    let libraryMatchResult = findRateLibraryMatch(
+      description, descriptionEn, row.unit,
+      detection.category, rateLibrary,
+      row.linked_rate_id, approvedRateIds,
+    );
+
+    // Historical fallback
+    if (!libraryMatchResult) {
+      libraryMatchResult = findHistoricalMatch(
+        description, descriptionEn, row.unit, historicalMap, rateLibrary,
+      );
+    }
+
+    if (!libraryMatchResult) {
+      stillUnpriced++;
+      continue; // Leave row as-is
+    }
+
+    const matchedItem = libraryMatchResult.item;
+    const matchConfidence = libraryMatchResult.confidence;
+
+    const itemSources = sourcesMap.get(matchedItem.id) || [];
+    const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
+
+    const isApprovedRate = sourceResolution.method === "approved"
+      || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+      || !!matchedItem.approved_at;
+
+    const effectiveRate = isApprovedRate
+      ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
+      : (sourceResolution.resolvedRate || matchedItem.target_rate);
+
+    let result = priceFromApprovedRate(
+      effectiveRate, matchedItem, row.quantity, locFactor,
+      matchedItem.base_city || "", projectCity,
+    );
+
+    let unitRate = result.unitRate;
+    let totalPrice = result.totalPrice;
+    let { materials, labor, equipment, logistics, risk, profit } = result;
+
+    if (ownerMaterials) {
+      materials = 0;
+      unitRate = +(labor + equipment + logistics + risk + profit).toFixed(2);
+      totalPrice = +(unitRate * row.quantity).toFixed(2);
+    }
+
+    const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
+
+    await supabase.from("boq_items").update({
+      materials, labor, equipment, logistics, risk, profit,
+      unit_rate: unitRate,
+      total_price: totalPrice,
+      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
+      location_factor: result.locationFactor,
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      linked_rate_id: matchedItem.id,
+      status: itemStatus,
+      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+    }).eq("id", row.id);
+
+    newlyPriced++;
+  }
+
+  // Recalculate project total
+  const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
+  if (boqFile) {
+    await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
+  }
+
+  return { pricedCount: newlyPriced, stillUnpricedCount: stillUnpriced };
+}
