@@ -426,6 +426,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <thead>
             <tr>
               <th className="w-8">#</th>
+              {items.some(i => i.section_no && i.section_no !== "") && <th className="protected-col w-20">رقم القسم</th>}
               <th className="protected-col">{t("itemNo")}</th>
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
               <th className="w-16 text-center">المطابقة</th>
@@ -456,6 +457,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               return (
               <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
+                {items.some(i => i.section_no && i.section_no !== "") && <td className="protected-col font-mono text-xs">{item.section_no}</td>}
                 <td className="protected-col font-mono text-xs">{item.item_no}</td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>

@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 
 interface BoQExportItem {
   item_no: string;
+  section_no?: string;
   description: string;
   description_en?: string;
   unit: string;
