@@ -230,7 +230,28 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, projectId, qc]);
 
-  const getStatusIcon = (status: string) => {
+  const handleSaveUnit = useCallback(async (item: any) => {
+    const newUnit = editingUnitValue.trim();
+    setEditingUnitId(null);
+    if (!newUnit || newUnit === item.unit) return;
+    try {
+      const { error } = await supabase.from("boq_items").update({ unit: newUnit }).eq("id", item.id);
+      if (error) throw error;
+      // Sync to linked rate library
+      if (item.linked_rate_id) {
+        await supabase.from("rate_library").update({ unit: newUnit, updated_at: new Date().toISOString() }).eq("id", item.linked_rate_id);
+        toast.success("تم تعديل الوحدة — تم تحديث مكتبة الأسعار");
+      } else {
+        toast.success("تم تعديل الوحدة");
+      }
+      qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
+      qc.invalidateQueries({ queryKey: ["price-library"] });
+    } catch (err: any) {
+      toast.error("فشل تعديل الوحدة: " + (err.message || ""));
+    }
+  }, [editingUnitValue, boqFileId, qc]);
+
+
     switch (status) {
       case "approved": return <CheckCircle className="w-4 h-4 text-emerald-500" />;
       case "review": return <AlertTriangle className="w-4 h-4 text-amber-500" />;
