@@ -300,6 +300,53 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
   const { data: consistency } = useProjectConsistency(projectId, project?.total_value ?? 0);
 
+  // ─── Advanced Filtering (UI-level only) ───
+  const toggleFilter = useCallback((f: string) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(f)) next.delete(f); else next.add(f);
+      return next;
+    });
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    if (activeFilters.size === 0) return items;
+
+    let result = [...items];
+
+    // Build top-20 sets if needed
+    const top20UnitRate = activeFilters.has("top_unit_rate")
+      ? new Set(
+          [...items]
+            .filter(i => i.unit_rate && i.unit_rate > 0)
+            .sort((a, b) => (b.unit_rate || 0) - (a.unit_rate || 0))
+            .slice(0, 20)
+            .map(i => i.id)
+        )
+      : null;
+
+    const top20Total = activeFilters.has("top_total")
+      ? new Set(
+          [...items]
+            .filter(i => i.total_price && i.total_price > 0)
+            .sort((a, b) => (b.total_price || 0) - (a.total_price || 0))
+            .slice(0, 20)
+            .map(i => i.id)
+        )
+      : null;
+
+    result = result.filter(item => {
+      if (top20UnitRate && !top20UnitRate.has(item.id)) return false;
+      if (top20Total && !top20Total.has(item.id)) return false;
+      if (activeFilters.has("low_confidence") && !(item.confidence !== null && item.confidence < 70)) return false;
+      if (activeFilters.has("unapproved") && !(item.status !== "approved" && item.status !== "descriptive" && isPriceableItem(item))) return false;
+      if (activeFilters.has("unpriced") && !(!item.unit_rate || item.unit_rate === 0)) return false;
+      return true;
+    });
+
+    return result;
+  }, [items, activeFilters]);
+
   const canExport = exportSummary.canExport;
 
   useEffect(() => {
