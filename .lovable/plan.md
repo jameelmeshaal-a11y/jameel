@@ -1,79 +1,69 @@
 
 
-# تقرير سلامة الأسعار بعد التسعير + حوكمة صارمة
+# تنفيذ: تصفير كامل عند إعادة التسعير + نظام فلترة متقدم
 
-## الملخص
+## 1. تعديل منطق إعادة التسعير (Clean State)
 
-إضافة نظام فحص شامل يظهر بعد كل عملية تسعير كـ Dialog تفاعلي، يعرض المشاكل المكتشفة مع إمكانية الإصلاح الفردي والجماعي.
+### المشكلة الحالية
+`handleRePrice` في `BoQTable.tsx` يستدعي `runPricingEngine` مباشرة بدون تصفير البيانات أولاً. المحرك يتخطى البنود ذات `manual_overrides` ويعتمد على `linked_rate_id` القديم — أي أن إعادة التسعير ليست نظيفة 100%.
 
-## المكونات
+### الحل
+**ملف: `src/lib/pricingEngine.ts`** — إضافة دالة `resetBoQPricing(boqFileId)`:
+- تصفير جميع الحقول السعرية لكل البنود: `unit_rate`, `total_price`, `materials`, `labor`, `equipment`, `logistics`, `risk`, `profit`, `confidence`, `source`, `linked_rate_id`, `location_factor`, `notes`
+- تعيين `status = 'pending'` لجميع البنود القابلة للتسعير
+- إزالة `override_type`, `override_reason`, `override_by`, `override_at` (لكن **حفظ** `manual_overrides` إذا أراد المستخدم الحفاظ عليها — أو تصفيرها أيضاً حسب المطلوب)
+- عملية واحدة `UPDATE` على كل البنود في الـ BoQ
 
-### 1. محرك فحص السلامة — ملف جديد `src/lib/pricing/integrityChecker.ts`
+**ملف: `src/components/BoQTable.tsx`** — تعديل `handleRePrice`:
+1. استدعاء `resetBoQPricing(boqFileId)` أولاً
+2. مسح cache الـ query client: `qc.removeQueries(["boq-items", boqFileId])`
+3. ثم استدعاء `runPricingEngine` كالمعتاد
+4. تحديث dialog التأكيد ليوضح أن التصفير شامل
 
-فحوصات تلقائية على البنود المسعّرة:
+## 2. نظام الفلترة المتقدم
 
-| الفحص | الوصف | الحل |
-|---|---|---|
-| **انحراف عن المكتبة** | `unit_rate ≠ target_rate × location_factor` بدون override مسجل | إعادة مطابقة السعر مع المكتبة |
-| **مجموع التوزيع ≠ سعر الوحدة** | `materials+labor+equipment+logistics+risk+profit ≠ unit_rate` | إعادة حساب التوزيع |
-| **تطابق متوسط الثقة** | `confidence 50-69%` — قد يكون مطابقاً لبند خاطئ | مراجعة يدوية أو إلغاء الربط |
-| **بنود بسعر صفر** | `unit_rate = 0` رغم أن البند priceable | تسعير من المكتبة |
-| **توزيع أصفار** | مواد+عمالة+معدات+نقل = 0 رغم وجود سعر | إعادة حساب التوزيع حسب التصنيف |
+### التصميم
+إضافة شريط فلاتر بين شريط الأدوات والجدول — فلترة على مستوى العرض فقط (UI-level) بدون تعديل أي بيانات.
 
-الدالة ترجع:
-```text
-IntegrityReport {
-  passed: boolean
-  totalChecked: number
-  issues: IntegrityIssue[] — كل issue فيه:
-    - itemId, description, issueType
-    - currentValue, expectedValue
-    - severity: "critical" | "warning"
-    - fixAction: "reprice" | "redistribute" | "unlink" | "manual"
-}
+**ملف: `src/components/BoQTable.tsx`**:
+
+#### States جديدة:
+```typescript
+const [filters, setFilters] = useState<Set<string>>(new Set());
 ```
 
-### 2. واجهة تقرير السلامة — ملف جديد `src/components/PricingIntegrityReport.tsx`
+#### الفلاتر المتاحة (أزرار toggle):
+| الفلتر | المنطق |
+|---|---|
+| الأعلى سعر وحدة | Top 20 items by `unit_rate` (DESC) |
+| الأعلى إجمالي | Top 20 items by `total_price` (DESC) |
+| موثوقية منخفضة | `confidence < 70` |
+| غير معتمد | `status !== "approved"` AND priceable |
+| غير مسعّر | `unit_rate` is null or 0 |
 
-Dialog يظهر بعد التسعير (أو عند الضغط على زر "فحص السلامة"):
+#### المنطق:
+- الفلاتر تعمل كـ **intersection** (AND) — تطبيق أكثر من فلتر يضيّق النتائج
+- `useMemo` لحساب `filteredItems` من `items` بناءً على الفلاتر النشطة
+- الجدول يعرض `filteredItems` بدلاً من `items`
+- عدّاد يوضح "عرض X من Y بند"
+- زر "مسح الفلاتر" لإعادة العرض الكامل
+- **لا يؤثر على**: الإجماليات، التصدير، التسعير — كلها تستخدم `items` الأصلي
 
-- **ملخص بصري**: عدد البنود السليمة ✅ / التحذيرات ⚠️ / المشاكل الحرجة 🔴
-- **قائمة المشاكل** مجمّعة حسب النوع (انحراف سعر، توزيع خاطئ، تطابق ضعيف...)
-- **أزرار إصلاح**:
-  - 🔧 "إصلاح الكل" — يعالج جميع المشاكل القابلة للإصلاح التلقائي
-  - 🔧 "إصلاح هذه المجموعة" — لكل نوع مشكلة
-  - 🔧 "إصلاح" فردي — لكل بند على حدة
-- بعد الإصلاح → إعادة الفحص تلقائياً وتحديث التقرير
-
-### 3. تعديل `src/components/BoQTable.tsx`
-
-- بعد `handlePricing` و `handleRePrice`: استدعاء فحص السلامة وعرض التقرير تلقائياً
-- إضافة زر "🛡️ فحص السلامة" في شريط الأدوات — يمكن الضغط عليه يدوياً
-- state جديد: `integrityReportOpen` + `integrityReport`
-
-### 4. تعديل `src/lib/pricingEngine.ts`
-
-- إضافة دالة `runIntegrityCheck(boqFileId)` تجلب البنود المسعّرة + بنود المكتبة المرتبطة وتقارن
-- إضافة دالة `fixIntegrityIssues(issues[])` تنفذ الإصلاحات:
-  - **reprice**: إعادة تسعير البند من `target_rate` مباشرة
-  - **redistribute**: إعادة حساب التوزيع باستخدام `priceFromApprovedRate` مع category
-  - **unlink**: إزالة `linked_rate_id` وتصفير السعر (للتطابقات الخاطئة)
-
-## نصيحة بخصوص البيانات الحالية
-
-**نعم، أنصح بإعادة التسعير** بعد تطبيق هذا التحديث. السبب:
-- البنود الحالية قد تحتوي على توزيعات قديمة (أصفار) من قبل إصلاح التوزيع الذكي
-- فحص السلامة الجديد سيكشف هذه المشاكل ويتيح إصلاحها جماعياً بضغطة واحدة
-- لا حاجة لحذف البيانات — فقط اضغط "إعادة التسعير" ثم "فحص السلامة" ← "إصلاح الكل"
+#### واجهة الفلاتر:
+شريط أفقي من أزرار `Toggle` صغيرة بألوان مختلفة، يظهر تحت شريط الأدوات مباشرة.
 
 ## الملفات المتأثرة
 
 | الملف | التغيير |
 |---|---|
-| `src/lib/pricing/integrityChecker.ts` | **جديد** — محرك الفحص + الإصلاح |
-| `src/components/PricingIntegrityReport.tsx` | **جديد** — واجهة التقرير التفاعلية |
-| `src/components/BoQTable.tsx` | إضافة زر فحص + عرض التقرير بعد التسعير |
-| `src/lib/pricingEngine.ts` | تصدير دوال الفحص والإصلاح |
+| `src/lib/pricingEngine.ts` | إضافة `resetBoQPricing()` + تصديرها |
+| `src/components/BoQTable.tsx` | تعديل `handleRePrice` + إضافة شريط الفلاتر + `filteredItems` |
 
-لا migrations. لا تغيير في هيكل قاعدة البيانات.
+## ما لن يتأثر
+- محرك التسعير الأساسي — لا تعديل على منطق المطابقة أو الحساب
+- نظام الاعتمادات والـ overrides — لا تغيير
+- التقارير والتصدير — تبقى تعمل على البيانات الكاملة
+- فحص السلامة — يبقى كما هو
+- مكتبة الأسعار — بدون تعديل
+- لا migrations أو تغييرات في قاعدة البيانات
 
