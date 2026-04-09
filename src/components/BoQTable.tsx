@@ -250,8 +250,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error("فشل تعديل الوحدة: " + (err.message || ""));
     }
   }, [editingUnitValue, boqFileId, qc]);
-
-
+  const getStatusIcon = (status: string) => {
     switch (status) {
       case "approved": return <CheckCircle className="w-4 h-4 text-emerald-500" />;
       case "review": return <AlertTriangle className="w-4 h-4 text-amber-500" />;
