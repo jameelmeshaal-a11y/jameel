@@ -17,6 +17,11 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
+import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+
+// ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
+// Set to false to instantly revert to legacy matching.
+const USE_MATCHING_V3 = true;
 import { detectCategory, type ItemCategory } from "./pricing/categoryDetector";
 import { getCostModel } from "./pricing/costModels";
 import type { PricedResult } from "./pricing/rateCalculator";
@@ -102,7 +107,17 @@ function findRateLibraryMatch(
   rateLibrary: RateLibraryItem[],
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
+  notes?: string | null,
 ): { item: RateLibraryItem; confidence: number } | null {
+  // ── V3 Feature Flag ──
+  if (USE_MATCHING_V3) {
+    return findRateLibraryMatchV3(
+      description, descriptionEn, unit, category,
+      rateLibrary, linkedRateId, approvedRateIds, notes,
+    );
+  }
+
+  // ── Legacy V2 Path ──
   // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
@@ -526,7 +541,7 @@ export async function runPricingEngine(
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
-    // 5a. Rate library match (Path A + B + C)
+    // 5a. Rate library match (Path A + B + C) — V3 with context support
     let libraryMatchResult = findRateLibraryMatch(
       block.mergedDescription,
       block.mergedDescriptionEn,
@@ -535,6 +550,7 @@ export async function runPricingEngine(
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
+      (block.primaryRow as any).notes,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
