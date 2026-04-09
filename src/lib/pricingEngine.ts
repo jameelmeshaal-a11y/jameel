@@ -107,7 +107,17 @@ function findRateLibraryMatch(
   rateLibrary: RateLibraryItem[],
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
+  notes?: string | null,
 ): { item: RateLibraryItem; confidence: number } | null {
+  // ── V3 Feature Flag ──
+  if (USE_MATCHING_V3) {
+    return findRateLibraryMatchV3(
+      description, descriptionEn, unit, category,
+      rateLibrary, linkedRateId, approvedRateIds, notes,
+    );
+  }
+
+  // ── Legacy V2 Path ──
   // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
