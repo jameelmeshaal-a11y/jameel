@@ -57,6 +57,20 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   // Upload is now handled by CreateBoQDialog at project level
 
+  const handleIntegrityCheck = useCallback(async () => {
+    if (!boqFileId) return;
+    setCheckingIntegrity(true);
+    try {
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setCheckingIntegrity(false);
+    }
+  }, [boqFileId]);
+
   const handlePricing = useCallback(async () => {
     if (!boqFileId) return;
     setPricing(true);
@@ -72,6 +86,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
+      // Auto-run integrity check after pricing
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
