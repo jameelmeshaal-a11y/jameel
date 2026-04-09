@@ -17,6 +17,11 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
+import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+
+// ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
+// Set to false to instantly revert to legacy matching.
+const USE_MATCHING_V3 = true;
 import { detectCategory, type ItemCategory } from "./pricing/categoryDetector";
 import { getCostModel } from "./pricing/costModels";
 import type { PricedResult } from "./pricing/rateCalculator";
