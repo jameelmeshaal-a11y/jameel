@@ -582,6 +582,7 @@ export async function runPricingEngine(
           locFactor,
           sourceResolution.baseCity || matchedItem.base_city || "",
           projectCity,
+          detection.category,
         );
 
         const sourceLabel = sourceResolution.method === "approved"
@@ -618,6 +619,7 @@ export async function runPricingEngine(
           locFactor,
           matchedItem.base_city || "",
           projectCity,
+          detection.category,
         );
 
         const sourceLabel = sourceResolution.method === "weighted"
@@ -841,6 +843,7 @@ export async function repriceUnpricedItems(
     let result = priceFromApprovedRate(
       effectiveRate, matchedItem, row.quantity, locFactor,
       matchedItem.base_city || "", projectCity,
+      detection.category,
     );
 
     let unitRate = result.unitRate;
