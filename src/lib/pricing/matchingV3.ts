@@ -198,6 +198,15 @@ function scoreCandidate(
   let score = 0;
 
   // 1. Text similarity (max WEIGHTS.TEXT_SIMILARITY pts)
+  // For merged descriptions (Header — Sub — Item), also try the last segment
+  const descSegments = [description];
+  if (description.includes("—")) {
+    const lastSegment = description.split("—").pop()?.trim();
+    if (lastSegment && lastSegment.length > 3) {
+      descSegments.push(lastSegment);
+    }
+  }
+
   const candFullText = [
     candidate.standard_name_ar || "",
     candidate.standard_name_en || "",
@@ -208,9 +217,14 @@ function scoreCandidate(
   let textScore = 0;
   for (const candText of candFullText) {
     if (!candText) continue;
+    for (const descVariant of descSegments) {
+      textScore = Math.max(
+        textScore,
+        textSimilarity(descVariant, candText) * WEIGHTS.TEXT_SIMILARITY,
+      );
+    }
     textScore = Math.max(
       textScore,
-      textSimilarity(description, candText) * WEIGHTS.TEXT_SIMILARITY,
       textSimilarity(descriptionEn || "", candText) * WEIGHTS.TEXT_SIMILARITY,
     );
   }
