@@ -163,6 +163,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
+      // Auto-run integrity check after re-pricing
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
