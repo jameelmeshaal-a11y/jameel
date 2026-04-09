@@ -574,6 +574,46 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
+      {/* Advanced Filter Bar */}
+      {hasItems && (
+        <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded-lg border bg-muted/20">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground ml-1">فلترة:</span>
+          {[
+            { key: "top_unit_rate", label: "الأعلى سعر وحدة", color: "bg-primary/10 text-primary border-primary/30" },
+            { key: "top_total", label: "الأعلى إجمالي", color: "bg-primary/10 text-primary border-primary/30" },
+            { key: "low_confidence", label: "موثوقية منخفضة", color: "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700" },
+            { key: "unapproved", label: "غير معتمد", color: "bg-orange-50 text-orange-700 border-orange-300 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700" },
+            { key: "unpriced", label: "غير مسعّر", color: "bg-destructive/10 text-destructive border-destructive/30" },
+          ].map(f => (
+            <button
+              key={f.key}
+              onClick={() => toggleFilter(f.key)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
+                activeFilters.has(f.key)
+                  ? f.color + " font-medium shadow-sm"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          {activeFilters.size > 0 && (
+            <>
+              <span className="text-[11px] text-muted-foreground mx-1">
+                عرض {filteredItems.length} من {items.length} بند
+              </span>
+              <button
+                onClick={() => setActiveFilters(new Set())}
+                className="text-[11px] px-2 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all flex items-center gap-1"
+              >
+                <X className="w-3 h-3" /> مسح
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
@@ -608,7 +648,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             </tr>
           </thead>
           <tbody>
-            {items.map((item, index) => {
+            {filteredItems.map((item, index) => {
               const rowClassification = classifyBoQRow(item);
               const isPriced = rowClassification.type === "priced";
               const isDescriptive = rowClassification.type === "descriptive";
