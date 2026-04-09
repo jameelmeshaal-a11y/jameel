@@ -96,66 +96,19 @@ export default function RateLibraryPage() {
   return (
     <AppLayout>
       <div className="animate-fade-in">
-        <div className="page-header">
-          <div>
+        {/* Header with search in same row */}
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+          <div className="shrink-0">
             <h1 className="page-title">{t("rateLibraryTitle")}</h1>
             <p className="page-subtitle">{t("rateLibrarySubtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
-            {pendingCount > 0 && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
-                    <Check className="w-4 h-4" /> اعتماد جميع البنود المعلقة ({pendingCount})
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent dir="rtl">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>اعتماد البنود المعلقة</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      سيتم اعتماد {pendingCount} بند معلق. هل تريد المتابعة؟
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => {
-                      bulkApprove.mutate(user!.id, {
-                        onSuccess: (result: any) => {
-                          toast.success(`تم اعتماد ${result.approved} بند`);
-                          if (result.skipped > 0) {
-                            toast.warning(`تم تخطي ${result.skipped} بند بسبب سعر صفر — يجب إدخال السعر أولاً`);
-                          }
-                        },
-                        onError: () => toast.error("فشل اعتماد البنود"),
-                      });
-                    }}>
-                      اعتماد الكل
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-            <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={items.length === 0}>
-              <Download className="w-4 h-4" /> تنزيل Excel
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => setImportOpen(true)}>
-              <Upload className="w-4 h-4" /> رفع ملف أسعار
-            </Button>
-            <Button className="gap-2" size="sm">
-              <Plus className="w-4 h-4" /> {t("addRate")}
-            </Button>
-          </div>
-        </div>
-
-        {/* Search bar - full width at top */}
-        <div className="mb-4">
-          <div className="relative w-full max-w-2xl">
+          <div className="relative flex-1 min-w-[280px] max-w-xl">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <Input
               placeholder={t("searchRates")}
               value={search}
               onChange={(e) => handleSearch(e.target.value)}
-              className="pl-10 h-11 text-base"
+              className="pl-10 h-11 text-base w-full"
             />
             {debouncedSearch && !isLoading && (
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -163,6 +116,52 @@ export default function RateLibraryPage() {
               </span>
             )}
           </div>
+        </div>
+
+        {/* Action buttons row */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          {pendingCount > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+                  <Check className="w-4 h-4" /> اعتماد جميع البنود المعلقة ({pendingCount})
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent dir="rtl">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>اعتماد البنود المعلقة</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    سيتم اعتماد {pendingCount} بند معلق. هل تريد المتابعة؟
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => {
+                    bulkApprove.mutate(user!.id, {
+                      onSuccess: (result: any) => {
+                        toast.success(`تم اعتماد ${result.approved} بند`);
+                        if (result.skipped > 0) {
+                          toast.warning(`تم تخطي ${result.skipped} بند بسبب سعر صفر — يجب إدخال السعر أولاً`);
+                        }
+                      },
+                      onError: () => toast.error("فشل اعتماد البنود"),
+                    });
+                  }}>
+                    اعتماد الكل
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={items.length === 0}>
+            <Download className="w-4 h-4" /> تنزيل Excel
+          </Button>
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => setImportOpen(true)}>
+            <Upload className="w-4 h-4" /> رفع ملف أسعار
+          </Button>
+          <Button className="gap-2" size="sm">
+            <Plus className="w-4 h-4" /> {t("addRate")}
+          </Button>
         </div>
 
         {/* Category chips - scrollable */}
