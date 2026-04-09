@@ -748,6 +748,51 @@ export async function runPricingEngine(
   };
 }
 
+// ─── Reset BoQ Pricing (Clean State) ────────────────────────────────────────
+
+/**
+ * Completely zeros out all pricing data for a BoQ file.
+ * Called before re-pricing to ensure a clean slate — no cached/stale data.
+ */
+export async function resetBoQPricing(boqFileId: string): Promise<number> {
+  const { data: items, error: fetchErr } = await supabase
+    .from("boq_items")
+    .select("id, quantity, unit, item_no")
+    .eq("boq_file_id", boqFileId);
+
+  if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
+  if (!items || items.length === 0) return 0;
+
+  const { error: updateErr } = await supabase
+    .from("boq_items")
+    .update({
+      unit_rate: null,
+      total_price: null,
+      materials: null,
+      labor: null,
+      equipment: null,
+      logistics: null,
+      risk: null,
+      profit: null,
+      confidence: null,
+      source: null,
+      linked_rate_id: null,
+      location_factor: null,
+      notes: null,
+      status: "pending",
+      override_type: null,
+      override_reason: null,
+      override_by: null,
+      override_at: null,
+      manual_overrides: null,
+    })
+    .eq("boq_file_id", boqFileId);
+
+  if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
+
+  return items.length;
+}
+
 // ─── Reprice Unpriced Items Only ────────────────────────────────────────────
 
 export async function repriceUnpricedItems(

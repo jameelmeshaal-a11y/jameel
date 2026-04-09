@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -49,6 +49,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [integrityReportOpen, setIntegrityReportOpen] = useState(false);
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
@@ -113,18 +114,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           changed_by: user.id,
           change_reason: "إعادة تسعير المشروع",
         }));
-        // Insert in batches
         for (let i = 0; i < snapshots.length; i += 100) {
           await supabase.from("price_change_log").insert(snapshots.slice(i, i + 100));
         }
       }
 
-      // 2. Run pricing engine (overwrites all prices)
+      // 2. CLEAN STATE — zero out all pricing data before re-pricing
+      const resetCount = await resetBoQPricing(boqFileId);
+      console.log(`🧹 Reset ${resetCount} items to clean state`);
+
+      // 3. Clear query cache to prevent stale data
+      qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
+
+      // 4. Run pricing engine on clean data
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
       });
 
-      // 3. Update audit trail with new prices
+      // 5. Update audit trail with new prices
       if (user) {
         const { data: updatedItems } = await supabase
           .from("boq_items")
@@ -149,11 +156,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           if (updates.length > 0) await Promise.all(updates);
         }
       }
-
-      const changedCount = pricedItems.filter(old => {
-        const newItem = items.find(i => i.id === old.id);
-        return newItem && newItem.unit_rate !== old.unit_rate;
-      }).length;
 
       toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
       
@@ -298,6 +300,53 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const exportSummary = useMemo(() => buildBoQExportSummary(items), [items]);
   const { data: consistency } = useProjectConsistency(projectId, project?.total_value ?? 0);
 
+  // ─── Advanced Filtering (UI-level only) ───
+  const toggleFilter = useCallback((f: string) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(f)) next.delete(f); else next.add(f);
+      return next;
+    });
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    if (activeFilters.size === 0) return items;
+
+    let result = [...items];
+
+    // Build top-20 sets if needed
+    const top20UnitRate = activeFilters.has("top_unit_rate")
+      ? new Set(
+          [...items]
+            .filter(i => i.unit_rate && i.unit_rate > 0)
+            .sort((a, b) => (b.unit_rate || 0) - (a.unit_rate || 0))
+            .slice(0, 20)
+            .map(i => i.id)
+        )
+      : null;
+
+    const top20Total = activeFilters.has("top_total")
+      ? new Set(
+          [...items]
+            .filter(i => i.total_price && i.total_price > 0)
+            .sort((a, b) => (b.total_price || 0) - (a.total_price || 0))
+            .slice(0, 20)
+            .map(i => i.id)
+        )
+      : null;
+
+    result = result.filter(item => {
+      if (top20UnitRate && !top20UnitRate.has(item.id)) return false;
+      if (top20Total && !top20Total.has(item.id)) return false;
+      if (activeFilters.has("low_confidence") && !(item.confidence !== null && item.confidence < 70)) return false;
+      if (activeFilters.has("unapproved") && !(item.status !== "approved" && item.status !== "descriptive" && isPriceableItem(item))) return false;
+      if (activeFilters.has("unpriced") && !(!item.unit_rate || item.unit_rate === 0)) return false;
+      return true;
+    });
+
+    return result;
+  }, [items, activeFilters]);
+
   const canExport = exportSummary.canExport;
 
   useEffect(() => {
@@ -441,11 +490,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                       <RotateCcw className="w-3 h-3" /> إعادة التسعير
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent dir="rtl">
+                    <AlertDialogContent dir="rtl">
                     <AlertDialogHeader>
-                      <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
+                      <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
                       <AlertDialogDescription>
-                        سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
+                        ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
                         سيتم تسجيل جميع التغييرات في سجل المراجعة.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
@@ -525,6 +574,46 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
+      {/* Advanced Filter Bar */}
+      {hasItems && (
+        <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded-lg border bg-muted/20">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground ml-1">فلترة:</span>
+          {[
+            { key: "top_unit_rate", label: "الأعلى سعر وحدة", color: "bg-primary/10 text-primary border-primary/30" },
+            { key: "top_total", label: "الأعلى إجمالي", color: "bg-primary/10 text-primary border-primary/30" },
+            { key: "low_confidence", label: "موثوقية منخفضة", color: "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700" },
+            { key: "unapproved", label: "غير معتمد", color: "bg-orange-50 text-orange-700 border-orange-300 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700" },
+            { key: "unpriced", label: "غير مسعّر", color: "bg-destructive/10 text-destructive border-destructive/30" },
+          ].map(f => (
+            <button
+              key={f.key}
+              onClick={() => toggleFilter(f.key)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
+                activeFilters.has(f.key)
+                  ? f.color + " font-medium shadow-sm"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          {activeFilters.size > 0 && (
+            <>
+              <span className="text-[11px] text-muted-foreground mx-1">
+                عرض {filteredItems.length} من {items.length} بند
+              </span>
+              <button
+                onClick={() => setActiveFilters(new Set())}
+                className="text-[11px] px-2 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all flex items-center gap-1"
+              >
+                <X className="w-3 h-3" /> مسح
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
@@ -559,7 +648,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             </tr>
           </thead>
           <tbody>
-            {items.map((item, index) => {
+            {filteredItems.map((item, index) => {
               const rowClassification = classifyBoQRow(item);
               const isPriced = rowClassification.type === "priced";
               const isDescriptive = rowClassification.type === "descriptive";
