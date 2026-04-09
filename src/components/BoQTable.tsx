@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyChe
 import BudgetDistributionPanel from "./BudgetDistributionPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import PricingIntegrityReport from "./PricingIntegrityReport";
+import { runIntegrityCheck, type IntegrityReport } from "@/lib/pricing/integrityChecker";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -44,6 +46,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [autoFixFailed, setAutoFixFailed] = useState(false);
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editingUnitValue, setEditingUnitValue] = useState("");
+  const [integrityReportOpen, setIntegrityReportOpen] = useState(false);
+  const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
+  const [checkingIntegrity, setCheckingIntegrity] = useState(false);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
@@ -51,6 +56,20 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const boqFileName = useMemo(() => boqFiles.find(f => f.id === boqFileId)?.name || "BoQ", [boqFiles, boqFileId]);
 
   // Upload is now handled by CreateBoQDialog at project level
+
+  const handleIntegrityCheck = useCallback(async () => {
+    if (!boqFileId) return;
+    setCheckingIntegrity(true);
+    try {
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setCheckingIntegrity(false);
+    }
+  }, [boqFileId]);
 
   const handlePricing = useCallback(async () => {
     if (!boqFileId) return;
@@ -67,6 +86,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
+      // Auto-run integrity check after pricing
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -140,6 +163,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
+      // Auto-run integrity check after re-pricing
+      const report = await runIntegrityCheck(boqFileId);
+      setIntegrityReport(report);
+      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -434,6 +461,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
                 </Button>
               )}
+              {pricedCount > 0 && (
+                <Button variant="outline" size="sm" className="gap-1" onClick={handleIntegrityCheck} disabled={checkingIntegrity || pricing}>
+                  {checkingIntegrity ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                  🛡️ فحص السلامة
+                </Button>
+              )}
             </>
           )}
           {hasItems && (
@@ -641,6 +674,17 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         rows={exportSummary.warningRows}
         onRevalidate={handleRevalidate}
         revalidating={revalidating}
+      />
+
+      <PricingIntegrityReport
+        open={integrityReportOpen}
+        onOpenChange={setIntegrityReportOpen}
+        report={integrityReport}
+        boqFileId={boqFileId}
+        onFixed={() => {
+          qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
+          qc.invalidateQueries({ queryKey: ["projects"] });
+        }}
       />
     </div>
   );
