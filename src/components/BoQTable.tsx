@@ -461,6 +461,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
                 </Button>
               )}
+              {pricedCount > 0 && (
+                <Button variant="outline" size="sm" className="gap-1" onClick={handleIntegrityCheck} disabled={checkingIntegrity || pricing}>
+                  {checkingIntegrity ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                  🛡️ فحص السلامة
+                </Button>
+              )}
             </>
           )}
           {hasItems && (
