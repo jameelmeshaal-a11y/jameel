@@ -562,7 +562,36 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     )
                   )}
                 </td>
-                <td className="protected-col text-center text-xs" dir="rtl">{item.unit}</td>
+                <td className="protected-col text-center text-xs" dir="rtl">
+                  {editingUnitId === item.id ? (
+                    <Input
+                      className="h-7 w-20 text-xs text-center"
+                      value={editingUnitValue}
+                      onChange={(e) => setEditingUnitValue(e.target.value)}
+                      onBlur={() => handleSaveUnit(item)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveUnit(item);
+                        if (e.key === "Escape") setEditingUnitId(null);
+                      }}
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className="cursor-pointer group/unit inline-flex items-center gap-1"
+                      onDoubleClick={() => {
+                        if (!isArchived && isPriced) {
+                          setEditingUnitId(item.id);
+                          setEditingUnitValue(item.unit);
+                        }
+                      }}
+                    >
+                      {item.unit}
+                      {!isArchived && isPriced && (
+                        <Pencil className="w-3 h-3 text-muted-foreground opacity-0 group-hover/unit:opacity-100 transition-opacity" />
+                      )}
+                    </span>
+                  )}
+                </td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
                 <td className="pricing-col">
                   {isPriced && (
