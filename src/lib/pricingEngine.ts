@@ -17,7 +17,8 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { detectCategory } from "./pricing/categoryDetector";
+import { detectCategory, type ItemCategory } from "./pricing/categoryDetector";
+import { getCostModel } from "./pricing/costModels";
 import type { PricedResult } from "./pricing/rateCalculator";
 import { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 import {
@@ -262,21 +263,22 @@ function priceFromApprovedRate(
   locationFactor: number,
   baseCity: string,
   projectCity: string,
+  category?: ItemCategory,
 ): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
   // Only apply location factor if cities differ
   const needsLocationAdj = baseCity && projectCity &&
     baseCity.toLowerCase().trim() !== projectCity.toLowerCase().trim();
   const adjustedRate = needsLocationAdj ? +(approvedRate * locationFactor).toFixed(2) : approvedRate;
 
-  // Breakdown is DISPLAY ONLY — adjustedRate IS the unit rate
-  const totalPct = libraryItem.materials_pct + libraryItem.labor_pct +
-    libraryItem.equipment_pct + libraryItem.logistics_pct +
-    libraryItem.risk_pct + libraryItem.profit_pct;
+  // Check if the library has real cost breakdown percentages (excluding risk/profit)
+  const costPctSum = libraryItem.materials_pct + libraryItem.labor_pct +
+    libraryItem.equipment_pct + libraryItem.logistics_pct;
+  const totalPct = costPctSum + libraryItem.risk_pct + libraryItem.profit_pct;
 
   let materials: number, labor: number, equipment: number, logistics: number, risk: number, profit: number;
 
-  if (totalPct > 0) {
-    // Distribute the rate proportionally (all components sum to adjustedRate)
+  if (costPctSum > 0 && totalPct > 0) {
+    // Library has real breakdown — use proportional distribution (existing logic)
     materials  = +(adjustedRate * libraryItem.materials_pct / totalPct).toFixed(2);
     labor      = +(adjustedRate * libraryItem.labor_pct / totalPct).toFixed(2);
     equipment  = +(adjustedRate * libraryItem.equipment_pct / totalPct).toFixed(2);
@@ -284,9 +286,44 @@ function priceFromApprovedRate(
     risk       = +(adjustedRate * libraryItem.risk_pct / totalPct).toFixed(2);
     profit     = +(adjustedRate * libraryItem.profit_pct / totalPct).toFixed(2);
   } else {
-    // No breakdown info — full rate goes to materials (display convention)
-    materials = adjustedRate;
-    labor = 0; equipment = 0; logistics = 0; risk = 0; profit = 0;
+    // No real cost breakdown — use category-based smart distribution
+    const riskPct = libraryItem.risk_pct || 3;
+    const profitPct = libraryItem.profit_pct || 5;
+
+    risk   = +(adjustedRate * riskPct / 100).toFixed(2);
+    profit = +(adjustedRate * profitPct / 100).toFixed(2);
+
+    const costPool = +(adjustedRate - risk - profit).toFixed(2);
+
+    // Get category-specific ratios from costModels
+    const effectiveCategory = category || "general";
+    const model = getCostModel(effectiveCategory);
+    const bd = model.breakdown;
+
+    // Use midpoint of each range
+    const matAvg = (bd.materials[0] + bd.materials[1]) / 2;
+    const labAvg = (bd.labor[0] + bd.labor[1]) / 2;
+    const eqAvg  = (bd.equipment[0] + bd.equipment[1]) / 2;
+    const logAvg = (bd.logistics[0] + bd.logistics[1]) / 2;
+    const totalWeight = matAvg + labAvg + eqAvg + logAvg;
+
+    if (totalWeight > 0) {
+      materials  = +(costPool * matAvg / totalWeight).toFixed(2);
+      labor      = +(costPool * labAvg / totalWeight).toFixed(2);
+      equipment  = +(costPool * eqAvg / totalWeight).toFixed(2);
+      logistics  = +(costPool * logAvg / totalWeight).toFixed(2);
+    } else {
+      // Absolute fallback — all to materials
+      materials = costPool;
+      labor = 0; equipment = 0; logistics = 0;
+    }
+
+    // Ensure rounding doesn't lose/add fractions — adjust materials
+    const componentSum = +(materials + labor + equipment + logistics + risk + profit).toFixed(2);
+    const diff = +(adjustedRate - componentSum).toFixed(2);
+    if (diff !== 0) {
+      materials = +(materials + diff).toFixed(2);
+    }
   }
 
   const unitRate = adjustedRate;  // ALWAYS equals the approved rate
@@ -545,6 +582,7 @@ export async function runPricingEngine(
           locFactor,
           sourceResolution.baseCity || matchedItem.base_city || "",
           projectCity,
+          detection.category,
         );
 
         const sourceLabel = sourceResolution.method === "approved"
@@ -581,6 +619,7 @@ export async function runPricingEngine(
           locFactor,
           matchedItem.base_city || "",
           projectCity,
+          detection.category,
         );
 
         const sourceLabel = sourceResolution.method === "weighted"
@@ -804,6 +843,7 @@ export async function repriceUnpricedItems(
     let result = priceFromApprovedRate(
       effectiveRate, matchedItem, row.quantity, locFactor,
       matchedItem.base_city || "", projectCity,
+      detection.category,
     );
 
     let unitRate = result.unitRate;
