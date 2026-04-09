@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -49,6 +49,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [integrityReportOpen, setIntegrityReportOpen] = useState(false);
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
@@ -113,18 +114,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           changed_by: user.id,
           change_reason: "إعادة تسعير المشروع",
         }));
-        // Insert in batches
         for (let i = 0; i < snapshots.length; i += 100) {
           await supabase.from("price_change_log").insert(snapshots.slice(i, i + 100));
         }
       }
 
-      // 2. Run pricing engine (overwrites all prices)
+      // 2. CLEAN STATE — zero out all pricing data before re-pricing
+      const resetCount = await resetBoQPricing(boqFileId);
+      console.log(`🧹 Reset ${resetCount} items to clean state`);
+
+      // 3. Clear query cache to prevent stale data
+      qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
+
+      // 4. Run pricing engine on clean data
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
       });
 
-      // 3. Update audit trail with new prices
+      // 5. Update audit trail with new prices
       if (user) {
         const { data: updatedItems } = await supabase
           .from("boq_items")
@@ -149,11 +156,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           if (updates.length > 0) await Promise.all(updates);
         }
       }
-
-      const changedCount = pricedItems.filter(old => {
-        const newItem = items.find(i => i.id === old.id);
-        return newItem && newItem.unit_rate !== old.unit_rate;
-      }).length;
 
       toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
       
