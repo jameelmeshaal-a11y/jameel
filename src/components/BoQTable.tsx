@@ -443,11 +443,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                       <RotateCcw className="w-3 h-3" /> إعادة التسعير
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent dir="rtl">
+                    <AlertDialogContent dir="rtl">
                     <AlertDialogHeader>
-                      <AlertDialogTitle>إعادة تسعير المشروع</AlertDialogTitle>
+                      <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
                       <AlertDialogDescription>
-                        سيتم إعادة تسعير جميع البنود باستخدام أسعار المكتبة الحالية. التعديلات اليدوية المحفوظة لن تتأثر.
+                        ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
                         سيتم تسجيل جميع التغييرات في سجل المراجعة.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
