@@ -675,6 +675,17 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         onRevalidate={handleRevalidate}
         revalidating={revalidating}
       />
+
+      <PricingIntegrityReport
+        open={integrityReportOpen}
+        onOpenChange={setIntegrityReportOpen}
+        report={integrityReport}
+        boqFileId={boqFileId}
+        onFixed={() => {
+          qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
+          qc.invalidateQueries({ queryKey: ["projects"] });
+        }}
+      />
     </div>
   );
 }
