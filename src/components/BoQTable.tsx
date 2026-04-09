@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyChe
 import BudgetDistributionPanel from "./BudgetDistributionPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import PricingIntegrityReport from "./PricingIntegrityReport";
+import { runIntegrityCheck, type IntegrityReport } from "@/lib/pricing/integrityChecker";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -44,6 +46,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [autoFixFailed, setAutoFixFailed] = useState(false);
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editingUnitValue, setEditingUnitValue] = useState("");
+  const [integrityReportOpen, setIntegrityReportOpen] = useState(false);
+  const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
+  const [checkingIntegrity, setCheckingIntegrity] = useState(false);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
