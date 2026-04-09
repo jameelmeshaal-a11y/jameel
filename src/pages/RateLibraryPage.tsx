@@ -147,14 +147,29 @@ export default function RateLibraryPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 mb-6">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder={t("searchRates")} value={search} onChange={(e) => handleSearch(e.target.value)} className="pl-9" />
+        {/* Search bar - full width at top */}
+        <div className="mb-4">
+          <div className="relative w-full max-w-2xl">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Input
+              placeholder={t("searchRates")}
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="pl-10 h-11 text-base"
+            />
+            {debouncedSearch && !isLoading && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                {items.length} نتيجة
+              </span>
+            )}
           </div>
-          <div className="flex gap-1 flex-wrap">
+        </div>
+
+        {/* Category chips - scrollable */}
+        <div className="mb-6 overflow-x-auto pb-1">
+          <div className="flex gap-1.5 min-w-max">
             {allCategories.map((c) => (
-              <Button key={c} variant={category === c ? "default" : "ghost"} size="sm" onClick={() => setCategory(c)} className="capitalize text-xs">
+              <Button key={c} variant={category === c ? "default" : "outline"} size="sm" onClick={() => setCategory(c)} className="capitalize text-xs whitespace-nowrap">
                 {c === "all" ? t("all") : c}
               </Button>
             ))}

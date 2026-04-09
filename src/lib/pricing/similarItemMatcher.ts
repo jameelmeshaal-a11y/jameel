@@ -95,11 +95,39 @@ export function charNgramSimilarity(a: string, b: string, n: number = 3): number
 // ─── Unit Normalization ─────────────────────────────────────────────────────
 
 export function normalizeUnit(unit: string): string {
-  return unit.trim().toLowerCase()
-    .replace(/م3|m3|م\.م/g, "m3")
-    .replace(/م2|m2/g, "m2")
-    .replace(/م\.ط|m\.l|l\.m/g, "ml")
-    .replace(/عدد|no|pcs/g, "no");
+  let u = unit.trim().toLowerCase()
+    // Normalize Arabic-Indic digits → ASCII
+    .replace(/٠/g, "0").replace(/١/g, "1").replace(/٢/g, "2")
+    .replace(/٣/g, "3").replace(/٤/g, "4").replace(/٥/g, "5")
+    .replace(/٦/g, "6").replace(/٧/g, "7").replace(/٨/g, "8").replace(/٩/g, "9")
+    // Normalize Unicode superscripts
+    .replace(/²/g, "2").replace(/³/g, "3")
+    // Remove extra spaces/dots between letters
+    .replace(/\s*\.\s*/g, ".")
+    .replace(/\s+/g, "");
+
+  // Area: م2, م²,  m2, sqm, متر مربع
+  u = u.replace(/^(م2|m2|sqm|متر\.?مربع|مترمربع)$/g, "m2");
+  // Volume: م3, م³, m3, cum, متر مكعب
+  u = u.replace(/^(م3|m3|cum|متر\.?مكعب|مترمكعب|م\.م)$/g, "m3");
+  // Linear meter: م.ط, م ط, m.l, l.m, ml, متر طولي
+  u = u.replace(/^(م\.?ط|m\.?l|l\.?m|مترطولي|متر\.?طولي)$/g, "ml");
+  // Count: عدد, no, pcs, ea, حبة
+  u = u.replace(/^(عدد|no|pcs|ea|حبه|حبة)$/g, "no");
+  // Set: مجموعة, set, مجم
+  u = u.replace(/^(مجموعة|مجموعه|set|مجم)$/g, "set");
+  // Lump sum: بند, lump, ls, مقطوعية, مقطوعيه
+  u = u.replace(/^(بند|lump|ls|مقطوعية|مقطوعيه|مقطوع)$/g, "lump");
+  // Weight: كجم, kg, كيلو
+  u = u.replace(/^(كجم|kg|كيلو|كيلوجرام)$/g, "kg");
+  // Ton: طن, ton
+  u = u.replace(/^(طن|ton|t)$/g, "ton");
+  // Meter: م, m, متر
+  u = u.replace(/^(م|m|متر)$/g, "m");
+  // Roll: لفة, لفه, roll
+  u = u.replace(/^(لفة|لفه|roll)$/g, "roll");
+
+  return u;
 }
 
 // ─── Overlap Coefficient ────────────────────────────────────────────────────
