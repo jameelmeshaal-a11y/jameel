@@ -541,7 +541,7 @@ export async function runPricingEngine(
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
-    // 5a. Rate library match (Path A + B + C)
+    // 5a. Rate library match (Path A + B + C) — V3 with context support
     let libraryMatchResult = findRateLibraryMatch(
       block.mergedDescription,
       block.mergedDescriptionEn,
@@ -550,6 +550,7 @@ export async function runPricingEngine(
       rateLibrary,
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
+      (block.primaryRow as any).notes,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
