@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, type OnItemPricedCallback } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -50,6 +50,28 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [runningTotal, setRunningTotal] = useState<number | null>(null);
+  const [currentItemName, setCurrentItemName] = useState<string>("");
+
+  // Real-time cache updater callback
+  const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
+    return (itemId: string, update: Record<string, any>) => {
+      // Update the specific row in React Query cache
+      qc.setQueryData(["boq-items", boqFileId], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.map(item => item.id === itemId ? { ...item, ...update } : item);
+      });
+      // Update running total
+      if (update.total_price && update.total_price > 0) {
+        setRunningTotal(prev => (prev || 0) + update.total_price);
+      }
+      // Show current item name
+      if (update.notes) {
+        const match = update.notes.match(/[""]([^""]+)[""]/);
+        if (match) setCurrentItemName(match[1].slice(0, 50));
+      }
+    };
+  }, [boqFileId, qc]);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
