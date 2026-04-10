@@ -42,7 +42,8 @@ import { groupSemanticRows, hasManualOverride, type SemanticBlock } from "./boqR
 export { validatePricingQuality, type ValidationResult } from "./pricing/pricingValidator";
 export { detectCategory } from "./pricing/categoryDetector";
 export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
-export { calculateBMSCost, type BMSCalculationResult, type BMSCalculationInput } from "./pricing/bmsEngine";
+export { calculateBMSCost, isBMSItem, type BMSCalculationResult, type BMSCalculationInput } from "./pricing/bmsEngine";
+import { calculateBMSCost, isBMSItem } from "./pricing/bmsEngine";
 
 /** Callback fired after each item is priced/processed in the engine */
 export type OnItemPricedCallback = (itemId: string, update: Record<string, any>) => void;
