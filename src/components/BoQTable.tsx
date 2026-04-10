@@ -107,6 +107,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         setPricingProgress({ current, total });
       }, "government_civil", onItemPricedCb);
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
+      // Calculate BMS points after pricing
+      const latestItems = qc.getQueryData<any[]>(["boq-items", boqFileId]) || items;
+      const bms = calculateBMSCost({ items: latestItems });
+      setBmsResult(bms.hasBMSItems ? bms : null);
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
         qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
