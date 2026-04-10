@@ -77,7 +77,7 @@ export interface BMSCalculationResult {
 // ─── Points Dictionary ─────────────────────────────────────────────────────
 
 const BMS_POINT_RULES: BMSPointRule[] = [
-  // HVAC
+  // HVAC — discrete equipment only
   { keywords: ["ahu", "air handling unit", "وحدة مناولة هواء", "مناولة هواء"], pointsRange: [15, 25], system: "hvac", label: "AHU", labelAr: "وحدة مناولة هواء" },
   { keywords: ["fcu", "fan coil", "فان كويل", "وحدة ملف مروحة"], pointsRange: [2, 4], system: "hvac", label: "FCU", labelAr: "فان كويل" },
   { keywords: ["chiller", "تشلر", "مبرد مياه", "وحدة تبريد مركزي", "وحدة تبريد"], pointsRange: [15, 40], system: "hvac", label: "Chiller", labelAr: "تشلر" },
@@ -88,28 +88,18 @@ const BMS_POINT_RULES: BMSPointRule[] = [
   { keywords: ["cooling tower", "برج تبريد"], pointsRange: [8, 15], system: "hvac", label: "Cooling Tower", labelAr: "برج تبريد" },
   { keywords: ["split unit", "سبلت", "مكيف سبلت", "وحدة منفصلة"], pointsRange: [1, 2], system: "hvac", label: "Split Unit", labelAr: "مكيف سبلت" },
   { keywords: ["package unit", "مكيف مركزي صغير", "باكج"], pointsRange: [5, 10], system: "hvac", label: "Package Unit", labelAr: "باكج" },
-  // HVAC — broader Saudi BoQ terms
-  { keywords: ["مراوح", "مروحة", "fan"], pointsRange: [2, 4], system: "hvac", label: "Fan (General)", labelAr: "مروحة" },
-  { keywords: ["مجاري الهواء", "مجرى هواء", "ductwork", "duct", "دكت"], pointsRange: [1, 2], system: "hvac", label: "Ductwork", labelAr: "مجاري هواء" },
-  { keywords: ["تكييف", "air conditioning", "تبريد", "hvac"], pointsRange: [3, 8], system: "hvac", label: "AC System", labelAr: "نظام تكييف" },
-  { keywords: ["تهوية", "ventilation"], pointsRange: [2, 3], system: "hvac", label: "Ventilation", labelAr: "تهوية" },
-  { keywords: ["damper", "بوابة هواء", "صمام هواء"], pointsRange: [1, 1], system: "hvac", label: "Damper", labelAr: "بوابة هواء" },
 
-  // Fire
+  // Fire — discrete equipment only
   { keywords: ["fire damper", "صمام حريق", "بوابة حريق"], pointsRange: [1, 1], system: "fire", label: "Fire Damper", labelAr: "صمام حريق" },
   { keywords: ["smoke detector", "كاشف دخان", "حساس دخان"], pointsRange: [1, 1], system: "fire", label: "Smoke Detector", labelAr: "كاشف دخان" },
   { keywords: ["heat detector", "كاشف حرارة", "حساس حرارة"], pointsRange: [1, 1], system: "fire", label: "Heat Detector", labelAr: "كاشف حرارة" },
   { keywords: ["sprinkler", "رشاش", "رشاشات"], pointsRange: [0, 0], system: "fire", label: "Sprinkler (monitored)", labelAr: "رشاش (مراقب)" },
   { keywords: ["fire alarm panel", "لوحة إنذار", "لوحة حريق"], pointsRange: [5, 10], system: "fire", label: "Fire Alarm Panel", labelAr: "لوحة إنذار حريق" },
   { keywords: ["manual call point", "نقطة استدعاء", "زر إنذار"], pointsRange: [1, 1], system: "fire", label: "Manual Call Point", labelAr: "نقطة استدعاء يدوية" },
-  // Fire — broader Saudi BoQ terms
-  { keywords: ["مكافحة الحريق", "مكافحة حريق", "fire fighting", "firefighting"], pointsRange: [2, 4], system: "fire", label: "Fire Fighting", labelAr: "مكافحة حريق" },
-  { keywords: ["إنذار حريق", "انذار حريق", "fire alarm", "إنذار"], pointsRange: [1, 2], system: "fire", label: "Fire Alarm", labelAr: "إنذار حريق" },
   { keywords: ["كابينة خرطوم", "خرطوم حريق", "hose reel", "hose cabinet"], pointsRange: [1, 1], system: "fire", label: "Hose Cabinet", labelAr: "كابينة خرطوم" },
-  { keywords: ["إطفاء", "اطفاء", "fire suppression", "fire extinguish"], pointsRange: [2, 3], system: "fire", label: "Fire Suppression", labelAr: "نظام إطفاء" },
   { keywords: ["fire pump", "مضخة حريق", "مضخات حريق"], pointsRange: [4, 8], system: "fire", label: "Fire Pump", labelAr: "مضخة حريق" },
 
-  // Electrical Controls
+  // Electrical Controls — discrete equipment only
   { keywords: ["control valve", "صمام تحكم", "صمام كهربائي"], pointsRange: [1, 1], system: "electrical", label: "Control Valve", labelAr: "صمام تحكم" },
   { keywords: ["temperature sensor", "حساس حرارة", "مستشعر حرارة", "ترموستات"], pointsRange: [1, 1], system: "electrical", label: "Temperature Sensor", labelAr: "حساس حرارة" },
   { keywords: ["pressure sensor", "حساس ضغط", "مستشعر ضغط"], pointsRange: [1, 1], system: "electrical", label: "Pressure Sensor", labelAr: "حساس ضغط" },
@@ -118,15 +108,13 @@ const BMS_POINT_RULES: BMSPointRule[] = [
   { keywords: ["ddc", "direct digital control", "تحكم رقمي", "وحدة تحكم"], pointsRange: [3, 8], system: "electrical", label: "DDC Controller", labelAr: "وحدة تحكم رقمي" },
   { keywords: ["actuator", "محرك صمام", "مشغل"], pointsRange: [1, 1], system: "electrical", label: "Actuator", labelAr: "محرك صمام" },
   { keywords: ["energy meter", "عداد طاقة", "عداد كهرباء ذكي"], pointsRange: [2, 3], system: "electrical", label: "Energy Meter", labelAr: "عداد طاقة" },
-  // Electrical — broader Saudi BoQ terms
   { keywords: ["لوحة تحكم", "لوحات تحكم", "control panel"], pointsRange: [3, 6], system: "electrical", label: "Control Panel", labelAr: "لوحة تحكم" },
-  { keywords: ["كابل تحكم", "كابلات تحكم", "control cable"], pointsRange: [0, 1], system: "electrical", label: "Control Cable", labelAr: "كابل تحكم" },
 
-  // Security (if integrated with BMS)
+  // Security
   { keywords: ["cctv", "كاميرا مراقبة", "كاميرات", "كاميرا", "تلفزيونية مغلقة", "closed circuit"], pointsRange: [1, 2], system: "security", label: "CCTV Camera", labelAr: "كاميرا مراقبة" },
   { keywords: ["access control", "تحكم وصول", "بوابة تحكم", "قارئ بطاقة", "نظام دخول"], pointsRange: [2, 3], system: "security", label: "Access Control", labelAr: "تحكم وصول" },
 
-  // Plumbing (BMS-monitored)
+  // Plumbing
   { keywords: ["خزان مياه", "water tank", "خزانات"], pointsRange: [2, 4], system: "plumbing", label: "Water Tank", labelAr: "خزان مياه" },
   { keywords: ["محطة معالجة", "sewage treatment", "معالجة مياه"], pointsRange: [3, 6], system: "plumbing", label: "Treatment Plant", labelAr: "محطة معالجة" },
 ];
