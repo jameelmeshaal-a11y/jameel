@@ -675,7 +675,7 @@ export async function runPricingEngine(
       }
     } else {
       // ═══ NO MATCH — no AI fallback, no price generation ═══
-      await supabase.from("boq_items").update({
+      const unmatchedUpdate = {
         unit_rate: null,
         total_price: null,
         materials: null,
@@ -690,7 +690,9 @@ export async function runPricingEngine(
         location_factor: null,
         status: "unmatched",
         notes: `🔴 NO MATCH — لم يتم العثور على البند في مكتبة الأسعار | "${block.mergedDescription.slice(0, 80)}"`,
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(unmatchedUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, unmatchedUpdate);
 
       processedCount++;
       onProgress?.(processedCount, items.length);
