@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -53,6 +53,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [runningTotal, setRunningTotal] = useState<number | null>(null);
   const [currentItemName, setCurrentItemName] = useState<string>("");
   const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
+  const [repricingItemId, setRepricingItemId] = useState<string | null>(null);
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
@@ -836,11 +837,41 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                 </td>
                 <td className="text-center">{isPriced ? getStatusIcon(item.status) : <span className="text-[10px] text-muted-foreground">—</span>}</td>
                 <td>
-                  {isPriced && (
-                    <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
-                      <Eye className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-0.5">
+                    {isPriced && !isArchived && (
+                      <Button
+                        variant="ghost" size="icon"
+                        className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="إعادة تسعير هذا البند"
+                        disabled={repricingItemId === item.id}
+                        onClick={async () => {
+                          setRepricingItemId(item.id);
+                          try {
+                            const result = await repriceSingleItem(boqFileId, item.id, cities);
+                            if (result.success) {
+                              toast.success(`✅ تم التسعير: ${result.matchedName} — ${formatCurrency(result.totalPrice || 0)} (🎯 ${result.confidence}%)`);
+                            } else {
+                              toast.warning("🔴 لم يتم العثور على تطابق في المكتبة");
+                            }
+                            qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
+                            qc.invalidateQueries({ queryKey: ["projects", projectId] });
+                            qc.invalidateQueries({ queryKey: ["projects"] });
+                          } catch (err: any) {
+                            toast.error(err.message);
+                          } finally {
+                            setRepricingItemId(null);
+                          }
+                        }}
+                      >
+                        {repricingItemId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      </Button>
+                    )}
+                    {isPriced && (
+                      <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
+                        <Eye className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
               );
