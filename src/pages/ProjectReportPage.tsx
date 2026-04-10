@@ -7,9 +7,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3, FileText } from "lucide-react";
+import { BarChart3, FileText, Download, FileSpreadsheet } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { exportReportExcel, exportReportPDF } from "@/lib/projectReportExport";
 
-function BoQFileSummaryRow({ file, onStats }: { file: any; onStats: (stats: { totalItems: number; pricedItems: number; totalCost: number }) => void }) {
+function BoQFileSummaryRow({ file, onStats, isRTL }: { file: any; onStats: (stats: { totalItems: number; pricedItems: number; totalCost: number }) => void; isRTL: boolean }) {
   const { data: items = [] } = useBoQItems(file.id);
 
   const stats = useMemo(() => {
@@ -24,8 +26,11 @@ function BoQFileSummaryRow({ file, onStats }: { file: any; onStats: (stats: { to
   useMemo(() => { onStats(stats); }, [stats, onStats]);
 
   return (
-    <TableRow>
-      <TableCell className="font-medium text-sm" dir="auto">{file.name}</TableCell>
+    <TableRow className={file.is_archived ? "opacity-60" : ""}>
+      <TableCell className="font-medium text-sm" dir="auto">
+        {file.name}
+        {file.is_archived && <Badge variant="outline" className="text-[9px] ms-2 text-amber-600 border-amber-300">{isRTL ? "مؤرشف" : "Archived"}</Badge>}
+      </TableCell>
       <TableCell className="text-center font-mono text-sm">{stats.totalItems}</TableCell>
       <TableCell className="text-center">
         <Badge variant={stats.pricedItems === stats.totalItems && stats.totalItems > 0 ? "default" : "secondary"}
@@ -44,13 +49,13 @@ export default function ProjectReportPage() {
   const { data: projects = [] } = useProjects();
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const { data: boqFiles = [] } = useBoQFiles(selectedProjectId || undefined);
-  const activeFiles = useMemo(() => boqFiles.filter((f: any) => !f.is_archived), [boqFiles]);
+  const allFiles = boqFiles;
 
   const [fileStats, setFileStats] = useState<Record<string, { totalItems: number; pricedItems: number; totalCost: number }>>({});
 
   const handleStats = useMemo(() => {
     const handlers: Record<string, (stats: any) => void> = {};
-    activeFiles.forEach((f: any) => {
+    allFiles.forEach((f: any) => {
       handlers[f.id] = (stats: any) => {
         setFileStats(prev => {
           if (prev[f.id]?.totalItems === stats.totalItems && prev[f.id]?.pricedItems === stats.pricedItems && prev[f.id]?.totalCost === stats.totalCost) return prev;
@@ -59,7 +64,7 @@ export default function ProjectReportPage() {
       };
     });
     return handlers;
-  }, [activeFiles]);
+  }, [allFiles]);
 
   const totals = useMemo(() => {
     let totalItems = 0, pricedItems = 0, totalCost = 0;
@@ -99,13 +104,29 @@ export default function ProjectReportPage() {
           </CardContent>
         </Card>
 
-        {selectedProjectId && activeFiles.length > 0 && (
+        {selectedProjectId && allFiles.length > 0 && (
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-sm flex items-center gap-2">
                 <FileText className="w-4 h-4" />
                 {isRTL ? `ملخص جداول الكميات — ${selectedProject?.name || ""}` : `BoQ Summary — ${selectedProject?.name || ""}`}
               </CardTitle>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => {
+                  const files = allFiles.map((f: any) => ({ name: f.name, isArchived: f.is_archived, ...fileStats[f.id] || { totalItems: 0, pricedItems: 0, totalCost: 0 } }));
+                  exportReportExcel({ projectName: selectedProject?.name || "", files, totals });
+                }}>
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Excel
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  const files = allFiles.map((f: any) => ({ name: f.name, isArchived: f.is_archived, ...fileStats[f.id] || { totalItems: 0, pricedItems: 0, totalCost: 0 } }));
+                  exportReportPDF({ projectName: selectedProject?.name || "", files, totals }, isRTL ? "ar" : "en");
+                }}>
+                  <Download className="w-4 h-4" />
+                  PDF
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="pt-0">
               <div className="border rounded-lg overflow-hidden">
@@ -119,8 +140,8 @@ export default function ProjectReportPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {activeFiles.map((file: any) => (
-                      <BoQFileSummaryRow key={file.id} file={file} onStats={handleStats[file.id] || (() => {})} />
+                    {allFiles.map((file: any) => (
+                      <BoQFileSummaryRow key={file.id} file={file} onStats={handleStats[file.id] || (() => {})} isRTL={isRTL} />
                     ))}
                   </TableBody>
                   <TableFooter>
@@ -139,7 +160,7 @@ export default function ProjectReportPage() {
           </Card>
         )}
 
-        {selectedProjectId && activeFiles.length === 0 && (
+        {selectedProjectId && allFiles.length === 0 && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
               {isRTL ? "لا توجد جداول كميات لهذا المشروع" : "No BoQ files for this project"}
