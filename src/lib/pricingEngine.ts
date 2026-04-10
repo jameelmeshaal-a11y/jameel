@@ -829,6 +829,7 @@ export async function repriceUnpricedItems(
   boqFileId: string,
   cities: string[],
   onProgress?: (current: number, total: number) => void,
+  onItemPriced?: OnItemPricedCallback,
 ): Promise<{ pricedCount: number; stillUnpricedCount: number }> {
   // 1. Fetch ONLY unpriced rows
   const { data: unpricedRows, error: fetchErr } = await supabase
