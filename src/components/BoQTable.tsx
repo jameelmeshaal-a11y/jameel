@@ -129,6 +129,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
       // 1. Snapshot current prices for audit trail
       const pricedItems = items.filter(i => i.unit_rate && i.unit_rate > 0);
@@ -154,9 +156,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
 
       // 4. Run pricing engine on clean data
+      const onItemPricedCb = makeOnItemPriced();
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, "government_civil", onItemPricedCb);
 
       // 5. Update audit trail with new prices
       if (user) {
@@ -200,8 +203,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, items, qc, projectId]);
+  }, [boqFileId, cities, items, qc, projectId, makeOnItemPriced]);
 
   const handleRepriceUnpriced = useCallback(async () => {
     if (!boqFileId) return;
