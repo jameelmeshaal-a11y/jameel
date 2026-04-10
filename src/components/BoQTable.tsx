@@ -212,10 +212,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
+      const onItemPricedCb = makeOnItemPriced();
       const result = await repriceUnpricedItems(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, onItemPricedCb);
       if (result.pricedCount > 0) {
         toast.success(`تم تسعير ${result.pricedCount} بند — ${result.stillUnpricedCount} بند لا يزال بدون سعر`);
       } else {
@@ -231,8 +234,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, qc, projectId]);
+  }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
