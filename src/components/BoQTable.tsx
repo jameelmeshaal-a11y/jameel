@@ -393,6 +393,14 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const canExport = exportSummary.canExport;
 
+  // Auto-calculate BMS result when items load
+  useEffect(() => {
+    if (items.length > 0) {
+      const bms = calculateBMSCost({ items });
+      setBmsResult(bms.hasBMSItems ? bms : null);
+    }
+  }, [items]);
+
   useEffect(() => {
     if (!consistency || consistency.consistent) {
       autoFixAttempted.current = false;
@@ -815,9 +823,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                             } else {
                               toast.warning("🔴 لم يتم العثور على تطابق في المكتبة");
                             }
-                            qc.invalidateQueries({ queryKey: ["boq-items", boqFileId] });
+                            await qc.refetchQueries({ queryKey: ["boq-items", boqFileId] });
                             qc.invalidateQueries({ queryKey: ["projects", projectId] });
                             qc.invalidateQueries({ queryKey: ["projects"] });
+                            // Recalculate BMS after single reprice
+                            const latestItems = qc.getQueryData<any[]>(["boq-items", boqFileId]) || items;
+                            const bms = calculateBMSCost({ items: latestItems });
+                            setBmsResult(bms.hasBMSItems ? bms : null);
                           } catch (err: any) {
                             toast.error(err.message);
                           } finally {
