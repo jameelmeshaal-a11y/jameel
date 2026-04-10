@@ -819,14 +819,27 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                           try {
                             const result = await repriceSingleItem(boqFileId, item.id, cities);
                             if (result.success) {
+                              // Immediately update cache with the new price
+                              qc.setQueryData(["boq-items", boqFileId], (old: any[] | undefined) => {
+                                if (!old) return old;
+                                return old.map(row => row.id === item.id ? {
+                                  ...row,
+                                  unit_rate: result.unitRate,
+                                  total_price: result.totalPrice,
+                                  confidence: result.confidence,
+                                  source: result.source,
+                                  status: result.confidence >= 70 ? "approved" : "needs_review",
+                                } : row);
+                              });
                               toast.success(`✅ تم التسعير: ${result.matchedName} — ${formatCurrency(result.totalPrice || 0)} (🎯 ${result.confidence}%)`);
                             } else {
                               toast.warning("🔴 لم يتم العثور على تطابق في المكتبة");
                             }
+                            // Refetch to get full server state
                             await qc.refetchQueries({ queryKey: ["boq-items", boqFileId] });
-                            qc.invalidateQueries({ queryKey: ["projects", projectId] });
+                            await qc.refetchQueries({ queryKey: ["projects", projectId] });
                             qc.invalidateQueries({ queryKey: ["projects"] });
-                            // Recalculate BMS after single reprice
+                            // Recalculate BMS after refetch completes
                             const latestItems = qc.getQueryData<any[]>(["boq-items", boqFileId]) || items;
                             const bms = calculateBMSCost({ items: latestItems });
                             setBmsResult(bms.hasBMSItems ? bms : null);

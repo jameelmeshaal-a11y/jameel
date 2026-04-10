@@ -1114,13 +1114,19 @@ export async function repriceSingleItem(
 
   // ── BMS Detection: use points engine instead of library match ──
   if (isBMSItem(description)) {
+    console.log(`🏗️ [BMS] Detected BMS item: "${description.slice(0, 60)}"`);
     // Fetch ALL items in the same BoQ file for BMS point calculation
-    const { data: allItems } = await supabase
+    const { data: allItems, error: allItemsErr } = await supabase
       .from("boq_items")
       .select("id, description, description_en, quantity, unit, unit_rate, total_price, status")
       .eq("boq_file_id", boqFileId);
 
+    if (allItemsErr) {
+      console.error("🏗️ [BMS] Failed to fetch BoQ items:", allItemsErr);
+    }
+
     if (allItems && allItems.length > 0) {
+      console.log(`🏗️ [BMS] Fetched ${allItems.length} items for point calculation`);
       const bmsInput = {
         items: allItems.map(i => ({
           id: i.id,
@@ -1139,6 +1145,10 @@ export async function repriceSingleItem(
       };
 
       const bmsResult = calculateBMSCost(bmsInput);
+      console.log(`🏗️ [BMS] Result: hasBMSItems=${bmsResult.hasBMSItems}, matches=${bmsResult.matches.length}, totalPoints=${bmsResult.totalPoints}, totalCost=${bmsResult.totalCost}`);
+      if (bmsResult.matches.length > 0) {
+        console.log(`🏗️ [BMS] Matched items:`, bmsResult.matches.map(m => `${m.matchedRule}: ${m.quantity}×${m.pointsPerUnit}=${m.totalPoints}pts`));
+      }
 
       if (bmsResult.hasBMSItems && bmsResult.totalCost > 0) {
         const bmsUnitRate = item.quantity > 0
@@ -1179,7 +1189,12 @@ export async function repriceSingleItem(
           location_factor: 1.0,
         };
 
-        await supabase.from("boq_items").update(bmsUpdate).eq("id", itemId);
+        const { error: bmsUpdateErr } = await supabase.from("boq_items").update(bmsUpdate).eq("id", itemId);
+        if (bmsUpdateErr) {
+          console.error("🏗️ [BMS] DB update failed:", bmsUpdateErr);
+          throw new Error(`فشل تحديث بند BMS: ${bmsUpdateErr.message}`);
+        }
+        console.log(`🏗️ [BMS] ✅ Updated item ${itemId}: unitRate=${bmsUnitRate}, totalCost=${bmsResult.totalCost}`);
 
         // Recalculate project total
         const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
@@ -1195,6 +1210,8 @@ export async function repriceSingleItem(
           source: "bms-points-engine",
           matchedName: `BMS Points Engine (${bmsResult.totalPoints} نقطة)`,
         };
+      } else {
+        console.warn(`🏗️ [BMS] No matches found or totalCost=0. Falling through to library matching.`);
       }
     }
   }
