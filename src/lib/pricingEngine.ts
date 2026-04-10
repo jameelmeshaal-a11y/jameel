@@ -43,6 +43,9 @@ export { validatePricingQuality, type ValidationResult } from "./pricing/pricing
 export { detectCategory } from "./pricing/categoryDetector";
 export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
 
+/** Callback fired after each item is priced/processed in the engine */
+export type OnItemPricedCallback = (itemId: string, update: Record<string, any>) => void;
+
 /** Check if a row is a valid priceable item (quantity > 0, has unit and item code) */
 export function isPriceableItem(item: { quantity: number; unit?: string; item_no?: string }): boolean {
   return isPriceableBoQRow(item);
@@ -454,7 +457,8 @@ export async function runPricingEngine(
   boqFileId: string,
   cities: string[],
   onProgress?: (current: number, total: number) => void,
-  projectType: ProjectType = "government_civil"
+  projectType: ProjectType = "government_civil",
+  onItemPriced?: OnItemPricedCallback,
 ): Promise<PricingResult> {
   // Fetch items, library, location factors, sources, file metadata, AND historical map in parallel
   const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
