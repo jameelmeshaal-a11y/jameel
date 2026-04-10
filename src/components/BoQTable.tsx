@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, type OnItemPricedCallback } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -52,6 +52,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [runningTotal, setRunningTotal] = useState<number | null>(null);
   const [currentItemName, setCurrentItemName] = useState<string>("");
+  const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
@@ -106,6 +107,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         setPricingProgress({ current, total });
       }, "government_civil", onItemPricedCb);
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
+      // Calculate BMS points after pricing
+      const latestItems = qc.getQueryData<any[]>(["boq-items", boqFileId]) || items;
+      const bms = calculateBMSCost({ items: latestItems });
+      setBmsResult(bms.hasBMSItems ? bms : null);
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
         qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
@@ -497,7 +502,50 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      {/* Inconsistency alert banner */}
+      {/* BMS Points Summary */}
+      {bmsResult && bmsResult.hasBMSItems && (
+        <div className="mb-4 p-4 border rounded-lg bg-card" dir="rtl">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              🏗️ تقدير نظام إدارة المبنى (BMS)
+            </h3>
+            <Badge variant="secondary" className="text-xs">
+              {bmsResult.totalPoints} نقطة I/O
+            </Badge>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div className="p-2 rounded bg-muted/50 text-center">
+              <div className="text-[10px] text-muted-foreground">التكلفة الأساسية</div>
+              <div className="text-sm font-semibold">{formatCurrency(bmsResult.baseCost)}</div>
+            </div>
+            <div className="p-2 rounded bg-muted/50 text-center">
+              <div className="text-[10px] text-muted-foreground">تكامل + برمجة</div>
+              <div className="text-sm font-semibold">{formatCurrency(bmsResult.integrationCost + bmsResult.programmingCost)}</div>
+            </div>
+            <div className="p-2 rounded bg-muted/50 text-center">
+              <div className="text-[10px] text-muted-foreground">Server/Gateway</div>
+              <div className="text-sm font-semibold">{formatCurrency(bmsResult.serverCost)}</div>
+            </div>
+            <div className="p-2 rounded bg-primary/10 text-center border border-primary/20">
+              <div className="text-[10px] text-muted-foreground">إجمالي BMS</div>
+              <div className="text-sm font-bold text-primary">{formatCurrency(bmsResult.totalCost)}</div>
+            </div>
+          </div>
+          {bmsResult.systemBreakdown.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {bmsResult.systemBreakdown.map(sys => (
+                <Badge key={sys.system} variant="outline" className="text-[10px]">
+                  {sys.systemLabel}: {sys.totalPoints} نقطة ({sys.itemCount} بند)
+                </Badge>
+              ))}
+            </div>
+          )}
+          <div className="text-[10px] text-muted-foreground mt-2">
+            سعر النقطة: {bmsResult.ratePerPoint} ريال | المضاعفات: مشروع ×{bmsResult.projectMultiplier} | مباني ×{bmsResult.buildingMultiplier}
+          </div>
+        </div>
+      )}
+
       {hasItems && autoFixFailed && !consistency.consistent && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">

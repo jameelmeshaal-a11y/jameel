@@ -41,6 +41,9 @@ export type ItemCategory =
   | "asphalt"
   | "curbs"
   | "furniture"
+  | "bms_controller"
+  | "bms_sensor"
+  | "bms_actuator"
   | "general";
 
 interface CategoryRule {
@@ -116,6 +119,11 @@ const RULES: CategoryRule[] = [
 
   // Furniture & Equipment
   { category: "furniture", keywords: ["نموذج", "أثاث", "furniture", "مكتب", "كرسي", "طاولة", "خزانة"], priority: 74 },
+
+  // BMS
+  { category: "bms_controller", keywords: ["bms", "ddc", "تحكم مبنى", "building management", "نظام إدارة المبنى", "controller", "وحدة تحكم رقمي"], priority: 85 },
+  { category: "bms_sensor", keywords: ["حساس", "مستشعر", "sensor", "ترموستات", "thermostat", "transmitter"], priority: 75 },
+  { category: "bms_actuator", keywords: ["محرك صمام", "actuator", "مشغل كهربائي"], priority: 75 },
 ];
 
 export interface DetectionResult {
