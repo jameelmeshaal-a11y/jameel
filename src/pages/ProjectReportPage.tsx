@@ -11,7 +11,7 @@ import { BarChart3, FileText, Download, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportReportExcel, exportReportPDF } from "@/lib/projectReportExport";
 
-function BoQFileSummaryRow({ file, onStats }: { file: any; onStats: (stats: { totalItems: number; pricedItems: number; totalCost: number }) => void }) {
+function BoQFileSummaryRow({ file, onStats, isRTL }: { file: any; onStats: (stats: { totalItems: number; pricedItems: number; totalCost: number }) => void; isRTL: boolean }) {
   const { data: items = [] } = useBoQItems(file.id);
 
   const stats = useMemo(() => {
@@ -26,8 +26,11 @@ function BoQFileSummaryRow({ file, onStats }: { file: any; onStats: (stats: { to
   useMemo(() => { onStats(stats); }, [stats, onStats]);
 
   return (
-    <TableRow>
-      <TableCell className="font-medium text-sm" dir="auto">{file.name}</TableCell>
+    <TableRow className={file.is_archived ? "opacity-60" : ""}>
+      <TableCell className="font-medium text-sm" dir="auto">
+        {file.name}
+        {file.is_archived && <Badge variant="outline" className="text-[9px] ms-2 text-amber-600 border-amber-300">{isRTL ? "مؤرشف" : "Archived"}</Badge>}
+      </TableCell>
       <TableCell className="text-center font-mono text-sm">{stats.totalItems}</TableCell>
       <TableCell className="text-center">
         <Badge variant={stats.pricedItems === stats.totalItems && stats.totalItems > 0 ? "default" : "secondary"}
