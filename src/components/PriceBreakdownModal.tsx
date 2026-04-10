@@ -55,6 +55,7 @@ const ALL_FIELDS: BreakdownField[] = ["materials", "labor", "equipment", "logist
 export default function PriceBreakdownModal({ item, projectId, ownerMaterials = false, onClose, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [correctionNote, setCorrectionNote] = useState("");
   const [autoRebalance, setAutoRebalance] = useState(true);
 
   const initial: BreakdownValues = {
@@ -272,6 +273,8 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           notes: item.notes || "Manual pricing adjustment",
           manual_overrides: overridesObj,
           override_at: new Date().toISOString(),
+          override_reason: correctionNote || null,
+          override_type: "manual",
         })
         .eq("id", item.id);
 
@@ -286,6 +289,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         boqFileId: item.boq_file_id,
         values,
         unitRate,
+        correctionNote: correctionNote || undefined,
       });
 
       if (!syncResult) {
@@ -510,7 +514,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
               ))}
             </div>
             {editing && (
-              <div className="space-y-2 mt-3 pt-3 border-t">
+              <div className="space-y-3 mt-3 pt-3 border-t">
                 <div className="flex items-center justify-between text-sm font-semibold">
                   <span>Unit Rate</span>
                   <span className="font-mono">SAR {formatNumber(total)}</span>
@@ -518,6 +522,26 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
                 <div className="flex items-center justify-between text-sm font-semibold text-primary">
                   <span>Total Price (× {formatNumber(item.quantity, 0)})</span>
                   <span className="font-mono">SAR {formatNumber(total * item.quantity)}</span>
+                </div>
+
+                {/* Correction Note */}
+                <div className="space-y-1.5 p-3 rounded-lg bg-warning/5 border border-warning/20">
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-warning" />
+                    <label className="text-xs font-semibold text-warning" dir="rtl">
+                      سبب التعديل / ملاحظة للنظام
+                    </label>
+                  </div>
+                  <textarea
+                    className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    placeholder="مثال: هذا بند أنابيب UPVC وليس صمامات — النظام طابقه خطأ مع صمامات بوابة"
+                    value={correctionNote}
+                    onChange={(e) => setCorrectionNote(e.target.value)}
+                    dir="rtl"
+                  />
+                  <p className="text-[10px] text-muted-foreground" dir="rtl">
+                    هذه الملاحظة تُحفظ في مكتبة الأسعار وتساعد النظام على تجنب نفس الخطأ مستقبلاً
+                  </p>
                 </div>
               </div>
             )}

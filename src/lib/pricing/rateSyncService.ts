@@ -16,6 +16,8 @@ export interface SyncParams {
   /** If provided, these are used directly (QuickSave / Propagation). If omitted, re-fetched from DB (Approve). */
   values?: BreakdownValues;
   unitRate?: number;
+  /** User correction note explaining why the price was wrong — enriches the library for future matching */
+  correctionNote?: string;
 }
 
 export interface SyncResult {
@@ -101,6 +103,9 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
       profit_pct: +((values.profit / unitRate) * 100).toFixed(1),
     } : {};
 
+    // Enrich with correction note
+    const correctionEnrichment = await buildCorrectionEnrichment(bestMatch.id, params.correctionNote, itemData.description);
+
     const { error } = await supabase
       .from("rate_library")
       .update({
@@ -109,6 +114,7 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         ...pcts,
         source_type: "Revised",
         last_reviewed_at: new Date().toISOString(),
+        ...correctionEnrichment,
       })
       .eq("id", bestMatch.id);
 
@@ -203,4 +209,49 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
 
   console.log(`[RateSync] ${isNew ? "Created" : "Updated"} rate_library ${libraryId} from BoQ "${boqFile.name}" (city: ${realCity})`);
   return { libraryId, isNew, boqFileName: boqFile.name };
+}
+
+// ─── Correction Note Enrichment ─────────────────────────────────────────────
+
+async function buildCorrectionEnrichment(
+  libraryId: string,
+  correctionNote?: string,
+  itemDescription?: string,
+): Promise<Record<string, any>> {
+  if (!correctionNote) return {};
+
+  // Fetch current library entry for appending
+  const { data: current } = await supabase
+    .from("rate_library")
+    .select("notes, keywords, item_name_aliases")
+    .eq("id", libraryId)
+    .single();
+
+  const result: Record<string, any> = {};
+
+  // Append correction note to notes (cumulative)
+  const timestamp = new Date().toISOString().split("T")[0];
+  const correctionEntry = `[تصحيح ${timestamp}]: ${correctionNote}`;
+  const existingNotes = current?.notes || "";
+  result.notes = existingNotes
+    ? `${existingNotes}\n${correctionEntry}`
+    : correctionEntry;
+
+  // Extract keywords from correction note and add to keywords array
+  const noteKeywords = tokenize(correctionNote).filter(k => k.length > 2);
+  if (noteKeywords.length > 0) {
+    const existingKeywords = current?.keywords || [];
+    const mergedKeywords = [...new Set([...existingKeywords, ...noteKeywords])];
+    result.keywords = mergedKeywords;
+  }
+
+  // Add item description as alias if not already present
+  if (itemDescription) {
+    const existingAliases: string[] = current?.item_name_aliases || [];
+    if (!existingAliases.some(a => a === itemDescription)) {
+      result.item_name_aliases = [...existingAliases, itemDescription];
+    }
+  }
+
+  return result;
 }
