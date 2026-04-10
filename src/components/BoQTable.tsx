@@ -52,6 +52,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [runningTotal, setRunningTotal] = useState<number | null>(null);
   const [currentItemName, setCurrentItemName] = useState<string>("");
+  const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
