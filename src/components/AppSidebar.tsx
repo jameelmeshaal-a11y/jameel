@@ -14,6 +14,7 @@ import {
   Blocks,
   Shield,
   LogOut,
+  BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ export default function AppSidebar() {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: t("dashboard") },
     { to: "/projects", icon: FolderOpen, label: t("projects") },
+    { to: "/project-report", icon: BarChart3, label: isRTL ? "تقرير الملخص" : "Summary Report" },
     { to: "/rate-library", icon: BookOpen, label: t("rateLibrary") },
     { to: "/settings", icon: Settings, label: t("settings") },
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
