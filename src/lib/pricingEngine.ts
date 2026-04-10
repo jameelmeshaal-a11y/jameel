@@ -934,7 +934,7 @@ export async function repriceUnpricedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    await supabase.from("boq_items").update({
+    const repricedUpdate = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
@@ -944,7 +944,9 @@ export async function repriceUnpricedItems(
       linked_rate_id: matchedItem.id,
       status: itemStatus,
       notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
-    }).eq("id", row.id);
+    };
+    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
   }
