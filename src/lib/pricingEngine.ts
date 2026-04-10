@@ -783,7 +783,6 @@ export async function runPricingEngine(
         })),
         projectType: (projectType === "government_civil" || projectType === "government_military")
           ? "government" as const
-          : projectType === "healthcare" ? "healthcare" as const
           : "commercial" as const,
         ratePerPoint: 500,
       };
