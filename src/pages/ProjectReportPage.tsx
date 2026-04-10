@@ -7,7 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart3, FileText } from "lucide-react";
+import { BarChart3, FileText, Download, FileSpreadsheet } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { exportReportExcel, exportReportPDF } from "@/lib/projectReportExport";
 
 function BoQFileSummaryRow({ file, onStats }: { file: any; onStats: (stats: { totalItems: number; pricedItems: number; totalCost: number }) => void }) {
   const { data: items = [] } = useBoQItems(file.id);
