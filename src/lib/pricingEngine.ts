@@ -759,6 +759,90 @@ export async function runPricingEngine(
     onProgress?.(processedCount, items.length);
   }
 
+  // ── BMS Points-Based Pricing (post-processing pass) ─────────────────────
+  // After all items are priced, find BMS umbrella item and price it via points engine
+  const bmsBlock = blocks.find(b => isBMSItem(b.mergedDescription));
+  if (bmsBlock) {
+    // Re-fetch all items with updated prices for BMS calculation
+    const { data: allPricedItems } = await supabase
+      .from("boq_items")
+      .select("id, description, description_en, quantity, unit, unit_rate, total_price, status")
+      .eq("boq_file_id", boqFileId);
+
+    if (allPricedItems && allPricedItems.length > 0) {
+      const bmsInput = {
+        items: allPricedItems.map(i => ({
+          id: i.id,
+          description: i.description || "",
+          description_en: i.description_en || "",
+          quantity: i.quantity || 0,
+          unit: i.unit || "",
+          unit_rate: i.unit_rate,
+          total_price: i.total_price,
+          status: i.status || "",
+        })),
+        projectType: (projectType === "government_civil" || projectType === "government_military")
+          ? "government" as const
+          : projectType === "healthcare" ? "healthcare" as const
+          : "commercial" as const,
+        ratePerPoint: 500,
+      };
+
+      const bmsResult = calculateBMSCost(bmsInput);
+
+      if (bmsResult.hasBMSItems && bmsResult.totalCost > 0) {
+        const bmsUnitRate = bmsBlock.quantity > 0
+          ? +(bmsResult.totalCost / bmsBlock.quantity).toFixed(2)
+          : bmsResult.totalCost;
+        const bmsTotalPrice = bmsResult.totalCost;
+
+        // Build detailed notes
+        const systemSummary = bmsResult.systemBreakdown
+          .map(s => `${s.systemLabel}: ${s.totalPoints} نقطة`)
+          .join(" | ");
+        const bmsNotes = [
+          `🏗️ BMS Points Engine`,
+          `إجمالي النقاط: ${bmsResult.totalPoints}`,
+          `سعر النقطة: ${bmsResult.ratePerPoint} ريال`,
+          systemSummary,
+          `التكلفة الأساسية: ${bmsResult.baseCost.toLocaleString()} ريال`,
+          `التكامل: ${bmsResult.integrationCost.toLocaleString()} ريال`,
+          `البرمجة: ${bmsResult.programmingCost.toLocaleString()} ريال`,
+          `السيرفر: ${bmsResult.serverCost.toLocaleString()} ريال`,
+          `معامل المشروع: ${bmsResult.projectMultiplier}`,
+          `معامل المباني: ${bmsResult.buildingMultiplier}`,
+          `البنود المطابقة: ${bmsResult.matches.length}`,
+        ].join(" | ");
+
+        const bmsUpdate = {
+          unit_rate: bmsUnitRate,
+          total_price: bmsTotalPrice,
+          confidence: 90,
+          source: "bms-points-engine",
+          status: "approved",
+          notes: bmsNotes,
+          linked_rate_id: null,
+          materials: +(bmsTotalPrice * 0.40).toFixed(2),
+          labor: +(bmsTotalPrice * 0.25).toFixed(2),
+          equipment: +(bmsTotalPrice * 0.20).toFixed(2),
+          logistics: +(bmsTotalPrice * 0.05).toFixed(2),
+          risk: +(bmsTotalPrice * 0.05).toFixed(2),
+          profit: +(bmsTotalPrice * 0.05).toFixed(2),
+          location_factor: 1.0,
+        };
+
+        await supabase.from("boq_items").update(bmsUpdate).eq("id", bmsBlock.primaryRow.id);
+        onItemPriced?.(bmsBlock.primaryRow.id, bmsUpdate);
+
+        // Adjust total
+        const oldBmsPrice = pricedItems.find(p => p.description === bmsBlock.mergedDescription);
+        totalValue = totalValue - (oldBmsPrice ? (oldBmsPrice.unitRate * bmsBlock.quantity) : 0) + bmsTotalPrice;
+
+        console.log(`🏗️ BMS Engine: ${bmsResult.totalPoints} points → ${bmsTotalPrice.toLocaleString()} SAR`);
+      }
+    }
+  }
+
   const validation = validatePricingQuality(pricedItems);
   await supabase.from("boq_files").update({ status: "priced" }).eq("id", boqFileId);
 
