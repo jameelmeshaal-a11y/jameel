@@ -17,6 +17,7 @@ import SystemArchitecturePage from "./pages/SystemArchitecturePage";
 import QAHealthPage from "./pages/QAHealthPage";
 import LoginPage from "./pages/LoginPage";
 import AdminDashboard from "./pages/AdminDashboard";
+import ProjectReportPage from "./pages/ProjectReportPage";
 import NotFound from "./pages/NotFound";
 import DebugPanel from "./components/DebugPanel";
 
@@ -36,6 +37,7 @@ const App = () => (
               <Route path="/health" element={<QAHealthPage />} />
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/projects" element={<ProtectedRoute><ProjectsPage /></ProtectedRoute>} />
+              <Route path="/project-report" element={<ProtectedRoute><ProjectReportPage /></ProtectedRoute>} />
               <Route path="/projects/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
               <Route path="/rate-library" element={<ProtectedRoute><RateLibraryPage /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />

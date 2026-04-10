@@ -9,7 +9,7 @@ import BoQTable from "@/components/BoQTable";
 import DocumentsTab from "@/components/DocumentsTab";
 import CreateBoQDialog from "@/components/CreateBoQDialog";
 import BudgetDistributionPanel from "@/components/BudgetDistributionPanel";
-import ProjectBoQSummary from "@/components/ProjectBoQSummary";
+
 import { useProject, useBoQFiles, useBoQItems, useDeleteBoQ, useDeleteProject, useArchiveBoQ, useRestoreBoQ, useRenameBoQ } from "@/hooks/useSupabase";
 import { formatCurrency } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -249,8 +249,6 @@ export default function ProjectDetail() {
               )}
             </div>
 
-            {/* Project BoQ Summary */}
-            {!selectedBoQFileId && <ProjectBoQSummary projectId={project.id} />}
 
             {/* BoQ files grouped by facility */}
             {boqFilesLoading ? (
