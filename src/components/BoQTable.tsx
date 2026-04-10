@@ -98,10 +98,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
+      const onItemPricedCb = makeOnItemPriced();
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, "government_civil", onItemPricedCb);
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
@@ -117,8 +120,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, qc]);
+  }, [boqFileId, cities, qc, makeOnItemPriced]);
 
   const handleRePrice = useCallback(async () => {
     if (!boqFileId) return;
