@@ -709,6 +709,59 @@ const MODELS: Record<ItemCategory, CostModel> = {
     logisticsWeight: "medium",
     validRange: [15, 800],
   },
+
+  // === BMS ===
+  bms_controller: {
+    rateRange: [800, 5000],
+    breakdown: {
+      materials: [0.50, 0.65],
+      labor: [0.15, 0.25],
+      equipment: [0.05, 0.10],
+      logistics: [0.05, 0.10],
+    },
+    scaleFactors: [
+      { threshold: 10, factor: 0.95 },
+      { threshold: 50, factor: 0.90 },
+    ],
+    locationSensitivity: 0.30,
+    complexityRange: [0.85, 1.25],
+    logisticsWeight: "light",
+    validRange: [500, 8000],
+  },
+  bms_sensor: {
+    rateRange: [150, 1200],
+    breakdown: {
+      materials: [0.55, 0.70],
+      labor: [0.15, 0.25],
+      equipment: [0.02, 0.08],
+      logistics: [0.03, 0.08],
+    },
+    scaleFactors: [
+      { threshold: 50, factor: 0.92 },
+      { threshold: 200, factor: 0.85 },
+    ],
+    locationSensitivity: 0.25,
+    complexityRange: [0.85, 1.20],
+    logisticsWeight: "light",
+    validRange: [80, 2000],
+  },
+  bms_actuator: {
+    rateRange: [200, 1500],
+    breakdown: {
+      materials: [0.55, 0.65],
+      labor: [0.20, 0.30],
+      equipment: [0.02, 0.08],
+      logistics: [0.03, 0.08],
+    },
+    scaleFactors: [
+      { threshold: 20, factor: 0.93 },
+      { threshold: 100, factor: 0.87 },
+    ],
+    locationSensitivity: 0.25,
+    complexityRange: [0.85, 1.20],
+    logisticsWeight: "light",
+    validRange: [100, 2500],
+  },
 };
 
 export function getCostModel(category: ItemCategory): CostModel {
