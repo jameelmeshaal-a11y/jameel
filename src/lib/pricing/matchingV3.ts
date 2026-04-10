@@ -62,6 +62,7 @@ interface RateLibraryItem {
   item_name_aliases?: string[] | null;
   item_code?: string | null;
   item_description?: string | null;
+  notes?: string | null;
 }
 
 export interface MatchResultV3 {
@@ -84,6 +85,7 @@ const WEIGHTS = {
   CONTAINMENT_BONUS: 20,    // overlap coefficient ≥ 0.8
   LIBRARY_KEYWORDS: 15,     // hits against library keywords field
   PARENT_CONTEXT_BOOST: 10, // enriched description improved the score
+  CORRECTION_NOTES_BOOST: 12, // correction notes keyword match
 } as const;
 
 // ─── Main V3 Matcher ────────────────────────────────────────────────────────
@@ -339,6 +341,21 @@ function scoreCandidate(
   if (usedParentContext && effectiveTextScore > 20) {
     score += WEIGHTS.PARENT_CONTEXT_BOOST;
     parts.push(`parent:+${WEIGHTS.PARENT_CONTEXT_BOOST}`);
+  }
+
+  // 10. Correction notes boost — leverage user corrections for better matching
+  if (candidate.notes) {
+    const correctionMatches = candidate.notes.match(/\[تصحيح[^\]]*\]:\s*(.+)/g);
+    if (correctionMatches && correctionMatches.length > 0) {
+      const correctionText = correctionMatches.join(" ");
+      const correctionTokens = new Set(tokenize(correctionText));
+      const corrHits = boqTokens.filter(t => correctionTokens.has(t)).length;
+      const corrScore = Math.min(WEIGHTS.CORRECTION_NOTES_BOOST, corrHits * 4);
+      if (corrScore > 0) {
+        score += corrScore;
+        parts.push(`corr:+${corrScore}`);
+      }
+    }
   }
 
   // Cap at 99
