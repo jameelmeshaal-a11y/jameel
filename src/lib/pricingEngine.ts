@@ -721,27 +721,29 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
+    const pricedUpdate = {
+      materials: cost.materials,
+      labor: cost.labor,
+      equipment: cost.equipment,
+      logistics: cost.logistics,
+      risk: cost.risk,
+      profit: cost.profit,
+      unit_rate: cost.unitRate,
+      total_price: cost.totalPrice,
+      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
+      location_factor: cost.locationFactor,
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      linked_rate_id: matchedItem?.id ?? null,
+      status: itemStatus,
+      notes: cost.explanation,
+    };
     const { error: updateError } = await supabase
       .from("boq_items")
-      .update({
-        materials: cost.materials,
-        labor: cost.labor,
-        equipment: cost.equipment,
-        logistics: cost.logistics,
-        risk: cost.risk,
-        profit: cost.profit,
-        unit_rate: cost.unitRate,
-        total_price: cost.totalPrice,
-        confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
-        location_factor: cost.locationFactor,
-        source: matchConfidence >= 70 ? "library-high" : "library-medium",
-        linked_rate_id: matchedItem?.id ?? null,
-        status: itemStatus,
-        notes: cost.explanation,
-      })
+      .update(pricedUpdate)
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
+    onItemPriced?.(block.primaryRow.id, pricedUpdate);
 
     totalValue += cost.totalPrice;
     pricedItems.push({
