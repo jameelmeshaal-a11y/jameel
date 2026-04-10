@@ -170,10 +170,27 @@ export function calculateBMSCost(input: BMSCalculationInput): BMSCalculationResu
 
   const matches: BMSPointMatch[] = [];
 
+  // Units that indicate passive materials (not discrete equipment)
+  const EXCLUDED_UNITS = ["كجم", "kg", "م.ط", "م ط", "متر", "m", "م²", "م2", "m2", "م³", "م3", "m3", "لتر", "طن", "ton", "جالون"];
+  const MAX_QUANTITY_PER_ITEM = 200; // Safety cap — no building has 200+ of a single equipment type
+
   // Scan each item against BMS rules
   for (const item of items) {
     // Skip non-priced / zero-quantity items
     if (item.quantity <= 0) continue;
+
+    // Filter 1: Skip material-based units (kg, meters, etc.)
+    const unitLower = (item.unit || "").toLowerCase().trim();
+    if (EXCLUDED_UNITS.some(eu => unitLower.includes(eu))) {
+      console.log(`[BMS] Skipped "${item.description.slice(0, 40)}" — material unit: ${item.unit}`);
+      continue;
+    }
+
+    // Filter 2: Quantity safety cap
+    const effectiveQty = Math.min(item.quantity, MAX_QUANTITY_PER_ITEM);
+    if (item.quantity > MAX_QUANTITY_PER_ITEM) {
+      console.warn(`[BMS] Capped quantity for "${item.description.slice(0, 40)}": ${item.quantity} → ${MAX_QUANTITY_PER_ITEM}`);
+    }
 
     const combined = `${item.description} ${item.description_en || ""}`.toLowerCase();
 
@@ -190,10 +207,10 @@ export function calculateBMSCost(input: BMSCalculationInput): BMSCalculationResu
         matches.push({
           itemId: item.id,
           description: item.description.slice(0, 80),
-          quantity: item.quantity,
+          quantity: effectiveQty,
           matchedRule: rule.label,
           pointsPerUnit: pointsMid,
-          totalPoints: pointsMid * item.quantity,
+          totalPoints: pointsMid * effectiveQty,
           system: rule.system,
         });
         break; // first match wins per item
