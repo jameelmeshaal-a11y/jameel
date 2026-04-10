@@ -1,45 +1,30 @@
 
 
-# إصلاح عاجل: معادلة تسعير BMS تُنتج 44 مليون بدلاً من ~500 ألف
+# Fix: BMS source value violates database constraint
 
-## السبب الجذري
+## Problem
+The BMS pricing engine sets `source: "bms-points-engine"` when updating `boq_items`, but the database has a CHECK constraint (`boq_items_source_check`) that only allows these values:
+`library`, `library-high`, `library-medium`, `ai`, `manual`, `project_override`, `master_update`
 
-المشكلة واضحة تماماً: المحرك يحسب **النقاط = عدد_النقاط × الكمية** لكل بند، والكميات في جدول الكميات هي بالكيلوغرام والمتر الطولي:
+## Solution — Two changes needed
 
-| البند | الكمية | الوحدة | نقاط/وحدة | النقاط المحسوبة |
-|---|---|---|---|---|
-| مجاري هواء مجلفن | 36,000 | كجم | 2 | **72,000** ❌ |
-| مجاري هواء مجلفن | 18,000 | كجم | 2 | **36,000** ❌ |
-| مجاري هواء صاج أسود | 8,000 | كجم | 2 | **16,000** ❌ |
+### 1. Add `"bms-points-engine"` to the database constraint
+Run a migration to drop and recreate the CHECK constraint with the new value included.
 
-المحرك يعامل كل كيلوغرام من الصاج كأنه نقطة تحكم I/O — وهذا خطأ جسيم. **مجاري الهواء والمواسير والكابلات هي مواد سلبية** لا تملك نقاط تحكم. فقط **المعدات المنفصلة** (AHU, FCU, مضخة, كاشف دخان) لها نقاط I/O.
+```sql
+ALTER TABLE public.boq_items DROP CONSTRAINT boq_items_source_check;
+ALTER TABLE public.boq_items ADD CONSTRAINT boq_items_source_check 
+  CHECK (source IN ('library', 'library-high', 'library-medium', 'ai', 'manual', 'project_override', 'master_update', 'bms-points-engine'));
+```
 
-## الحل — تصفية ثلاثية المستوى
+### 2. No code changes needed
+The `source: "bms-points-engine"` value in `pricingEngine.ts` is correct and descriptive. We just need the database to accept it.
 
-### 1. إزالة القواعد الفضفاضة من قاموس النقاط
-حذف القواعد التي تطابق **مواد سلبية** بدلاً من معدات:
-- ❌ `"مراوح", "fan"` (فضفاض جداً — يطابق أي بند يذكر مروحة)
-- ❌ `"مجاري الهواء", "ductwork", "duct"` (مواد بالكيلوغرام)
-- ❌ `"تكييف", "تبريد", "air conditioning"` (أوصاف عامة)
-- ❌ `"تهوية", "ventilation"` (أوصاف عامة)
-- ❌ `"مكافحة الحريق", "fire fighting"` (مواسير ومواد)
-- ❌ `"إنذار حريق", "إنذار"` (فضفاض)
-- ❌ `"إطفاء", "اطفاء"` (مواسير ومواد)
-- ❌ `"كابل تحكم"` (كابلات بالمتر)
-- ❌ `"damper", "بوابة هواء"` (بدون motor = لا نقاط)
+## Files affected
 
-### 2. فلترة بالوحدة — رفض وحدات المواد
-إضافة قائمة وحدات مستثناة: إذا كانت وحدة البند `كجم`, `م.ط`, `متر`, `م²`, `م³`, `لتر`, `طن` → **تخطي** — هذه مواد وليست معدات.
-
-### 3. حد أقصى للكمية (Safety Cap)
-إذا كانت الكمية > 200 لبند واحد → **تخطي** أو **استخدم 1 كنقطة واحدة**. لا يوجد مبنى فيه 36,000 وحدة AHU.
-
-## الملفات المتأثرة
-
-| الملف | التغيير |
+| File | Change |
 |---|---|
-| `src/lib/pricing/bmsEngine.ts` | حذف القواعد الفضفاضة + فلتر الوحدات + حد الكمية |
+| Database migration | Add `bms-points-engine` to `boq_items_source_check` constraint |
 
-## النتيجة المتوقعة
-بدلاً من 65,000 نقطة → يجب أن تكون بحدود **200-800 نقطة** (المعدات الفعلية فقط)، مما يعطي تكلفة **100,000 - 500,000 ريال** وهو المدى المنطقي لنظام BMS.
+After this fix, pressing the reprice button on a BMS item will successfully save the calculated price to the database.
 
