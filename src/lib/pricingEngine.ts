@@ -509,11 +509,13 @@ export async function runPricingEngine(
   for (const block of blocks) {
     // 1. Mark contributor rows as descriptive in DB
     for (const contributor of block.contributorRows) {
-      await supabase.from("boq_items").update({
+      const contribUpdate = {
         status: "descriptive",
         notes: `وصف مدمج مع البند ${block.itemNo || block.primaryRow.item_no || "—"}`,
         ...NULL_PRICING_FIELDS,
-      }).eq("id", contributor.id);
+      };
+      await supabase.from("boq_items").update(contribUpdate).eq("id", contributor.id);
+      onItemPriced?.(contributor.id, contribUpdate);
     }
 
     processedCount += block.contributorRows.length;
@@ -521,11 +523,13 @@ export async function runPricingEngine(
     // 2. Non-priced blocks (standalone descriptive / section headers with qty=0)
     if (block.quantity <= 0) {
       const classification = classifyBoQRow(block.primaryRow as any);
-      await supabase.from("boq_items").update({
+      const descUpdate = {
         status: classification.type === "descriptive" ? "descriptive" : "needs_review",
         notes: getRowClassificationNote(block.primaryRow as any),
         ...NULL_PRICING_FIELDS,
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(descUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, descUpdate);
       processedCount++;
       onProgress?.(processedCount, items.length);
       continue;
@@ -533,10 +537,12 @@ export async function runPricingEngine(
 
     // 3. Manual override protection
     if (hasManualOverride(block.primaryRow)) {
-      await supabase.from("boq_items").update({
+      const overrideUpdate = {
         status: "needs_review",
         notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي محفوظ",
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(overrideUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, overrideUpdate);
       processedCount++;
       onProgress?.(processedCount, items.length);
       continue;
