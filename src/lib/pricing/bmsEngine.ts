@@ -130,6 +130,24 @@ const SYSTEM_LABELS: Record<string, string> = {
   plumbing: "سباكة (Plumbing)",
 };
 
+// ─── BMS Item Detection ────────────────────────────────────────────────────
+
+const BMS_ITEM_KEYWORDS = [
+  "bms", "building management system",
+  "إدارة المباني", "نظام إدارة المباني",
+  "نظام تحكم مركزي", "نظام التحكم والمراقبة",
+  "أنظمة التحكم والمراقبة",
+];
+
+/**
+ * Detect if a BoQ item description refers to a BMS system line item.
+ * This is the umbrella item that should be priced via the points engine.
+ */
+export function isBMSItem(description: string): boolean {
+  const lower = description.toLowerCase();
+  return BMS_ITEM_KEYWORDS.some(kw => lower.includes(kw));
+}
+
 // ─── Core Engine ────────────────────────────────────────────────────────────
 
 /**
