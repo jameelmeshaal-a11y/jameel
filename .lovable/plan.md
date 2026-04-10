@@ -1,55 +1,43 @@
 
 
-# تحديث محرك التسعير: عرض تتابعي في الوقت الحقيقي
+# نظام ملاحظات التصحيح + التعلّم من الأخطاء
 
-## الوضع الحالي
-المحرك يعالج البنود تتابعياً بالفعل (loop واحد)، لكن واجهة الجدول لا تتحدث إلا بعد انتهاء **جميع** البنود — لأن `refetchQueries` يُستدعى فقط في النهاية.
+## الفكرة
+عند تعديل سعر بند في جدول الكميات، يظهر حقل **"سبب التعديل"** يكتب فيه المستخدم لماذا السعر كان خاطئاً (مثلاً: "هذا بند أنابيب وليس صمامات"). هذه الملاحظة تُحفظ في:
+1. **`boq_items.override_reason`** — موجود فعلاً في قاعدة البيانات
+2. **`rate_library.notes`** — كحقل تراكمي يُثري المكتبة
+3. **`rate_library.item_name_aliases`** — إضافة الاسم الصحيح كمرادف
 
-## التغيير المطلوب
-إضافة callback ثانٍ `onItemPriced` يُرسل بيانات كل بند فور تسعيره → الواجهة تحدّث الصف مباشرة في الجدول + الإجمالي التراكمي.
+عند التسعير مستقبلاً، المحرك يستخدم هذه الملاحظات والمرادفات لتحسين المطابقة.
 
----
+## التغييرات
 
-## الملفات والتغييرات
+### 1. `src/components/PriceBreakdownModal.tsx`
+- إضافة حقل **Textarea** يظهر في وضع التعديل بعنوان "سبب التعديل / ملاحظة للنظام"
+- حقل اختياري لكن واضح ومشجّع للاستخدام
+- عند الحفظ: تمرير `override_reason` إلى `boq_items` update + تمريره إلى `syncToRateLibrary`
 
-### 1. `src/lib/pricingEngine.ts`
-- إضافة parameter جديد `onItemPriced` لـ `runPricingEngine` و `repriceUnpricedItems`
-- بعد كل `supabase.update` ناجح لبند، استدعاء `onItemPriced(itemId, pricingData)`
-- نفس المنطق لـ descriptive/unmatched rows (ترسل status فقط بدون سعر)
-- **لا تغيير** في خوارزميات التسعير أو المطابقة أو السياسات
+### 2. `src/lib/pricing/rateSyncService.ts`
+- إضافة parameter `correctionNote?: string` لـ `SyncParams`
+- عند المزامنة مع المكتبة:
+  - إلحاق الملاحظة بـ `rate_library.notes` (تراكمي)
+  - استخراج الكلمات المفتاحية من الملاحظة وإضافتها لـ `keywords`
+  - إذا ذكر المستخدم اسماً بديلاً، إضافته لـ `item_name_aliases`
 
-### 2. `src/components/BoQTable.tsx`
-- في `handlePricing` / `handleRePrice` / `handleRepriceUnpriced`: تمرير callback `onItemPriced`
-- الـ callback يستخدم `qc.setQueryData` لتحديث الصف المحدد في cache مباشرة (بدون refetch)
-- إضافة state `runningTotal` يتراكم مع كل بند مسعّر ويظهر فوراً بجانب شريط التقدم
-- عرض اسم البند الحالي قيد التسعير في شريط التقدم
+### 3. `src/lib/pricing/matchingV3.ts`
+- عند المطابقة: فحص `item_name_aliases` بجانب `standard_name_ar/en` (موجود جزئياً)
+- فحص `notes` المكتبة للكلمات المفتاحية التصحيحية
 
-### 3. لا تغيير في:
-- خوارزميات المطابقة (`matchingV3`, `similarItemMatcher`)
-- سياسات التسعير (`priceFromApprovedRate`, `sourceResolver`)
-- حساب الإجماليات النهائي (`recalculate_project_total`)
-- RLS أو قاعدة البيانات
+### لا تغيير في:
+- هيكل قاعدة البيانات (كل الحقول موجودة)
+- خوارزميات التسعير الأساسية
+- سياسات RLS
 
----
+## الملفات المتأثرة
 
-## التفاصيل التقنية
-
-```text
-runPricingEngine(boqFileId, cities, onProgress, projectType, onItemPriced?)
-                                                               ↑ NEW
-onItemPriced = (itemId: string, update: {
-  unit_rate, total_price, status, confidence, source, notes, ...
-}) => void
-
-BoQTable callback:
-  qc.setQueryData(["boq-items", boqFileId], (old) =>
-    old.map(item => item.id === itemId ? { ...item, ...update } : item)
-  )
-  setRunningTotal(prev => prev + (update.total_price || 0))
-```
-
-هذا يضمن:
-- كل بند يظهر سعره فور معالجته
-- الإجمالي يتزايد تدريجياً
-- لا تأثير على أي منطق حسابي أو سياسة موجودة
+| الملف | التغيير |
+|---|---|
+| `src/components/PriceBreakdownModal.tsx` | إضافة حقل سبب التعديل في وضع التحرير |
+| `src/lib/pricing/rateSyncService.ts` | حفظ الملاحظة في المكتبة + إثراء المرادفات |
+| `src/lib/pricing/matchingV3.ts` | استخدام ملاحظات المكتبة في تحسين المطابقة |
 
