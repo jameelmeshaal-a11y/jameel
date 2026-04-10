@@ -43,6 +43,9 @@ export { validatePricingQuality, type ValidationResult } from "./pricing/pricing
 export { detectCategory } from "./pricing/categoryDetector";
 export { calculateProjectOverhead, VAT_RATE, type ProjectSummary, type ProjectType } from "./pricing/locationEngine";
 
+/** Callback fired after each item is priced/processed in the engine */
+export type OnItemPricedCallback = (itemId: string, update: Record<string, any>) => void;
+
 /** Check if a row is a valid priceable item (quantity > 0, has unit and item code) */
 export function isPriceableItem(item: { quantity: number; unit?: string; item_no?: string }): boolean {
   return isPriceableBoQRow(item);
@@ -454,7 +457,8 @@ export async function runPricingEngine(
   boqFileId: string,
   cities: string[],
   onProgress?: (current: number, total: number) => void,
-  projectType: ProjectType = "government_civil"
+  projectType: ProjectType = "government_civil",
+  onItemPriced?: OnItemPricedCallback,
 ): Promise<PricingResult> {
   // Fetch items, library, location factors, sources, file metadata, AND historical map in parallel
   const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
@@ -505,11 +509,13 @@ export async function runPricingEngine(
   for (const block of blocks) {
     // 1. Mark contributor rows as descriptive in DB
     for (const contributor of block.contributorRows) {
-      await supabase.from("boq_items").update({
+      const contribUpdate = {
         status: "descriptive",
         notes: `وصف مدمج مع البند ${block.itemNo || block.primaryRow.item_no || "—"}`,
         ...NULL_PRICING_FIELDS,
-      }).eq("id", contributor.id);
+      };
+      await supabase.from("boq_items").update(contribUpdate).eq("id", contributor.id);
+      onItemPriced?.(contributor.id, contribUpdate);
     }
 
     processedCount += block.contributorRows.length;
@@ -517,11 +523,13 @@ export async function runPricingEngine(
     // 2. Non-priced blocks (standalone descriptive / section headers with qty=0)
     if (block.quantity <= 0) {
       const classification = classifyBoQRow(block.primaryRow as any);
-      await supabase.from("boq_items").update({
+      const descUpdate = {
         status: classification.type === "descriptive" ? "descriptive" : "needs_review",
         notes: getRowClassificationNote(block.primaryRow as any),
         ...NULL_PRICING_FIELDS,
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(descUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, descUpdate);
       processedCount++;
       onProgress?.(processedCount, items.length);
       continue;
@@ -529,10 +537,12 @@ export async function runPricingEngine(
 
     // 3. Manual override protection
     if (hasManualOverride(block.primaryRow)) {
-      await supabase.from("boq_items").update({
+      const overrideUpdate = {
         status: "needs_review",
         notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي محفوظ",
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(overrideUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, overrideUpdate);
       processedCount++;
       onProgress?.(processedCount, items.length);
       continue;
@@ -665,7 +675,7 @@ export async function runPricingEngine(
       }
     } else {
       // ═══ NO MATCH — no AI fallback, no price generation ═══
-      await supabase.from("boq_items").update({
+      const unmatchedUpdate = {
         unit_rate: null,
         total_price: null,
         materials: null,
@@ -680,7 +690,9 @@ export async function runPricingEngine(
         location_factor: null,
         status: "unmatched",
         notes: `🔴 NO MATCH — لم يتم العثور على البند في مكتبة الأسعار | "${block.mergedDescription.slice(0, 80)}"`,
-      }).eq("id", block.primaryRow.id);
+      };
+      await supabase.from("boq_items").update(unmatchedUpdate).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, unmatchedUpdate);
 
       processedCount++;
       onProgress?.(processedCount, items.length);
@@ -709,27 +721,29 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
+    const pricedUpdate = {
+      materials: cost.materials,
+      labor: cost.labor,
+      equipment: cost.equipment,
+      logistics: cost.logistics,
+      risk: cost.risk,
+      profit: cost.profit,
+      unit_rate: cost.unitRate,
+      total_price: cost.totalPrice,
+      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
+      location_factor: cost.locationFactor,
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      linked_rate_id: matchedItem?.id ?? null,
+      status: itemStatus,
+      notes: cost.explanation,
+    };
     const { error: updateError } = await supabase
       .from("boq_items")
-      .update({
-        materials: cost.materials,
-        labor: cost.labor,
-        equipment: cost.equipment,
-        logistics: cost.logistics,
-        risk: cost.risk,
-        profit: cost.profit,
-        unit_rate: cost.unitRate,
-        total_price: cost.totalPrice,
-        confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
-        location_factor: cost.locationFactor,
-        source: matchConfidence >= 70 ? "library-high" : "library-medium",
-        linked_rate_id: matchedItem?.id ?? null,
-        status: itemStatus,
-        notes: cost.explanation,
-      })
+      .update(pricedUpdate)
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
+    onItemPriced?.(block.primaryRow.id, pricedUpdate);
 
     totalValue += cost.totalPrice;
     pricedItems.push({
@@ -815,6 +829,7 @@ export async function repriceUnpricedItems(
   boqFileId: string,
   cities: string[],
   onProgress?: (current: number, total: number) => void,
+  onItemPriced?: OnItemPricedCallback,
 ): Promise<{ pricedCount: number; stillUnpricedCount: number }> {
   // 1. Fetch ONLY unpriced rows
   const { data: unpricedRows, error: fetchErr } = await supabase
@@ -919,7 +934,7 @@ export async function repriceUnpricedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    await supabase.from("boq_items").update({
+    const repricedUpdate = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
@@ -929,7 +944,9 @@ export async function repriceUnpricedItems(
       linked_rate_id: matchedItem.id,
       status: itemStatus,
       notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
-    }).eq("id", row.id);
+    };
+    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
   }

@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, type OnItemPricedCallback } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -50,6 +50,28 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [runningTotal, setRunningTotal] = useState<number | null>(null);
+  const [currentItemName, setCurrentItemName] = useState<string>("");
+
+  // Real-time cache updater callback
+  const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
+    return (itemId: string, update: Record<string, any>) => {
+      // Update the specific row in React Query cache
+      qc.setQueryData(["boq-items", boqFileId], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.map(item => item.id === itemId ? { ...item, ...update } : item);
+      });
+      // Update running total
+      if (update.total_price && update.total_price > 0) {
+        setRunningTotal(prev => (prev || 0) + update.total_price);
+      }
+      // Show current item name
+      if (update.notes) {
+        const match = update.notes.match(/[""]([^""]+)[""]/);
+        if (match) setCurrentItemName(match[1].slice(0, 50));
+      }
+    };
+  }, [boqFileId, qc]);
 
   const { data: items = [], isLoading: itemsLoading } = useBoQItems(boqFileId);
   const { data: project } = useProject(projectId);
@@ -76,10 +98,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
+      const onItemPricedCb = makeOnItemPriced();
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, "government_civil", onItemPricedCb);
       toast.success(`Priced ${result.itemCount} items — Total: ${formatCurrency(result.totalValue)}`);
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
@@ -95,13 +120,17 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, qc]);
+  }, [boqFileId, cities, qc, makeOnItemPriced]);
 
   const handleRePrice = useCallback(async () => {
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
       // 1. Snapshot current prices for audit trail
       const pricedItems = items.filter(i => i.unit_rate && i.unit_rate > 0);
@@ -127,9 +156,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
 
       // 4. Run pricing engine on clean data
+      const onItemPricedCb = makeOnItemPriced();
       const result = await runPricingEngine(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, "government_civil", onItemPricedCb);
 
       // 5. Update audit trail with new prices
       if (user) {
@@ -173,17 +203,22 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, items, qc, projectId]);
+  }, [boqFileId, cities, items, qc, projectId, makeOnItemPriced]);
 
   const handleRepriceUnpriced = useCallback(async () => {
     if (!boqFileId) return;
     setPricing(true);
     setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
     try {
+      const onItemPricedCb = makeOnItemPriced();
       const result = await repriceUnpricedItems(boqFileId, cities, (current, total) => {
         setPricingProgress({ current, total });
-      });
+      }, onItemPricedCb);
       if (result.pricedCount > 0) {
         toast.success(`تم تسعير ${result.pricedCount} بند — ${result.stillUnpricedCount} بند لا يزال بدون سعر`);
       } else {
@@ -199,8 +234,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.error(err.message);
     } finally {
       setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
     }
-  }, [boqFileId, cities, qc, projectId]);
+  }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
 
   const handleExport = async () => {
     if (items.length === 0) return;
@@ -440,11 +477,23 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Pricing items...
+              جاري التسعير...
             </span>
-            <span className="text-xs text-muted-foreground">{pricingProgress.current}/{pricingProgress.total}</span>
+            <div className="flex items-center gap-3">
+              {runningTotal !== null && runningTotal > 0 && (
+                <span className="text-xs font-semibold text-primary">
+                  الإجمالي: {formatCurrency(runningTotal)}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">{pricingProgress.current}/{pricingProgress.total}</span>
+            </div>
           </div>
           <Progress value={pricingProgress.total > 0 ? (pricingProgress.current / pricingProgress.total) * 100 : 0} className="h-2" />
+          {currentItemName && (
+            <div className="text-[11px] text-muted-foreground mt-1.5 truncate" dir="rtl">
+              ⏳ {currentItemName}
+            </div>
+          )}
         </div>
       )}
 
