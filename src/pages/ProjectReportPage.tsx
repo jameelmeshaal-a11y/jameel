@@ -106,11 +106,27 @@ export default function ProjectReportPage() {
 
         {selectedProjectId && allFiles.length > 0 && (
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-sm flex items-center gap-2">
                 <FileText className="w-4 h-4" />
                 {isRTL ? `ملخص جداول الكميات — ${selectedProject?.name || ""}` : `BoQ Summary — ${selectedProject?.name || ""}`}
               </CardTitle>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => {
+                  const files = allFiles.map((f: any) => ({ name: f.name, isArchived: f.is_archived, ...fileStats[f.id] || { totalItems: 0, pricedItems: 0, totalCost: 0 } }));
+                  exportReportExcel({ projectName: selectedProject?.name || "", files, totals });
+                }}>
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Excel
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  const files = allFiles.map((f: any) => ({ name: f.name, isArchived: f.is_archived, ...fileStats[f.id] || { totalItems: 0, pricedItems: 0, totalCost: 0 } }));
+                  exportReportPDF({ projectName: selectedProject?.name || "", files, totals }, isRTL ? "ar" : "en");
+                }}>
+                  <Download className="w-4 h-4" />
+                  PDF
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="pt-0">
               <div className="border rounded-lg overflow-hidden">
@@ -125,7 +141,7 @@ export default function ProjectReportPage() {
                   </TableHeader>
                   <TableBody>
                     {allFiles.map((file: any) => (
-                      <BoQFileSummaryRow key={file.id} file={file} onStats={handleStats[file.id] || (() => {})} />
+                      <BoQFileSummaryRow key={file.id} file={file} onStats={handleStats[file.id] || (() => {})} isRTL={isRTL} />
                     ))}
                   </TableBody>
                   <TableFooter>
