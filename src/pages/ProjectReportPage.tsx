@@ -55,7 +55,7 @@ export default function ProjectReportPage() {
 
   const handleStats = useMemo(() => {
     const handlers: Record<string, (stats: any) => void> = {};
-    activeFiles.forEach((f: any) => {
+    allFiles.forEach((f: any) => {
       handlers[f.id] = (stats: any) => {
         setFileStats(prev => {
           if (prev[f.id]?.totalItems === stats.totalItems && prev[f.id]?.pricedItems === stats.pricedItems && prev[f.id]?.totalCost === stats.totalCost) return prev;
@@ -64,7 +64,7 @@ export default function ProjectReportPage() {
       };
     });
     return handlers;
-  }, [activeFiles]);
+  }, [allFiles]);
 
   const totals = useMemo(() => {
     let totalItems = 0, pricedItems = 0, totalCost = 0;
@@ -104,7 +104,7 @@ export default function ProjectReportPage() {
           </CardContent>
         </Card>
 
-        {selectedProjectId && activeFiles.length > 0 && (
+        {selectedProjectId && allFiles.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
@@ -124,7 +124,7 @@ export default function ProjectReportPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {activeFiles.map((file: any) => (
+                    {allFiles.map((file: any) => (
                       <BoQFileSummaryRow key={file.id} file={file} onStats={handleStats[file.id] || (() => {})} />
                     ))}
                   </TableBody>
@@ -144,7 +144,7 @@ export default function ProjectReportPage() {
           </Card>
         )}
 
-        {selectedProjectId && activeFiles.length === 0 && (
+        {selectedProjectId && allFiles.length === 0 && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
               {isRTL ? "لا توجد جداول كميات لهذا المشروع" : "No BoQ files for this project"}
