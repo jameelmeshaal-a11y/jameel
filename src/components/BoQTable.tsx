@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import PricingIntegrityReport from "./PricingIntegrityReport";
 import { runIntegrityCheck, type IntegrityReport } from "@/lib/pricing/integrityChecker";
+import BMSAnalysisPanel from "./BMSAnalysisPanel";
 
 type PricingMode = "review" | "smart" | "auto";
 
@@ -503,48 +504,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      {/* BMS Points Summary */}
+      {/* BMS Points Analysis */}
       {bmsResult && bmsResult.hasBMSItems && (
-        <div className="mb-4 p-4 border rounded-lg bg-card" dir="rtl">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              🏗️ تقدير نظام إدارة المبنى (BMS)
-            </h3>
-            <Badge variant="secondary" className="text-xs">
-              {bmsResult.totalPoints} نقطة I/O
-            </Badge>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div className="p-2 rounded bg-muted/50 text-center">
-              <div className="text-[10px] text-muted-foreground">التكلفة الأساسية</div>
-              <div className="text-sm font-semibold">{formatCurrency(bmsResult.baseCost)}</div>
-            </div>
-            <div className="p-2 rounded bg-muted/50 text-center">
-              <div className="text-[10px] text-muted-foreground">تكامل + برمجة</div>
-              <div className="text-sm font-semibold">{formatCurrency(bmsResult.integrationCost + bmsResult.programmingCost)}</div>
-            </div>
-            <div className="p-2 rounded bg-muted/50 text-center">
-              <div className="text-[10px] text-muted-foreground">Server/Gateway</div>
-              <div className="text-sm font-semibold">{formatCurrency(bmsResult.serverCost)}</div>
-            </div>
-            <div className="p-2 rounded bg-primary/10 text-center border border-primary/20">
-              <div className="text-[10px] text-muted-foreground">إجمالي BMS</div>
-              <div className="text-sm font-bold text-primary">{formatCurrency(bmsResult.totalCost)}</div>
-            </div>
-          </div>
-          {bmsResult.systemBreakdown.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {bmsResult.systemBreakdown.map(sys => (
-                <Badge key={sys.system} variant="outline" className="text-[10px]">
-                  {sys.systemLabel}: {sys.totalPoints} نقطة ({sys.itemCount} بند)
-                </Badge>
-              ))}
-            </div>
-          )}
-          <div className="text-[10px] text-muted-foreground mt-2">
-            سعر النقطة: {bmsResult.ratePerPoint} ريال | المضاعفات: مشروع ×{bmsResult.projectMultiplier} | مباني ×{bmsResult.buildingMultiplier}
-          </div>
-        </div>
+        <BMSAnalysisPanel bmsResult={bmsResult} />
       )}
 
       {hasItems && autoFixFailed && !consistency.consistent && (
