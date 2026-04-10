@@ -1112,6 +1112,93 @@ export async function repriceSingleItem(
     item.linked_rate_id, approvedRateIds, item.notes,
   );
 
+  // ── BMS Detection: use points engine instead of library match ──
+  if (isBMSItem(description)) {
+    // Fetch ALL items in the same BoQ file for BMS point calculation
+    const { data: allItems } = await supabase
+      .from("boq_items")
+      .select("id, description, description_en, quantity, unit, unit_rate, total_price, status")
+      .eq("boq_file_id", boqFileId);
+
+    if (allItems && allItems.length > 0) {
+      const bmsInput = {
+        items: allItems.map(i => ({
+          id: i.id,
+          description: i.description || "",
+          description_en: i.description_en || "",
+          quantity: i.quantity || 0,
+          unit: i.unit || "",
+          unit_rate: i.unit_rate,
+          total_price: i.total_price,
+          status: i.status || "",
+        })),
+        projectType: (projectType === "government_civil" || projectType === "government_military")
+          ? "government" as const
+          : "commercial" as const,
+        ratePerPoint: 500,
+      };
+
+      const bmsResult = calculateBMSCost(bmsInput);
+
+      if (bmsResult.hasBMSItems && bmsResult.totalCost > 0) {
+        const bmsUnitRate = item.quantity > 0
+          ? +(bmsResult.totalCost / item.quantity).toFixed(2)
+          : bmsResult.totalCost;
+
+        const systemSummary = bmsResult.systemBreakdown
+          .map(s => `${s.systemLabel}: ${s.totalPoints} نقطة`)
+          .join(" | ");
+        const bmsNotes = [
+          `🏗️ BMS Points Engine`,
+          `إجمالي النقاط: ${bmsResult.totalPoints}`,
+          `سعر النقطة: ${bmsResult.ratePerPoint} ريال`,
+          systemSummary,
+          `التكلفة الأساسية: ${bmsResult.baseCost.toLocaleString()} ريال`,
+          `التكامل: ${bmsResult.integrationCost.toLocaleString()} ريال`,
+          `البرمجة: ${bmsResult.programmingCost.toLocaleString()} ريال`,
+          `السيرفر: ${bmsResult.serverCost.toLocaleString()} ريال`,
+          `معامل المشروع: ${bmsResult.projectMultiplier}`,
+          `معامل المباني: ${bmsResult.buildingMultiplier}`,
+          `البنود المطابقة: ${bmsResult.matches.length}`,
+        ].join(" | ");
+
+        const bmsUpdate = {
+          unit_rate: bmsUnitRate,
+          total_price: bmsResult.totalCost,
+          confidence: 90,
+          source: "bms-points-engine",
+          status: "approved" as string,
+          notes: bmsNotes,
+          linked_rate_id: null,
+          materials: +(bmsResult.totalCost * 0.40).toFixed(2),
+          labor: +(bmsResult.totalCost * 0.25).toFixed(2),
+          equipment: +(bmsResult.totalCost * 0.20).toFixed(2),
+          logistics: +(bmsResult.totalCost * 0.05).toFixed(2),
+          risk: +(bmsResult.totalCost * 0.05).toFixed(2),
+          profit: +(bmsResult.totalCost * 0.05).toFixed(2),
+          location_factor: 1.0,
+        };
+
+        await supabase.from("boq_items").update(bmsUpdate).eq("id", itemId);
+
+        // Recalculate project total
+        const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
+        if (boqFile) {
+          await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
+        }
+
+        return {
+          success: true,
+          unitRate: bmsUnitRate,
+          totalPrice: bmsResult.totalCost,
+          confidence: 90,
+          source: "bms-points-engine",
+          matchedName: `BMS Points Engine (${bmsResult.totalPoints} نقطة)`,
+        };
+      }
+    }
+  }
+
   if (!libraryMatchResult) {
     libraryMatchResult = findHistoricalMatch(
       description, descriptionEn, item.unit, historicalMap, rateLibrary,
