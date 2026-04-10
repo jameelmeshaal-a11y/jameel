@@ -477,11 +477,23 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Pricing items...
+              جاري التسعير...
             </span>
-            <span className="text-xs text-muted-foreground">{pricingProgress.current}/{pricingProgress.total}</span>
+            <div className="flex items-center gap-3">
+              {runningTotal !== null && runningTotal > 0 && (
+                <span className="text-xs font-semibold text-primary">
+                  الإجمالي: {formatCurrency(runningTotal)}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">{pricingProgress.current}/{pricingProgress.total}</span>
+            </div>
           </div>
           <Progress value={pricingProgress.total > 0 ? (pricingProgress.current / pricingProgress.total) * 100 : 0} className="h-2" />
+          {currentItemName && (
+            <div className="text-[11px] text-muted-foreground mt-1.5 truncate" dir="rtl">
+              ⏳ {currentItemName}
+            </div>
+          )}
         </div>
       )}
 
