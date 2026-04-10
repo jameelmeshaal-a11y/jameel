@@ -49,7 +49,7 @@ export default function ProjectReportPage() {
   const { data: projects = [] } = useProjects();
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const { data: boqFiles = [] } = useBoQFiles(selectedProjectId || undefined);
-  const activeFiles = useMemo(() => boqFiles.filter((f: any) => !f.is_archived), [boqFiles]);
+  const allFiles = boqFiles;
 
   const [fileStats, setFileStats] = useState<Record<string, { totalItems: number; pricedItems: number; totalCost: number }>>({});
 
