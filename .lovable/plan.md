@@ -1,30 +1,38 @@
 
 
-# Fix: BMS source value violates database constraint
+# نقل زر العين (👁) بجانب عمود الإجمالي
 
-## Problem
-The BMS pricing engine sets `source: "bms-points-engine"` when updating `boq_items`, but the database has a CHECK constraint (`boq_items_source_check`) that only allows these values:
-`library`, `library-high`, `library-medium`, `ai`, `manual`, `project_override`, `master_update`
+## الوضع الحالي
+زر العين موجود في آخر عمود (العمود 15+) مما يتطلب تمرير أفقي للوصول إليه. الزر مخفي افتراضياً ويظهر فقط عند تمرير الماوس على الصف (`opacity-0 group-hover:opacity-100`).
 
-## Solution — Two changes needed
+## التغيير المطلوب
+**ملف واحد فقط**: `src/components/BoQTable.tsx`
 
-### 1. Add `"bms-points-engine"` to the database constraint
-Run a migration to drop and recreate the CHECK constraint with the new value included.
-
-```sql
-ALTER TABLE public.boq_items DROP CONSTRAINT boq_items_source_check;
-ALTER TABLE public.boq_items ADD CONSTRAINT boq_items_source_check 
-  CHECK (source IN ('library', 'library-high', 'library-medium', 'ai', 'manual', 'project_override', 'master_update', 'bms-points-engine'));
+### 1. إضافة عمود جديد بعد عمود الإجمالي في `<thead>`
+بعد السطر 706 (`th` الإجمالي)، إضافة:
+```html
+<th className="w-10"></th>
 ```
 
-### 2. No code changes needed
-The `source: "bms-points-engine"` value in `pricingEngine.ts` is correct and descriptive. We just need the database to accept it.
+### 2. نقل زر العين إلى خلية جديدة بعد خلية الإجمالي
+بعد السطر 794 (خلية الإجمالي)، إضافة خلية جديدة تحتوي على زر العين **بلون أسود ظاهر دائماً** (بدون `opacity-0`):
+```tsx
+<td className="text-center">
+  {isPriced && (
+    <Button variant="ghost" size="icon" 
+      className="w-7 h-7 text-foreground" 
+      onClick={() => setSelectedItem(item)}>
+      <Eye className="w-3.5 h-3.5" />
+    </Button>
+  )}
+</td>
+```
 
-## Files affected
+### 3. إزالة زر العين من العمود الأخير
+حذف الأسطر 856-860 (زر العين من العمود الأخير) — يبقى فقط زر إعادة التسعير ⟲ في ذلك العمود.
 
-| File | Change |
-|---|---|
-| Database migration | Add `bms-points-engine` to `boq_items_source_check` constraint |
-
-After this fix, pressing the reprice button on a BMS item will successfully save the calculated price to the database.
+## ما لا يتأثر
+- لا تغيير في أي معادلة أو خوارزمية
+- لا تغيير في `setSelectedItem` أو `PriceBreakdownModal`
+- زر إعادة التسعير ⟲ يبقى في مكانه الأصلي
 
