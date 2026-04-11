@@ -704,6 +704,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
+              <th className="w-10"></th>
               {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
               <th className="pricing-col w-20 text-right">{t("labor")}</th>
               <th className="pricing-col w-20 text-right">{t("equip")}</th>
@@ -792,6 +793,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                 </td>
                 <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
+                <td className="text-center">
+                  {isPriced && (
+                    <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)}>
+                      <Eye className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </td>
                 {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
                 <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
                 <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
@@ -851,11 +859,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                         }}
                       >
                         {repricingItemId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                      </Button>
-                    )}
-                    {isPriced && (
-                      <Button variant="ghost" size="icon" className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedItem(item)}>
-                        <Eye className="w-3.5 h-3.5" />
                       </Button>
                     )}
                   </div>
