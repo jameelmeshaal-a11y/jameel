@@ -768,6 +768,23 @@ export async function runPricingEngine(
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
+
+    // ── LAYER 1: Post-Write Integrity Guard ─────────────────────────────────
+    // Verify written rate matches library exactly — force-correct if mismatch
+    if (matchedItem && cost.unitRate !== matchedItem.target_rate) {
+      console.error(`🛑 RATE MISMATCH: wrote ${cost.unitRate} but library has ${matchedItem.target_rate} for "${block.mergedDescription.slice(0, 40)}"`);
+      const correctedRate = matchedItem.target_rate;
+      const correctedTotal = +(correctedRate * block.quantity).toFixed(2);
+      await supabase.from("boq_items").update({
+        unit_rate: correctedRate,
+        total_price: correctedTotal,
+      }).eq("id", block.primaryRow.id);
+      pricedUpdate.unit_rate = correctedRate;
+      pricedUpdate.total_price = correctedTotal;
+      cost.unitRate = correctedRate;
+      cost.totalPrice = correctedTotal;
+    }
+
     onItemPriced?.(block.primaryRow.id, pricedUpdate);
 
     totalValue += cost.totalPrice;
@@ -872,6 +889,23 @@ export async function runPricingEngine(
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
   if (boqFile) {
     await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
+  }
+
+  // ── LAYER 2: Auto Integrity Check & Fix after bulk pricing ──────────────
+  try {
+    const { runIntegrityCheck, fixIntegrityIssues } = await import("@/lib/pricing/integrityChecker");
+    const report = await runIntegrityCheck(boqFileId);
+    if (report.summary.byType.rate_deviation > 0) {
+      const deviations = report.issues.filter(i => i.issueType === "rate_deviation");
+      console.log(`🔧 Auto-fixing ${deviations.length} rate deviations after bulk pricing`);
+      await fixIntegrityIssues(deviations, boqFileId);
+      // Recalculate total after fixes
+      if (boqFile) {
+        await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
+      }
+    }
+  } catch (integrityErr) {
+    console.warn("⚠️ Post-pricing integrity check failed (non-blocking):", integrityErr);
   }
 
   const summary = calculateProjectOverhead(totalValue, projectType);
