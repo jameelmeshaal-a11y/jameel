@@ -6,6 +6,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { detectCategory } from "./categoryDetector";
 import { getCostModel } from "./costModels";
+import { parseDimensions, compareDimensions } from "./synonyms";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -15,7 +16,8 @@ export type IssueType =
   | "breakdown_mismatch"  // sum of components ≠ unit_rate
   | "low_confidence"      // confidence 50-69%
   | "zero_price"          // unit_rate = 0 on priceable item
-  | "zero_breakdown";     // materials+labor+equipment+logistics = 0 with price > 0
+  | "zero_breakdown"      // materials+labor+equipment+logistics = 0 with price > 0
+  | "dimension_mismatch"; // linked to library record with different WxH dimensions
 
 export type FixAction = "reprice" | "redistribute" | "unlink" | "manual";
 
@@ -178,6 +180,31 @@ export async function runIntegrityCheck(boqFileId: string): Promise<IntegrityRep
       }
     }
 
+    // ── Check 6: Dimension mismatch with linked library ──
+    if (item.linked_rate_id) {
+      const lib = libMap.get(item.linked_rate_id);
+      if (lib) {
+        const boqDims = parseDimensions((item.description || "") + " " + (item.description_en || ""));
+        const libDims = parseDimensions((lib.standard_name_ar || "") + " " + (lib.standard_name_en || ""));
+        const boqHasWxH = boqDims.some((d: any) => d.type === "dimensions" && d.values.length >= 2);
+        const libHasWxH = libDims.some((d: any) => d.type === "dimensions" && d.values.length >= 2);
+        if (boqHasWxH && libHasWxH && compareDimensions(boqDims, libDims) === -1) {
+          itemIssues.push({
+            itemId: item.id,
+            itemNo: item.item_no,
+            description: item.description,
+            issueType: "dimension_mismatch",
+            severity: "critical",
+            currentValue: 0,
+            expectedValue: 0,
+            detail: `بند مرتبط بسجل مكتبة بمقاسات مختلفة — يجب إعادة المطابقة`,
+            fixAction: "unlink",
+            linkedRateId: item.linked_rate_id,
+          });
+        }
+      }
+    }
+
     if (itemIssues.length === 0 && item.unit_rate && item.unit_rate > 0) {
       healthyCount++;
     }
@@ -191,6 +218,7 @@ export async function runIntegrityCheck(boqFileId: string): Promise<IntegrityRep
     low_confidence: 0,
     zero_price: 0,
     zero_breakdown: 0,
+    dimension_mismatch: 0,
   };
   let critical = 0;
   let warning = 0;

@@ -18,6 +18,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
 import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+import { parseDimensions, compareDimensions } from "./pricing/synonyms";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
 // Set to false to instantly revert to legacy matching.
@@ -409,12 +410,27 @@ function findHistoricalMatch(
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
 
+  // Dimension check helper — returns true if dimensions conflict
+  const hasDimensionConflict = (linked: RateLibraryItem): boolean => {
+    const boqDims = parseDimensions(description + " " + (descriptionEn || ""));
+    const linkedDims = parseDimensions(
+      (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "")
+    );
+    const boqHasWxH = boqDims.some(d => d.type === "dimensions" && d.values.length >= 2);
+    const linkedHasWxH = linkedDims.some(d => d.type === "dimensions" && d.values.length >= 2);
+    if (boqHasWxH && linkedHasWxH && compareDimensions(boqDims, linkedDims) === -1) {
+      console.log(`[A.5] Dimension mismatch: "${description}" vs "${linked.standard_name_ar}" — skipping`);
+      return true;
+    }
+    return false;
+  };
+
   // Pass 1: exact normalized text match
   for (const hist of historicalMap) {
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked) return { item: linked, confidence: 93 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
     }
   }
 
@@ -429,7 +445,7 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked) return { item: linked, confidence: 90 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
     }
   }
 

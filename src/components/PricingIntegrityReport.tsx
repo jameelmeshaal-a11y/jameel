@@ -23,6 +23,7 @@ const ISSUE_TYPE_LABELS: Record<IssueType, { label: string; icon: string }> = {
   low_confidence:     { label: "تطابق متوسط الثقة (50-69%)", icon: "🟡" },
   zero_price:         { label: "بنود بسعر صفر", icon: "🔴" },
   zero_breakdown:     { label: "توزيع تكلفة أصفار", icon: "⚠️" },
+  dimension_mismatch: { label: "مقاسات مختلفة عن المكتبة", icon: "📐" },
 };
 
 export default function PricingIntegrityReport({ open, onOpenChange, report, boqFileId, onFixed }: Props) {
