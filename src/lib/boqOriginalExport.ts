@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { supabase } from "@/integrations/supabase/client";
 
 interface BoQItemForExport {
@@ -86,10 +87,29 @@ export async function exportOriginalWithPrices(
     throw new Error(`فشل تحميل الملف الأصلي: ${downloadError?.message || "ملف غير موجود"}`);
   }
 
-  // 2. Load into ExcelJS (preserves formatting)
-  const buffer = await fileData.arrayBuffer();
+  // 2. Load into ExcelJS — pre-process to fix shared formula errors (common in Etimad files)
+  const rawBuffer = await fileData.arrayBuffer();
+  let loadBuffer = rawBuffer;
+
+  try {
+    const zip = await JSZip.loadAsync(rawBuffer);
+    const sheetFiles = Object.keys(zip.files).filter(f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"));
+    for (const sheetFile of sheetFiles) {
+      const xml = await zip.file(sheetFile)?.async("string");
+      if (xml && xml.includes('t="shared"')) {
+        const fixedXml = xml
+          .replace(/\s+t="shared"\s+si="\d+"/g, '')
+          .replace(/<f\s+t="shared"[^>]*\/>/g, '');
+        zip.file(sheetFile, fixedXml);
+      }
+    }
+    loadBuffer = await zip.generateAsync({ type: "arraybuffer" });
+  } catch (zipErr) {
+    console.warn("[Etemad Export] ZIP pre-processing failed, using raw buffer:", zipErr);
+  }
+
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  await wb.xlsx.load(loadBuffer);
 
   const sheet = wb.getWorksheet(1);
   if (!sheet) throw new Error("لا يوجد شيت في الملف الأصلي");
