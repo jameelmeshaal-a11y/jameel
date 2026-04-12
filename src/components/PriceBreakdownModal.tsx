@@ -14,6 +14,7 @@ import {
 } from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
 import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface BoQItemRow {
   id: string;
@@ -56,6 +57,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [correctionNote, setCorrectionNote] = useState("");
+  const { user } = useAuth();
   const [autoRebalance, setAutoRebalance] = useState(true);
 
   const initial: BreakdownValues = {
@@ -290,6 +292,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         values,
         unitRate,
         correctionNote: correctionNote || undefined,
+        userId: user?.id,
       });
 
       if (!syncResult) {

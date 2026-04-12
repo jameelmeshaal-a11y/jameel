@@ -19,6 +19,8 @@ export interface SyncParams {
   unitRate?: number;
   /** User correction note explaining why the price was wrong — enriches the library for future matching */
   correctionNote?: string;
+  /** User ID for approval tracking */
+  userId?: string;
 }
 
 export interface SyncResult {
@@ -125,8 +127,10 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         base_rate: unitRate,
         target_rate: unitRate,
         ...pcts,
-        source_type: "Revised",
+        source_type: "Approved",
         last_reviewed_at: new Date().toISOString(),
+        approved_at: new Date().toISOString(),
+        ...(params.userId ? { approved_by: params.userId } : {}),
         ...correctionEnrichment,
       })
       .eq("id", bestMatch.id);
@@ -163,6 +167,17 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
       aliases.push(itemData.description + " " + itemDescription.slice(0, 60));
     }
 
+    // Build notes for new items from correction note
+    const newItemNotes = params.correctionNote
+      ? `[تصحيح ${new Date().toISOString().split("T")[0]}]: ${params.correctionNote}`
+      : undefined;
+
+    // Extract keywords from correction note for new items
+    const noteKeywords = params.correctionNote
+      ? tokenize(params.correctionNote).filter(k => k.length > 2)
+      : [];
+    const allKeywords = [...new Set([...keywords, ...noteKeywords])];
+
     const { data: inserted, error } = await supabase
       .from("rate_library")
       .insert({
@@ -175,12 +190,15 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
         min_rate: +(unitRate * 0.9).toFixed(2),
         max_rate: +(unitRate * 1.1).toFixed(2),
         ...pcts,
-        source_type: "Field-Approved",
+        source_type: "Approved",
         base_city: realCity || "",
-        keywords,
+        keywords: allKeywords,
         item_description: itemDescription,
         item_name_aliases: aliases,
         last_reviewed_at: new Date().toISOString(),
+        approved_at: new Date().toISOString(),
+        ...(params.userId ? { approved_by: params.userId, created_by: params.userId } : {}),
+        ...(newItemNotes ? { notes: newItemNotes } : {}),
       })
       .select("id")
       .single();
