@@ -619,6 +619,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <Button variant="outline" size="sm" className="gap-1" onClick={handleExportUnpriced}>
                 <ListX className="w-3 h-3" /> تصدير غير المسعّر
               </Button>
+              <Button variant="outline" size="sm" className="gap-1 border-green-600 text-green-700 hover:bg-green-50" onClick={handleExportEtemad}>
+                <FileText className="w-3 h-3" /> 📋 تصدير اعتماد
+              </Button>
             </>
           )}
         </div>
