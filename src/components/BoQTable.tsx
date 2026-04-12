@@ -285,7 +285,31 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   };
 
-  const handleRevalidate = useCallback(async () => {
+  const handleExportEtemad = async () => {
+    if (items.length === 0) return;
+    const pricedCount = items.filter(i => i.unit_rate && i.unit_rate > 0).length;
+    if (pricedCount === 0) {
+      toast.warning("لا توجد بنود مسعّرة للتصدير");
+      return;
+    }
+
+    const boqFile = boqFiles.find(f => f.id === boqFileId);
+    if (!boqFile?.file_path) {
+      toast.error("لم يُعثر على الملف الأصلي في التخزين");
+      return;
+    }
+
+    try {
+      toast.info("جارٍ تحميل الملف الأصلي وكتابة الأسعار...");
+      const projectName = project?.name || "Project";
+      await exportOriginalWithPrices(items as any, boqFile.file_path, projectName, boqFileName || "BoQ");
+      toast.success(`تم تصدير ${pricedCount} سعر على الملف الأصلي بنجاح ✅`);
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+
     if (!boqFileId) return;
     setRevalidating(true);
     try {
