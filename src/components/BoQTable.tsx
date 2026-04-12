@@ -549,6 +549,61 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <BMSAnalysisPanel bmsResult={bmsResult} />
       )}
 
+      {/* LAYER 4: Stale Price Warning Banner */}
+      {(() => {
+        const staleItems = items.filter((i: any) => i.status === "stale_price");
+        if (staleItems.length === 0) return null;
+        return (
+          <div className="rounded-lg border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-900/20 p-3 mb-4 flex flex-wrap items-center justify-between gap-3" dir="rtl">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 shrink-0" />
+              <div>
+                <div className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+                  ⚠️ يوجد {staleItems.length} بند بأسعار قديمة — تم تحديث المكتبة بعد التسعير
+                </div>
+                <div className="text-xs text-yellow-600 dark:text-yellow-400">
+                  اضغط "تحديث الأسعار" لمزامنة البنود مع أحدث أسعار المكتبة
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1 border-yellow-500 text-yellow-700 hover:bg-yellow-100 dark:text-yellow-300 dark:hover:bg-yellow-900/40"
+              disabled={pricing}
+              onClick={async () => {
+                setPricing(true);
+                try {
+                  const { runIntegrityCheck, fixIntegrityIssues } = await import("@/lib/pricing/integrityChecker");
+                  const report = await runIntegrityCheck(boqFileId);
+                  const deviations = report.issues.filter(i => i.issueType === "rate_deviation");
+                  if (deviations.length > 0) {
+                    await fixIntegrityIssues(deviations, boqFileId);
+                  }
+                  // Also clear stale_price status for items that are now in sync
+                  await supabase.from("boq_items")
+                    .update({ status: "approved" })
+                    .eq("boq_file_id", boqFileId)
+                    .eq("status", "stale_price");
+                  // Recalculate project total
+                  await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
+                  await qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" });
+                  await qc.invalidateQueries({ queryKey: ["projects", projectId] });
+                  toast.success(`تم تحديث ${staleItems.length} بند بأسعار المكتبة الجديدة`);
+                } catch (err: any) {
+                  toast.error("فشل تحديث الأسعار: " + err.message);
+                } finally {
+                  setPricing(false);
+                }
+              }}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${pricing ? "animate-spin" : ""}`} />
+              تحديث الأسعار
+            </Button>
+          </div>
+        );
+      })()}
+
       {hasItems && autoFixFailed && !consistency.consistent && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
