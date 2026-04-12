@@ -9,6 +9,7 @@ import { normalizeUnit, textSimilarity, tokenize } from "./similarItemMatcher";
 import { detectCategory } from "@/lib/pricingEngine";
 import type { BreakdownValues } from "./smartRecalculator";
 import { getUnitRate } from "./smartRecalculator";
+import { parseDimensions, compareDimensions } from "./synonyms";
 
 export interface SyncParams {
   itemId: string;
@@ -76,8 +77,20 @@ export async function syncToRateLibrary(params: SyncParams): Promise<SyncResult 
   let bestMatch: { id: string; similarity: number; is_locked: boolean } | null = null;
 
   if (candidates && candidates.length > 0) {
+    const itemDims = parseDimensions(itemData.description + " " + (itemData.description_en || ""));
+
     for (const c of candidates) {
       if (normalizeUnit(c.unit) !== normalizedUnit) continue;
+
+      // Dimension gate: if both have WxH dimensions and they differ, skip
+      const candDims = parseDimensions((c.standard_name_ar || "") + " " + (c.standard_name_en || ""));
+      const dimResult = compareDimensions(itemDims, candDims);
+      const bothHaveWxH = itemDims.some(d => d.type === "dimensions" && d.values.length >= 2)
+        && candDims.some(d => d.type === "dimensions" && d.values.length >= 2);
+      if (dimResult === -1 && bothHaveWxH) {
+        console.log(`[RateSync] Dimension mismatch — skipping candidate ${c.id}`);
+        continue;
+      }
 
       const simAr = textSimilarity(itemData.description, c.standard_name_ar);
       const simEn = textSimilarity(itemData.description_en, c.standard_name_en);
