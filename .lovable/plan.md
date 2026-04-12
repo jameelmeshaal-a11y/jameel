@@ -1,79 +1,65 @@
 
 
-# تحصين النظام ضد انحراف الأسعار — حماية متعددة الطبقات
+# إصلاح الطبقة 3: تفعيل كشف البنود القديمة عند تحديث المكتبة
 
-## تشخيص السبب الجذري
+## المشكلة المكتشفة أثناء الاختبار
 
-بعد فحص البيانات، وجدت أن الـ 77 بند المنحرف ليست خطأ في المحرك نفسه — بل هي **بنود تم تسعيرها بأسعار مكتبة قديمة**، ثم تم تحديث أسعار المكتبة لاحقاً دون إعادة تسعير جداول الكميات. أمثلة:
-- بند عزل: سعر المكتبة الحالي 150 ريال، السعر المحفوظ 125 ريال
-- حنفية حريق: المكتبة 4,025 ريال، المحفوظ 3,500 ريال
+عند تغيير سعر بند في مكتبة الأسعار (من 1375 إلى 1380)، لم يتم تحديث حالة البنود المرتبطة في `boq_items` إلى `stale_price`. السبب المحتمل:
 
-المحرك يعمل بشكل صحيح — `priceFromApprovedRate()` يكتب سعر المكتبة بدون أي تعديل. لكن المشكلة أنه لا يوجد **آلية تلقائية لتحديث البنود عند تغيّر أسعار المكتبة**.
+1. **RLS يمنع التحديث**: سياسة UPDATE على `boq_items` تتطلب أن يكون المستخدم مالك ملف الـ BoQ أو admin. الدالة تعمل من الـ client-side مع صلاحيات المستخدم العادية، وقد لا يتم التعرف على صلاحية الـ admin بشكل صحيح في هذا السياق.
 
-## الحل — 4 طبقات حماية
+2. **الحل**: نقل منطق تحديث البنود القديمة إلى **database trigger** على جدول `rate_library` بدلاً من الاعتماد على كود الـ client. هذا يضمن التنفيذ بصلاحيات SECURITY DEFINER ويتجاوز RLS.
 
-### الطبقة 1: تأكيد فوري بعد الكتابة (Post-Write Assertion)
-**ملف**: `src/lib/pricingEngine.ts`
+## التغييرات المطلوبة
 
-بعد كتابة السعر في قاعدة البيانات (سطر 768)، نضيف فحص فوري:
-```typescript
-// INTEGRITY GUARD: verify written rate matches library exactly
-if (matchedItem && cost.unitRate !== matchedItem.target_rate) {
-  console.error(`🛑 RATE MISMATCH: wrote ${cost.unitRate} but library has ${matchedItem.target_rate}`);
-  // Force correct to library rate
-  const correctedRate = matchedItem.target_rate;
-  await supabase.from("boq_items").update({
-    unit_rate: correctedRate,
-    total_price: +(correctedRate * block.quantity).toFixed(2),
-  }).eq("id", block.primaryRow.id);
-}
+### 1. Database Migration — Trigger على rate_library
+إنشاء trigger يعمل عند تحديث `base_rate` أو `target_rate` في `rate_library`:
+
+```sql
+CREATE OR REPLACE FUNCTION public.flag_stale_boq_items()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF OLD.target_rate IS DISTINCT FROM NEW.target_rate THEN
+    UPDATE boq_items
+    SET status = 'stale_price'
+    WHERE linked_rate_id = NEW.id
+      AND unit_rate IS DISTINCT FROM NEW.target_rate
+      AND status != 'stale_price';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_flag_stale_items
+AFTER UPDATE ON rate_library
+FOR EACH ROW
+EXECUTE FUNCTION flag_stale_boq_items();
 ```
 
-### الطبقة 2: فحص سلامة تلقائي بعد التسعير
-**ملف**: `src/lib/pricingEngine.ts`
+### 2. تنظيف كود الـ Client (`src/hooks/usePriceLibrary.ts`)
+إزالة كود Layer 3 من `useUpdatePriceItem` (الأسطر 69-73) لأن الـ trigger سيتولى المهمة تلقائياً. الإبقاء فقط على تسجيل التغيير في `price_change_log`.
 
-في نهاية `runPricingEngine`، بعد اكتمال كل البنود، نشغّل `runIntegrityCheck` تلقائياً ونعالج أي انحرافات:
-```typescript
-// Auto-fix any remaining deviations after bulk pricing
-const report = await runIntegrityCheck(boqFileId);
-if (report.summary.byType.rate_deviation > 0) {
-  const deviations = report.issues.filter(i => i.issueType === "rate_deviation");
-  await fixIntegrityIssues(deviations, boqFileId);
-}
-```
+### 3. إصلاح شريط التحذير (`src/components/BoQTable.tsx`)
+التأكد من أن الـ query الذي يبحث عن بنود `stale_price` يعمل بشكل صحيح ويعرض الشريط الأصفر.
 
-### الطبقة 3: كشف البنود القديمة عند تحديث المكتبة
-**ملف**: `src/hooks/usePriceLibrary.ts` (أو دالة الحفظ في المكتبة)
-
-عند حفظ سعر جديد في المكتبة، نبحث عن كل البنود المرتبطة بنفس `rate_id` ونضع عليها علامة "بحاجة لتحديث":
-```typescript
-// After library rate update, flag stale items
-await supabase.from("boq_items")
-  .update({ status: "stale_price", notes: "⚠️ سعر المكتبة تغيّر — يحتاج إعادة تسعير" })
-  .eq("linked_rate_id", rateId)
-  .neq("unit_rate", newTargetRate);
-```
-
-### الطبقة 4: شريط تنبيه في واجهة جدول الكميات
-**ملف**: `src/components/BoQTable.tsx`
-
-إذا وُجدت بنود بحالة `stale_price`، يظهر شريط تحذيري أعلى الجدول:
-```
-⚠️ يوجد X بند بأسعار قديمة — تم تحديث المكتبة بعد التسعير. [تحديث الأسعار]
-```
-زر "تحديث الأسعار" يعيد تسعير البنود القديمة فقط دون المساس بالبنود السليمة أو التعديلات اليدوية.
+### 4. إعادة السعر الأصلي للاختبار
+إعادة سعر البند الذي تم تغييره أثناء الاختبار من 1380 إلى 1375 (أو تركه على 1380 إذا كان هذا هو السعر المطلوب).
 
 ## الملفات المتأثرة
 
-| الملف | التغيير |
+| الملف / المكون | التغيير |
 |---|---|
-| `src/lib/pricingEngine.ts` | طبقة 1 (assertion) + طبقة 2 (auto-check بعد التسعير) |
-| `src/hooks/usePriceLibrary.ts` | طبقة 3 (كشف البنود القديمة عند تحديث المكتبة) |
-| `src/components/BoQTable.tsx` | طبقة 4 (شريط تنبيه + زر تحديث) |
+| Database Migration | إضافة trigger `flag_stale_boq_items` |
+| `src/hooks/usePriceLibrary.ts` | إزالة كود التحديث المباشر (استبداله بالـ trigger) |
+| `src/components/BoQTable.tsx` | مراجعة query البنود القديمة |
 
 ## ما لا يتأثر
-- خوارزمية المطابقة (V3) — بدون أي تغيير
-- التعديلات اليدوية — محمية (لن يتم الكتابة فوقها)
-- التقارير والتصدير — بدون تغيير
-- محرك BMS — بدون تغيير
+- محرك التسعير — بدون تغيير
+- Layer 1 (Post-Write Assertion) — يعمل بشكل صحيح
+- Layer 2 (Auto Integrity Check) — يعمل بشكل صحيح
+- مكتبة الأسعار — الواجهة تبقى كما هي
 
