@@ -8,7 +8,7 @@ import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
 import { exportOriginalWithPrices } from "@/lib/boqOriginalExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -418,11 +418,18 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   const canExport = exportSummary.canExport;
 
-  // Auto-calculate BMS result when items load
+  // Auto-calculate BMS result when items load — only if a BMS item with qty > 0 exists
   useEffect(() => {
     if (items.length > 0) {
-      const bms = calculateBMSCost({ items });
-      setBmsResult(bms.hasBMSItems ? bms : null);
+      const hasBMSItemWithQty = items.some(
+        (i: any) => isBMSItem(i.description || "") && (i.quantity || 0) > 0
+      );
+      if (hasBMSItemWithQty) {
+        const bms = calculateBMSCost({ items });
+        setBmsResult(bms.hasBMSItems ? bms : null);
+      } else {
+        setBmsResult(null);
+      }
     }
   }, [items]);
 
