@@ -334,6 +334,58 @@ const mockLibrary = [
     item_code: "MD-14",
     item_description: null,
   },
+  {
+    id: "lib-door-1000x2350",
+    category: "doors",
+    standard_name_ar: "باب خشب مقاس 1000×2350مم",
+    standard_name_en: "Wooden Door 1000x2350mm",
+    unit: "عدد",
+    base_rate: 9000,
+    base_city: "الرياض",
+    target_rate: 9000,
+    min_rate: 6000,
+    max_rate: 12000,
+    materials_pct: 55,
+    labor_pct: 25,
+    equipment_pct: 5,
+    logistics_pct: 5,
+    risk_pct: 5,
+    profit_pct: 5,
+    keywords: ["باب", "خشب"],
+    is_locked: false,
+    weight_class: "medium",
+    complexity: "medium",
+    source_type: "Approved",
+    item_name_aliases: null,
+    item_code: null,
+    item_description: null,
+  },
+  {
+    id: "lib-door-900x2150",
+    category: "doors",
+    standard_name_ar: "باب خشب مقاس 900×2150مم",
+    standard_name_en: "Wooden Door 900x2150mm",
+    unit: "عدد",
+    base_rate: 3200,
+    base_city: "الرياض",
+    target_rate: 3200,
+    min_rate: 2000,
+    max_rate: 5000,
+    materials_pct: 55,
+    labor_pct: 25,
+    equipment_pct: 5,
+    logistics_pct: 5,
+    risk_pct: 5,
+    profit_pct: 5,
+    keywords: ["باب", "خشب"],
+    is_locked: false,
+    weight_class: "medium",
+    complexity: "medium",
+    source_type: "Approved",
+    item_name_aliases: null,
+    item_code: null,
+    item_description: null,
+  },
 ] as any[];
 
 describe("findRateLibraryMatchV3", () => {
@@ -449,5 +501,44 @@ describe("findRateLibraryMatchV3", () => {
     expect(withCtx?.item.id).toBe("lib-upvc-20");
     // Both may hit the 99 cap, so just verify context produces a valid match
     expect(withCtx!.confidence).toBeGreaterThanOrEqual(noCtx?.confidence ?? 0);
+  });
+
+  // ── WxH Dimension Tests ──
+
+  it("WxH mismatch: 1000×2350 door does NOT match 900×2150 library entry", () => {
+    const result = findRateLibraryMatchV3(
+      "باب خشب مقاس 1000×2350مم", "", "عدد", "doors",
+      mockLibrary,
+    );
+    expect(result?.item.id).not.toBe("lib-door-900x2150");
+    expect(result?.item.id).toBe("lib-door-1000x2350");
+  });
+
+  it("WxH match: 900×2150 door matches 900×2150 library entry", () => {
+    const result = findRateLibraryMatchV3(
+      "باب خشب مقاس 900×2150مم", "", "عدد", "doors",
+      mockLibrary,
+    );
+    expect(result?.item.id).toBe("lib-door-900x2150");
+  });
+
+  it("linked_rate_id with dimension mismatch falls through to re-score", () => {
+    // Item is 1000×2350 but linked to 900×2150 entry — should NOT trust the link
+    const result = findRateLibraryMatchV3(
+      "باب خشب مقاس 1000×2350مم", "", "عدد", "doors",
+      mockLibrary, "lib-door-900x2150",
+    );
+    // Should re-score and find the correct 1000×2350 entry
+    expect(result?.item.id).toBe("lib-door-1000x2350");
+    expect(result?.confidence).not.toBe(95); // not the blind 95
+  });
+
+  it("linked_rate_id with matching dimensions returns 95 confidence", () => {
+    const result = findRateLibraryMatchV3(
+      "باب خشب مقاس 900×2150مم", "", "عدد", "doors",
+      mockLibrary, "lib-door-900x2150",
+    );
+    expect(result?.item.id).toBe("lib-door-900x2150");
+    expect(result?.confidence).toBe(95);
   });
 });
