@@ -309,7 +309,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   };
 
-
+  const handleRevalidate = useCallback(async () => {
     if (!boqFileId) return;
     setRevalidating(true);
     try {
