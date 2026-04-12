@@ -566,6 +566,13 @@ export async function runPricingEngine(
       continue;
     }
 
+    // 3b. Skip BMS umbrella items — priced in post-processing pass via points engine
+    if (isBMSItem(block.mergedDescription)) {
+      processedCount++;
+      onProgress?.(processedCount, items.length);
+      continue;
+    }
+
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
