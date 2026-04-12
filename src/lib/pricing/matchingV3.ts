@@ -104,10 +104,25 @@ export function findRateLibraryMatchV3(
   approvedRateIds?: Set<string>,
   notes?: string | null,
 ): { item: RateLibraryItem; confidence: number } | null {
-  // Path A — Direct lookup (trusted, not scored)
+  // Path A — Direct lookup with dimension validation
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
-    if (linked) return { item: linked, confidence: 95 };
+    if (linked) {
+      // Validate dimensions match before trusting the link
+      const boqDimsCheck = parseDimensions(description + " " + (descriptionEn || ""));
+      const linkedDimsCheck = parseDimensions(
+        (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "")
+      );
+      const boqHasWxH = boqDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
+      const linkedHasWxH = linkedDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
+      
+      if (boqHasWxH && linkedHasWxH && compareDimensions(boqDimsCheck, linkedDimsCheck) === -1) {
+        // Dimensions mismatch — fall through to scoring instead of blind trust
+        console.log(`[V3] linked_rate_id ${linkedRateId} dimension mismatch, re-scoring`);
+      } else {
+        return { item: linked, confidence: 95 };
+      }
+    }
   }
 
   // Enrich description with parent context if short
