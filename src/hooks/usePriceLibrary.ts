@@ -52,16 +52,9 @@ export function useUpdatePriceItem() {
       const { error } = await supabase.from("rate_library").update(updates).eq("id", id);
       if (error) throw error;
 
-      // ── LAYER 3: Flag stale items when library rate changes ──────────────
-      if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice) {
-        // Find all boq_items linked to this rate that don't match the new price
-        await supabase.from("boq_items")
-          .update({ status: "stale_price" })
-          .eq("linked_rate_id", id)
-          .neq("unit_rate", newPrice);
-
-        // Log price change
-        if (userId) {
+      // ── LAYER 3: Stale flagging now handled by DB trigger (trg_flag_stale_items) ──
+      // Log price change only
+      if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
           await supabase.from("price_change_log").insert({
             rate_library_id: id,
             old_price: oldPrice,
