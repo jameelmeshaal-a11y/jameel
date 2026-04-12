@@ -55,14 +55,13 @@ export function useUpdatePriceItem() {
       // ── LAYER 3: Stale flagging now handled by DB trigger (trg_flag_stale_items) ──
       // Log price change only
       if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
-          await supabase.from("price_change_log").insert({
-            rate_library_id: id,
-            old_price: oldPrice,
-            new_price: newPrice,
-            changed_by: userId,
-            change_reason: "Inline edit",
-          });
-        }
+        await supabase.from("price_change_log").insert({
+          rate_library_id: id,
+          old_price: oldPrice,
+          new_price: newPrice,
+          changed_by: userId,
+          change_reason: "Inline edit",
+        });
       }
     },
     onSuccess: () => {
