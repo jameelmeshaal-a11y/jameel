@@ -23,6 +23,7 @@ export interface PropagationRequest {
   targetItems: SimilarItem[];
   linkedRateId?: string | null;
   updateMasterRate: boolean;
+  userId?: string;
 }
 
 export interface PropagationResult {
@@ -82,6 +83,7 @@ export async function propagateChanges(req: PropagationRequest): Promise<Propaga
       boqFileId: req.boqFileId,
       values: req.newValues,
       unitRate,
+      userId: req.userId,
     }).catch(e => console.warn("[RateSync] Propagation source sync failed:", e));
   }
 
