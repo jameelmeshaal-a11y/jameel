@@ -9,6 +9,7 @@ import { normalizeUnit, textSimilarity, tokenize } from "./similarItemMatcher";
 import { detectCategory } from "@/lib/pricingEngine";
 import type { BreakdownValues } from "./smartRecalculator";
 import { getUnitRate } from "./smartRecalculator";
+import { parseDimensions, compareDimensions } from "./synonyms";
 
 export interface SyncParams {
   itemId: string;

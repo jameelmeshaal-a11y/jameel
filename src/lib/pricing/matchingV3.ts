@@ -292,6 +292,13 @@ function scoreCandidate(
     score += WEIGHTS.DIMENSION_MATCH;
     parts.push(`dim:+${WEIGHTS.DIMENSION_MATCH}`);
   } else if (dimResult === -1) {
+    // Hard gate: if both have explicit WxH dimensions and they differ, zero out (like anti-confusion)
+    const boqHasWxH = boqDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
+    const candHasWxH = candDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
+    if (boqHasWxH && candHasWxH) {
+      parts.push(`⛔ dim-mismatch: hard skip (WxH differs)`);
+      return { score: 0, notes: parts.join(" | ") };
+    }
     score += WEIGHTS.DIMENSION_MISMATCH;
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);
   }
