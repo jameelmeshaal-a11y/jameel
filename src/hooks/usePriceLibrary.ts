@@ -51,15 +51,25 @@ export function useUpdatePriceItem() {
     }) => {
       const { error } = await supabase.from("rate_library").update(updates).eq("id", id);
       if (error) throw error;
-      // Log price change if price changed
-      if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
-        await supabase.from("price_change_log").insert({
-          rate_library_id: id,
-          old_price: oldPrice,
-          new_price: newPrice,
-          changed_by: userId,
-          change_reason: "Inline edit",
-        });
+
+      // ── LAYER 3: Flag stale items when library rate changes ──────────────
+      if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice) {
+        // Find all boq_items linked to this rate that don't match the new price
+        await supabase.from("boq_items")
+          .update({ status: "stale_price" })
+          .eq("linked_rate_id", id)
+          .neq("unit_rate", newPrice);
+
+        // Log price change
+        if (userId) {
+          await supabase.from("price_change_log").insert({
+            rate_library_id: id,
+            old_price: oldPrice,
+            new_price: newPrice,
+            changed_by: userId,
+            change_reason: "Inline edit",
+          });
+        }
       }
     },
     onSuccess: () => {
