@@ -756,6 +756,24 @@ export type Database = {
         Args: { p_project_id: string }
         Returns: number
       }
+      save_manual_price: {
+        Args: {
+          p_boq_file_id: string
+          p_correction_note?: string
+          p_equipment: number
+          p_item_id: string
+          p_labor: number
+          p_logistics: number
+          p_manual_overrides?: Json
+          p_materials: number
+          p_profit: number
+          p_risk: number
+          p_total_price: number
+          p_unit_rate: number
+          p_user_id?: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
