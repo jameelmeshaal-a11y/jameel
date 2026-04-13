@@ -157,8 +157,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       }
 
       // 2. CLEAN STATE — zero out all pricing data before re-pricing
-      const resetCount = await resetBoQPricing(boqFileId);
-      console.log(`🧹 Reset ${resetCount} items to clean state`);
+      const { reset: resetCount, protected: protectedCount } = await resetBoQPricing(boqFileId);
+      console.log(`🧹 Reset ${resetCount} items, protected ${protectedCount} manual overrides`);
 
       // 3. Clear query cache to prevent stale data
       qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
@@ -195,7 +195,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         }
       }
 
-      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
+      const protectionMsg = protectedCount > 0 ? ` | تم الحفاظ على ${protectedCount} تعديل يدوي ✅` : "";
+      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}${protectionMsg}`);
       
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
