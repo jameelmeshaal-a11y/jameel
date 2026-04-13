@@ -1,86 +1,63 @@
 
 
-# إصلاح جذري: تنظيف 32 بند + إصلاح منطق الثقة + مفاهيم جديدة
+# تنفيذ حوكمة المطابقة — 3 محاور
 
-## الخطوة 1: تنظيف قاعدة البيانات (أولاً)
+## محور 2 (أولاً): حماية التعديل اليدوي
 
-البند الصحيح الوحيد المربوط بسجل النافذة W09: `fa0f6719-2e79-4499-8117-ebedfa3f64a1`
+### `src/lib/pricingEngine.ts` — سطور 929-966
+- تعديل `resetBoQPricing` لإضافة `override_type` في الـ SELECT (سطر 932)
+- تقسيم البنود إلى `manualIds` و `normalIds`
+- تنفيذ UPDATE كامل فقط على `normalIds` بدفعات 100
+- البنود اليدوية لا تُمس
+- تغيير نوع الإرجاع إلى `Promise<{ reset: number; protected: number }>`
 
-```sql
-UPDATE boq_items 
-SET linked_rate_id = NULL, status = 'pending',
-    notes = '[تنظيف] فك ربط خاطئ بسجل نافذة عادية W09'
-WHERE linked_rate_id = '8db5d710-80a9-4815-8e3b-671cd79577ac'
-  AND id != 'fa0f6719-2e79-4499-8117-ebedfa3f64a1';
-```
+### `src/components/BoQTable.tsx` — سطر 160-161
+- تحديث استقبال النتيجة: `const { reset: resetCount, protected: protectedCount } = await resetBoQPricing(boqFileId);`
+- تحديث الـ console.log ليعرض العددين
+- إضافة toast بعد إعادة التسعير (سطر ~198) يعرض: `"تم إعادة تعيين X بند، وتم الحفاظ على Y تعديل يدوي ✅"`
 
-هذا يفك ربط 32 بند خاطئ ويعيدها لـ `pending` مع الإبقاء على W09 الصحيح.
+---
 
-## الخطوة 2: إصلاح `matchingV3.ts` — Path A (سطور 110-135)
+## محور 1: اختبارات Regression
 
-إضافة فحص مفهومي وفئوي بعد فحص الأبعاد الحالي:
+### `src/lib/pricing/matchingV3.test.ts` — إضافة بعد سطر 651
+قسم `Cross-Category Conflict Gate` مع 8 اختبارات تستخدم `detectConcepts` و `hasConceptConflict` المُصدّرتين من `synonyms.ts`:
+- باب أمني ↔ نافذة → conflict
+- خزائن ↔ نافذة → conflict  
+- صحي ↔ نافذة → conflict
+- مراوح ↔ نافذة → conflict
+- نافذة أمنية ↔ نافذة عادية → conflict
+- باب أمني ↔ باب خشب → conflict
+- نافذة ↔ نافذة (نفس الفئة) → no conflict
+- `findRateLibraryMatchV3` مع linkedRateId خاطئ → يتجاهل الربط
 
-```typescript
-// بعد سطر 127 (thickConflict)، إضافة:
-const boqConceptsCheck = detectConcepts(
-  description + " " + (descriptionEn || "")
-);
-const linkedText = (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "");
-const linkedConceptsCheck = detectConcepts(linkedText);
-const conceptConflict = hasConceptConflict(boqConceptsCheck, linkedConceptsCheck);
+---
 
-// فحص فئوي: باب↔نافذة، صحي↔نافذة، مطبخ↔نافذة، مراوح↔نافذة
-const CROSS_CATEGORY_PAIRS: [RegExp, RegExp][] = [
-  [/أبواب|باب|door/i, /نافذ|نوافذ|window|شباك/i],
-  [/أمني|أمنية|security/i, /نافذ|نوافذ|window/i],
-  [/حوض|مرحاض|مغسل|sanitary|lavatory/i, /نافذ|نوافذ|window/i],
-  [/خزائن|كاونتر|cabinet|kitchen/i, /نافذ|نوافذ|window/i],
-  [/مروح|fan|exhaust/i, /نافذ|نوافذ|window/i],
-];
-const categoryConflict = CROSS_CATEGORY_PAIRS.some(([patA, patB]) =>
-  (patA.test(description) && patB.test(linkedText)) ||
-  (patB.test(description) && patA.test(linkedText))
-);
+## محور 3: تنبيهات التعارض مع append للـ notes
 
-if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
-  console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected, re-scoring`);
-} else {
-  return { item: linked, confidence: 95 };
-}
-```
+### `src/lib/pricing/matchingV3.ts` — سطر 108 + 150-154
+- تغيير نوع الإرجاع إلى `{ item: RateLibraryItem; confidence: number; conflictNotes?: string }`
+- عند اكتشاف تعارض (سطر 150-152)، بناء `conflictNotes` بنوع التعارض
+- تمرير `conflictNotes` في كل `return` لاحق بالدالة
 
-## الخطوة 3: تحديث `synonyms.ts` — مفاهيم وأزواج جديدة
+### `src/lib/pricingEngine.ts` — سطر 763
+- تعديل بناء `notes` ليأخذ بعين الاعتبار:
+  1. `existingNotes` من البند الأصلي (من `block.primaryRow`)
+  2. `conflictNotes` من نتيجة المطابقة
+  3. `cost.explanation` من محرك التسعير
+- الصيغة: append الثلاثة معاً بدل الكتابة فوق القديم
 
-إضافة في `SYNONYM_GROUPS`:
-```typescript
-"باب_أمني": ["باب أمني", "باب امني", "أبواب أمنية", "ابواب امنيه", "security door", "باب مصفح", "STUVE", "CHUB"],
-"نافذة_أمنية": ["نافذه أمنيه", "نافذه امنيه", "نوافذ أمنيه", "security window", "شباك أمني"],
-"أجهزة_صحية": ["حوض غسيل", "مرحاض", "أجهزه صحيه", "sanitary", "lavatory", "WC"],
-"خزائن": ["خزائن مطبخ", "كاونتر", "kitchen cabinet", "خزانه", "دولاب"],
-"مراوح_شفط": ["مروحه شفط", "exhaust fan", "مروحه طرد", "سحب دخان"],
-```
+### ملاحظة على نوع الإرجاع في wrapper
+- `findRateLibraryMatch` في `pricingEngine.ts` (سطر 117) يستخدم نفس نوع الإرجاع — يجب تحديثه أيضاً ليمرر `conflictNotes`
 
-إضافة في `ANTI_CONFUSION_PAIRS`:
-```typescript
-["باب_أمني", "نافذة"],
-["باب_أمني", "باب_خشب"],
-["باب_حديد", "نافذة"],
-["نافذة_أمنية", "نافذة"],
-["أجهزة_صحية", "نافذة"],
-["خزائن", "نافذة"],
-["مراوح_شفط", "نافذة"],
-```
+---
 
 ## الملفات المتأثرة
 
 | الملف | التغيير |
 |---|---|
-| Database (INSERT tool) | فك ربط 32 بند خاطئ |
-| `src/lib/pricing/matchingV3.ts` | فحص مفهومي + فئوي في Path A (سطور 110-135) |
-| `src/lib/pricing/synonyms.ts` | 5 مفاهيم + 7 أزواج Anti-Confusion |
-
-## النتيجة المتوقعة
-- باب D2 أمني → يتجاهل الربط القديم → يطابق سجل 4,500 ريال
-- نوافذ Ws → تطابق سجلاتها الأمنية الصحيحة
-- أي ربط خاطئ مستقبلي بين فئات مختلفة يُرفض تلقائياً
+| `src/lib/pricingEngine.ts` | حماية reset + append notes + تحديث wrapper type |
+| `src/components/BoQTable.tsx` | toast بالتفصيل |
+| `src/lib/pricing/matchingV3.test.ts` | 8 اختبارات regression |
+| `src/lib/pricing/matchingV3.ts` | `conflictNotes` في الإرجاع |
 
