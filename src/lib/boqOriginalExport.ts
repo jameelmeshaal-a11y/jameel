@@ -152,52 +152,7 @@ export async function exportOriginalWithPrices(
     injectedCount++;
   }
 
-  // 5. Add breakdown sheet
-  const breakdownSheet = wb.addWorksheet("تحليل الأسعار", {
-    views: [{ rightToLeft: true }],
-  });
-
-  // Breakdown headers
-  const bHeaders = ["رقم البند", "الوصف", "سعر الوحدة", "مواد", "عمالة", "معدات", "نقل", "مخاطر", "ربح", "المصدر", "الثقة %"];
-  const hRow = breakdownSheet.addRow(bHeaders);
-  hRow.eachCell((cell) => {
-    cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  });
-
-  // Breakdown data
-  const pricedItems = items.filter(i => i.unit_rate && i.unit_rate > 0);
-  for (const item of pricedItems) {
-    const row = breakdownSheet.addRow([
-      item.item_no,
-      item.description,
-      item.unit_rate || 0,
-      item.materials || 0,
-      item.labor || 0,
-      item.equipment || 0,
-      item.logistics || 0,
-      item.risk || 0,
-      item.profit || 0,
-      item.source || "",
-      item.confidence != null ? `${item.confidence}%` : "—",
-    ]);
-    row.eachCell((cell) => {
-      cell.font = { name: "Calibri", size: 11 };
-      cell.alignment = { vertical: "middle", wrapText: true };
-      if (typeof cell.value === "number") {
-        cell.numFmt = '#,##0.00';
-      }
-    });
-  }
-
-  // Breakdown column widths
-  breakdownSheet.columns = [
-    { width: 12 }, { width: 45 }, { width: 14 },
-    { width: 12 }, { width: 12 }, { width: 12 },
-    { width: 10 }, { width: 10 }, { width: 10 },
-    { width: 16 }, { width: 10 },
-  ];
+  // 5. Breakdown sheet removed — export only original with injected prices
 
   // 6. Generate and download
   const outBuffer = await wb.xlsx.writeBuffer();
