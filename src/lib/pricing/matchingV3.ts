@@ -171,6 +171,46 @@ export function findRateLibraryMatchV3(
     viableCandidates.sort((a, b) => b.score - a.score);
     let best = viableCandidates[0];
 
+    // ── Sub-item vs System Guard ───────────────────────────────────────
+    // When description contains "—" (enriched with parent), the full text
+    // may match a system-level library entry perfectly. Extract the last
+    // segment (actual item) and re-score — prefer cheaper items that match
+    // the last segment better.
+    if (enrichedDesc.includes("—") && viableCandidates.length >= 1) {
+      const lastSegment = enrichedDesc.split("—").pop()?.trim();
+      if (lastSegment && lastSegment.length > 3) {
+        const bestPrice = best.candidate.target_rate || best.candidate.base_rate;
+        
+        // Re-score all candidates using ONLY the last segment
+        let segmentBest: typeof best | null = null;
+        for (const vc of viableCandidates) {
+          const vcPrice = vc.candidate.target_rate || vc.candidate.base_rate;
+          // Only consider if significantly cheaper (>5x difference)
+          if (bestPrice > 0 && vcPrice > 0 && bestPrice / vcPrice > 5) {
+            const candTexts = [
+              vc.candidate.standard_name_ar || "",
+              vc.candidate.standard_name_en || "",
+              ...(vc.candidate.item_name_aliases || []),
+            ];
+            const segSim = Math.max(...candTexts.map(t => t ? textSimilarity(lastSegment, t) : 0));
+            if (segSim > 0.3 && (!segmentBest || segSim > (segmentBest as any)._segSim)) {
+              segmentBest = { ...vc, score: Math.max(vc.score - 10, 50) } as any;
+              (segmentBest as any)._segSim = segSim;
+            }
+          }
+        }
+        
+        if (segmentBest && segmentBest.candidate.id !== best.candidate.id) {
+          const segPrice = segmentBest.candidate.target_rate || segmentBest.candidate.base_rate;
+          console.log(
+            `[V3] ⚠️ Sub-item Guard: "${lastSegment}" — system price ${bestPrice} → item price ${segPrice}`
+          );
+          best = segmentBest;
+          best.notes += ` | ⚠️ sub-item-guard: last-segment match, price ${bestPrice}→${segPrice}`;
+        }
+      }
+    }
+
     // ── Price Magnitude Guard ──────────────────────────────────────────
     // If multiple candidates exist with extreme price variance (>50x),
     // prefer the one with highest text similarity to avoid catastrophic mismatch.
@@ -203,6 +243,16 @@ export function findRateLibraryMatchV3(
           best.notes += ` | ⚠️ magnitude-guard: ${(maxPrice/minPrice).toFixed(0)}x variance, confidence -15`;
         }
       }
+    }
+
+    // ── Absolute Price Cap Guard ───────────────────────────────────────
+    // For common unit items (عدد/Each), if price > 20,000 and there's only
+    // one candidate, cap confidence at 70 to force review
+    const finalPrice = best.candidate.target_rate || best.candidate.base_rate;
+    if (finalPrice > 20000 && viableCandidates.length === 1 && best.score > 70) {
+      best = { ...best, score: 70 };
+      best.notes += ` | ⚠️ high-price-cap: single match at ${finalPrice}, confidence capped at 70`;
+      console.log(`[V3] ⚠️ High Price Cap: single match at ${finalPrice}, confidence capped at 70`);
     }
 
     return { item: best.candidate, confidence: best.score };
