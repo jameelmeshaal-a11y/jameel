@@ -49,10 +49,21 @@ export function useUpdatePriceItem() {
       newPrice?: number;
       userId?: string;
     }) => {
-      const { error } = await supabase.from("rate_library").update(updates).eq("id", id);
+      // Auto-regenerate keywords and aliases when name changes
+      const enrichedUpdates = { ...updates };
+      if (updates.standard_name_ar) {
+        enrichedUpdates.keywords = generateKeywords(updates.standard_name_ar) as any;
+        // Refresh aliases: keep existing + add new name if not already present
+        const { data: existing } = await supabase.from("rate_library").select("item_name_aliases").eq("id", id).single();
+        const currentAliases = (existing?.item_name_aliases as string[]) || [];
+        if (!currentAliases.includes(updates.standard_name_ar)) {
+          enrichedUpdates.item_name_aliases = [...currentAliases, updates.standard_name_ar] as any;
+        }
+      }
+
+      const { error } = await supabase.from("rate_library").update(enrichedUpdates).eq("id", id);
       if (error) throw error;
 
-      // ── LAYER 3: Stale flagging now handled by DB trigger (trg_flag_stale_items) ──
       // Log price change only
       if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
         await supabase.from("price_change_log").insert({
