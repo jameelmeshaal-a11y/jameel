@@ -86,6 +86,8 @@ const WEIGHTS = {
   LIBRARY_KEYWORDS: 15,     // hits against library keywords field
   PARENT_CONTEXT_BOOST: 10, // enriched description improved the score
   CORRECTION_NOTES_BOOST: 12, // correction notes keyword match
+  PARENT_AUTHORITY_BOOST: 15, // parent segment concept matches candidate
+  PARENT_CONFLICT_PENALTY: -10, // parent segment concept conflicts with candidate
 } as const;
 
 // ─── Main V3 Matcher ────────────────────────────────────────────────────────
@@ -483,7 +485,26 @@ function scoreCandidate(
     }
   }
 
-  // 7. Containment bonus
+  // 7a. Parent Authority — boost/penalty based on parent segment concepts
+  if (description.includes("—")) {
+    const segments = description.split("—").map(s => s.trim());
+    if (segments.length >= 2) {
+      const parentSegment = segments.slice(0, -1).join(" ");
+      const parentConcepts = detectConcepts(parentSegment);
+      if (parentConcepts.length > 0 && candConcepts.length > 0) {
+        const parentMatch = parentConcepts.some(pc => candConcepts.includes(pc));
+        const parentConflict = hasConceptConflict(parentConcepts, candConcepts);
+        if (parentMatch) {
+          score += WEIGHTS.PARENT_AUTHORITY_BOOST;
+          parts.push(`parent-auth:+${WEIGHTS.PARENT_AUTHORITY_BOOST}`);
+        } else if (parentConflict) {
+          score += WEIGHTS.PARENT_CONFLICT_PENALTY;
+          parts.push(`parent-conflict:${WEIGHTS.PARENT_CONFLICT_PENALTY}`);
+        }
+      }
+    }
+  }
+
   const overlapCoeff = Math.max(
     overlapCoefficient(description, candidate.standard_name_ar || ""),
     overlapCoefficient(description, candidate.item_description || ""),
