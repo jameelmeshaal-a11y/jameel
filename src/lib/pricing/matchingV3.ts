@@ -107,6 +107,11 @@ export function findRateLibraryMatchV3(
   notes?: string | null,
 ): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   // Path A — Direct lookup with dimension validation
+  // Treat linked_rate_id as a HINT, not absolute trust.
+  // Always run full scoring in parallel, and only use linked if it's truly the best.
+  let linkedCandidate: RateLibraryItem | null = null;
+  let linkedConflictNote: string | undefined;
+  
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
     if (linked) {
@@ -148,19 +153,18 @@ export function findRateLibraryMatchV3(
       );
 
       if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
-        // Conflict detected — fall through to scoring instead of blind trust
         const conflictTypes = [
           wxhConflict && "أبعاد",
           thickConflict && "سُمك",
           conceptConflict && "مفهومي",
           categoryConflict && "فئوي",
         ].filter(Boolean).join("+");
-        const conflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
+        linkedConflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
         console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (${conflictTypes}), re-scoring`);
-        // Store conflict note to pass through if a new match is found
-        var _pathAConflictNote = conflictNote;
+        // Don't use linked at all — fall through to full scoring
       } else {
-        return { item: linked, confidence: 95 };
+        // Keep linked as a candidate but still score all others
+        linkedCandidate = linked;
       }
     }
   }
