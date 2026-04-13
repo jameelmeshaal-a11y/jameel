@@ -52,6 +52,14 @@ export const SYNONYM_GROUPS: Record<string, string[]> = {
   "مفتاح_كهرباء": ["مفتاح كهربائي", "switch", "قاطع", "circuit breaker", "MCB"],
   "انارة": ["إنارة", "lighting", "إضاءة", "لمبة", "كشاف"],
 
+  // ── Communication / PA Systems ──
+  "سماعة_سقفية": ["سماعة سقفية", "سماعات سقفية", "ceiling speaker", "CEILING SPEAKER", "LOUD SPEAKER", "سماعة سقف"],
+  "سماعة_جدارية": ["سماعة جدارية", "سماعات جدارية", "wall speaker", "wall mounted speaker"],
+  "سماعة_بوقية": ["سماعة بوقية", "horn speaker", "سماعة بوق", "horn loudspeaker"],
+  "نظام_اذاعة_داخلية": ["نظام الاذاعة الداخلية", "نظام إذاعة", "PA system", "public address system", "نظام النداء الداخلي", "نظام الاستدعاء"],
+  "كاميرا_مراقبة": ["كاميرا مراقبة", "CCTV camera", "كاميرا", "camera", "دائرة تلفزيونية مغلقة"],
+  "نظام_انذار_حريق": ["نظام إنذار حريق", "fire alarm system", "نظام الكشف والإنذار", "fire detection"],
+
   // ── Fire Suppression Systems (distinct from sprinklers) ──
   "نظام_غاز_اطفاء": ["NOVEC", "NOVEC-1230", "FM200", "FM-200", "غاز صافي", "غاز صافى", "نظام إطفاء بالغاز", "gas suppression", "clean agent", "إطفاء بالغاز"],
   "نظام_رغوي": ["إطفاء رغوي", "foam system", "رغوه", "رغوية", "foam", "فوم"],
