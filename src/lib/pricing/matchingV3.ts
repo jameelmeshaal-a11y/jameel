@@ -136,14 +136,19 @@ export function findRateLibraryMatchV3(
   const boqDimensions = parseDimensions(fullText);
   const boqConcepts = detectConcepts(fullText);
 
-  let bestMatch: RateLibraryItem | null = null;
-  let bestScore = 0;
-  let bestNotes = "";
+  // Collect all viable candidates for magnitude guard
+  interface ScoredCandidate {
+    candidate: RateLibraryItem;
+    score: number;
+    textScore: number;
+    notes: string;
+  }
+  const viableCandidates: ScoredCandidate[] = [];
 
   for (const candidate of rateLibrary) {
-    // Unit gate — soft penalty instead of hard skip for V3
+    // Unit gate — hard gate for units
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
-    if (!unitMatch) continue; // keep hard gate for units
+    if (!unitMatch) continue;
 
     const result = scoreCandidate(
       enrichedDesc, descriptionEn, category,
@@ -151,15 +156,56 @@ export function findRateLibraryMatchV3(
       candidate, useEnriched,
     );
 
-    if (result.score > bestScore && result.score >= 50) {
-      bestScore = result.score;
-      bestMatch = candidate;
-      bestNotes = result.notes;
+    if (result.score >= 50) {
+      viableCandidates.push({
+        candidate,
+        score: result.score,
+        textScore: result.textScore,
+        notes: result.notes,
+      });
     }
   }
 
-  if (bestMatch) {
-    return { item: bestMatch, confidence: bestScore };
+  if (viableCandidates.length > 0) {
+    // Sort by total score descending
+    viableCandidates.sort((a, b) => b.score - a.score);
+    let best = viableCandidates[0];
+
+    // ── Price Magnitude Guard ──────────────────────────────────────────
+    // If multiple candidates exist with extreme price variance (>50x),
+    // prefer the one with highest text similarity to avoid catastrophic mismatch.
+    if (viableCandidates.length >= 2) {
+      const prices = viableCandidates
+        .map(c => c.candidate.target_rate || c.candidate.base_rate)
+        .filter(p => p > 0);
+      
+      if (prices.length >= 2) {
+        const maxPrice = Math.max(...prices);
+        const minPrice = Math.min(...prices);
+        
+        if (minPrice > 0 && maxPrice / minPrice > 50) {
+          // Extreme variance detected — pick highest text score instead
+          const textBest = viableCandidates.reduce((prev, curr) =>
+            curr.textScore > prev.textScore ? curr : prev
+          );
+          
+          if (textBest.candidate.id !== best.candidate.id) {
+            const bestPrice = best.candidate.target_rate || best.candidate.base_rate;
+            const textBestPrice = textBest.candidate.target_rate || textBest.candidate.base_rate;
+            console.log(
+              `[V3] ⚠️ Price Magnitude Guard: ${maxPrice}/${minPrice} = ${(maxPrice/minPrice).toFixed(0)}x. ` +
+              `Switching from ${bestPrice} to ${textBestPrice} (higher text score)`
+            );
+            best = textBest;
+          }
+          // Reduce confidence by 15 to flag for review
+          best = { ...best, score: Math.max(best.score - 15, 50) };
+          best.notes += ` | ⚠️ magnitude-guard: ${(maxPrice/minPrice).toFixed(0)}x variance, confidence -15`;
+        }
+      }
+    }
+
+    return { item: best.candidate, confidence: best.score };
   }
 
   // Path C — Approved-rate fallback (threshold 50, capped at 55)
@@ -197,6 +243,7 @@ export function findRateLibraryMatchV3(
 
 interface ScoringResult {
   score: number;
+  textScore: number;
   notes: string;
 }
 
@@ -384,5 +431,5 @@ function scoreCandidate(
   score = Math.min(score, 99);
   score = Math.max(score, 0);
 
-  return { score, notes: parts.join(" | ") };
+  return { score, textScore: effectiveTextScore, notes: parts.join(" | ") };
 }
