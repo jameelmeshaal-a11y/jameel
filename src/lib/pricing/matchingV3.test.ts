@@ -421,14 +421,14 @@ const mockLibrary = [
 ] as any[];
 
 describe("findRateLibraryMatchV3", () => {
-  // ── Direct lookup ──
-  it("returns linked rate directly with 95% confidence", () => {
+  // ── Direct lookup — linked rate still matched but through scoring, not blind 95 ──
+  it("returns linked rate with high confidence", () => {
     const result = findRateLibraryMatchV3(
-      "أي وصف", "", "عدد", "plumbing",
+      "صمام بوابة 25مم", "", "عدد", "plumbing",
       mockLibrary, "lib-gate-valve-25",
     );
-    expect(result?.confidence).toBe(95);
     expect(result?.item.id).toBe("lib-gate-valve-25");
+    expect(result?.confidence).toBeGreaterThanOrEqual(50);
   });
 
   // ── Anti-confusion: gate valve ≠ air vent ──
@@ -565,13 +565,13 @@ describe("findRateLibraryMatchV3", () => {
     expect(result?.confidence).not.toBe(95); // not the blind 95
   });
 
-  it("linked_rate_id with matching dimensions returns 95 confidence", () => {
+  it("linked_rate_id with matching dimensions returns high confidence", () => {
     const result = findRateLibraryMatchV3(
       "باب خشب مقاس 900×2150مم", "", "عدد", "doors",
       mockLibrary, "lib-door-900x2150",
     );
     expect(result?.item.id).toBe("lib-door-900x2150");
-    expect(result?.confidence).toBe(95);
+    expect(result?.confidence).toBeGreaterThanOrEqual(70);
   });
 });
 
