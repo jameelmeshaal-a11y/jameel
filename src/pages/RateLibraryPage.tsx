@@ -20,6 +20,8 @@ export default function RateLibraryPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newItem, setNewItem] = useState({ standard_name_ar: "", standard_name_en: "", category: "عام", unit: "", base_rate: 0, item_code: "" });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -159,7 +161,7 @@ export default function RateLibraryPage() {
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setImportOpen(true)}>
             <Upload className="w-4 h-4" /> رفع ملف أسعار
           </Button>
-          <Button className="gap-2" size="sm">
+          <Button className="gap-2" size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="w-4 h-4" /> {t("addRate")}
           </Button>
         </div>
@@ -345,6 +347,74 @@ export default function RateLibraryPage() {
       </div>
 
       <PriceLibraryImportDialog open={importOpen} onOpenChange={setImportOpen} />
+
+      {/* Add single item dialog */}
+      <AlertDialog open={addOpen} onOpenChange={setAddOpen}>
+        <AlertDialogContent dir="rtl" className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>إضافة بند جديد</AlertDialogTitle>
+            <AlertDialogDescription>أدخل بيانات البند لإضافته إلى مكتبة الأسعار</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">اسم البند (عربي) *</label>
+              <Input value={newItem.standard_name_ar} onChange={(e) => setNewItem({...newItem, standard_name_ar: e.target.value})} dir="rtl" placeholder="مثال: أعمال خرسانة مسلحة" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">اسم البند (إنجليزي)</label>
+              <Input value={newItem.standard_name_en} onChange={(e) => setNewItem({...newItem, standard_name_en: e.target.value})} placeholder="e.g. Reinforced Concrete Works" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">الكود</label>
+                <Input value={newItem.item_code} onChange={(e) => setNewItem({...newItem, item_code: e.target.value})} placeholder="مثال: RC-001" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">الوحدة *</label>
+                <Input value={newItem.unit} onChange={(e) => setNewItem({...newItem, unit: e.target.value})} placeholder="م3, م2, طن..." />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">التصنيف</label>
+                <Input value={newItem.category} onChange={(e) => setNewItem({...newItem, category: e.target.value})} dir="rtl" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">السعر الأساسي *</label>
+                <Input type="number" value={newItem.base_rate || ""} onChange={(e) => setNewItem({...newItem, base_rate: +e.target.value})} placeholder="0" />
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setNewItem({ standard_name_ar: "", standard_name_en: "", category: "عام", unit: "", base_rate: 0, item_code: "" })}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!newItem.standard_name_ar || !newItem.unit || addItem.isPending}
+              onClick={() => {
+                addItem.mutate({
+                  standard_name_ar: newItem.standard_name_ar,
+                  standard_name_en: newItem.standard_name_en || undefined,
+                  category: newItem.category || "عام",
+                  unit: newItem.unit,
+                  base_rate: newItem.base_rate,
+                  min_rate: +(newItem.base_rate * 0.9).toFixed(2),
+                  max_rate: +(newItem.base_rate * 1.1).toFixed(2),
+                  item_code: newItem.item_code || undefined,
+                }, {
+                  onSuccess: () => {
+                    toast.success("تم إضافة البند بنجاح");
+                    setNewItem({ standard_name_ar: "", standard_name_en: "", category: "عام", unit: "", base_rate: 0, item_code: "" });
+                    setAddOpen(false);
+                  },
+                  onError: () => toast.error("فشل في إضافة البند"),
+                });
+              }}
+            >
+              {addItem.isPending ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
+              إضافة
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }
