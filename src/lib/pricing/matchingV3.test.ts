@@ -574,3 +574,78 @@ describe("findRateLibraryMatchV3", () => {
     expect(result?.confidence).toBe(95);
   });
 });
+
+// ─── New Concept Detection ──────────────────────────────────────────────────
+
+describe("detectConcepts — new structural/earthwork concepts", () => {
+  it("detects blinding concrete (فرشات نظافة)", () => {
+    expect(detectConcepts("فرشات نظافة سمك 10سم")).toContain("خرسانة_نظافة");
+  });
+
+  it("detects excavation (حفريات)", () => {
+    expect(detectConcepts("أعمال حفريات للقواعد")).toContain("حفريات");
+  });
+
+  it("detects backfill/compaction (ردم ودمك)", () => {
+    expect(detectConcepts("ردم ودمك التربة")).toContain("ردم_دمك");
+  });
+
+  it("detects reinforced concrete (خرسانة مسلحة)", () => {
+    expect(detectConcepts("خرسانة مسلحة جاهزة")).toContain("خرسانة_مسلحة");
+  });
+});
+
+// ─── Anti-Confusion: New Concept Pairs ──────────────────────────────────────
+
+describe("Anti-Confusion Gate — new concepts", () => {
+  it("blocks blinding ↔ reinforced concrete", () => {
+    expect(hasConceptConflict(["خرسانة_نظافة"], ["خرسانة_مسلحة"])).toBe(true);
+  });
+
+  it("blocks blinding ↔ rebar", () => {
+    expect(hasConceptConflict(["خرسانة_نظافة"], ["حديد_تسليح"])).toBe(true);
+  });
+
+  it("blocks blinding ↔ floor tiles", () => {
+    expect(hasConceptConflict(["خرسانة_نظافة"], ["بلاط_ارضي"])).toBe(true);
+  });
+
+  it("blocks excavation ↔ backfill", () => {
+    expect(hasConceptConflict(["حفريات"], ["ردم_دمك"])).toBe(true);
+  });
+
+  it("blocks excavation ↔ concrete", () => {
+    expect(hasConceptConflict(["حفريات"], ["خرسانة"])).toBe(true);
+  });
+
+  it("blocks backfill ↔ concrete", () => {
+    expect(hasConceptConflict(["ردم_دمك"], ["خرسانة"])).toBe(true);
+  });
+
+  it("blocks slab ↔ beam (structural type gate)", () => {
+    expect(hasConceptConflict(["بلاطات_خرسانية"], ["كمرات_خرسانية"])).toBe(true);
+  });
+});
+
+// ─── Parent Authority Boost ─────────────────────────────────────────────────
+
+describe("findRateLibraryMatchV3 — Parent Authority", () => {
+  it("parent 'خرسانة' boosts blinding match over unrelated", () => {
+    const result = findRateLibraryMatchV3(
+      "إجمالي أعمال خرسانة — فرشات نظافة سمك 10سم", "", "م3", "structural",
+      mockLibrary,
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-blinding-10cm");
+  });
+
+  it("reinforced concrete does NOT match blinding (anti-confusion)", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة جاهزة للأعمدة", "", "م3", "structural",
+      mockLibrary,
+    );
+    if (result) {
+      expect(result.item.id).not.toBe("lib-blinding-10cm");
+    }
+  });
+});
