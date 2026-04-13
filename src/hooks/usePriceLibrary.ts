@@ -111,6 +111,21 @@ export function useDeletePriceItem() {
   });
 }
 
+// Generate keywords from Arabic name
+function generateKeywords(name: string): string[] {
+  const stripped = name
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670]/g, "") // remove tashkeel
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+  const stopPrefixes = /^(ال|وال|بال|لل|و|ب|ل|ف|ك)/;
+  const tokens = stripped
+    .split(/[\s,،.؛;/\\()\-–—]+/)
+    .map(t => t.replace(stopPrefixes, ""))
+    .filter(t => t.length >= 2);
+  return [...new Set(tokens)];
+}
+
 // Add new price item
 export function useAddPriceItem() {
   const qc = useQueryClient();
@@ -126,9 +141,15 @@ export function useAddPriceItem() {
       item_code?: string;
       item_name_aliases?: string[];
     }) => {
+      const keywords = generateKeywords(item.standard_name_ar);
+      const aliases = item.item_name_aliases?.length
+        ? item.item_name_aliases
+        : [item.standard_name_ar];
       const { data, error } = await supabase.from("rate_library").insert({
         ...item,
         target_rate: item.base_rate,
+        keywords,
+        item_name_aliases: aliases,
       }).select("id").single();
       if (error) throw error;
       return data;
