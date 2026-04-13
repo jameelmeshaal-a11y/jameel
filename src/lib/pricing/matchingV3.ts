@@ -467,9 +467,19 @@ function scoreCandidate(
     }
 
     // Synonym boost
-    if (hasSynonymOverlap(boqConcepts, candConcepts)) {
+    const synOverlap = hasSynonymOverlap(boqConcepts, candConcepts);
+    if (synOverlap) {
       score += WEIGHTS.SYNONYM_BOOST;
       parts.push(`syn:+${WEIGHTS.SYNONYM_BOOST}`);
+    }
+
+    // ── Concept + Dimension Boost ──────────────────────────────────────
+    // When synonym concept matches AND thickness/dimensions also match,
+    // grant a large bonus so short library names can reach the 50-pt threshold.
+    if (synOverlap && dimResult === 1) {
+      const CONCEPT_DIM_BOOST = 25;
+      score += CONCEPT_DIM_BOOST;
+      parts.push(`concept-dim:+${CONCEPT_DIM_BOOST}`);
     }
   }
 
