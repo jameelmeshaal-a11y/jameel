@@ -437,7 +437,22 @@ function scoreCandidate(
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);
   }
 
-  // 6. Synonym / Anti-confusion
+  // 6. Structural Type Gate — hard block if structural element types differ
+  const STRUCTURAL_TYPES: [string, RegExp][] = [
+    ["slab", /بلاطات|بلاطه|slab/i],
+    ["beam", /كمرات|كمره|beam/i],
+    ["column", /اعمده|عمود|column/i],
+    ["foundation", /قواعد|قاعده|اساسات|foundation/i],
+  ];
+  const boqStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(description + " " + (descriptionEn || "")));
+  const candStructText = (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "");
+  const candStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(candStructText));
+  if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
+    parts.push(`⛔ structural-gate: ${boqStructType[0]}↔${candStructType[0]}`);
+    return { score: 0, textScore: 0, notes: parts.join(" | ") };
+  }
+
+  // 7. Synonym / Anti-confusion
   const candConcepts = detectConcepts(
     (candidate.standard_name_ar || "") + " " +
     (candidate.standard_name_en || "") + " " +
