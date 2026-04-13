@@ -1,63 +1,116 @@
 
+# حل جذري لمشكلة “التعديل اليدوي لا يثبت” — التشخيص والخطة
 
-# تنفيذ حوكمة المطابقة — 3 محاور
+## ما وجدته في الكود فعلاً
+المشكلة ليست نظرية؛ هناك خلل بنيوي واضح في المسار الحالي:
 
-## محور 2 (أولاً): حماية التعديل اليدوي
+1. **الحفظ اليدوي في `PriceBreakdownModal` يحدث على مرحلتين منفصلتين**
+   - أولاً: يتم تحديث `boq_items` مباشرة، ويُضبط:
+     - `unit_rate`
+     - `total_price`
+     - `override_type = 'manual'`
+     - `manual_overrides`
+   - ثانياً: يتم استدعاء `syncToRateLibrary()` لتحديث مكتبة الأسعار.
 
-### `src/lib/pricingEngine.ts` — سطور 929-966
-- تعديل `resetBoQPricing` لإضافة `override_type` في الـ SELECT (سطر 932)
-- تقسيم البنود إلى `manualIds` و `normalIds`
-- تنفيذ UPDATE كامل فقط على `normalIds` بدفعات 100
-- البنود اليدوية لا تُمس
-- تغيير نوع الإرجاع إلى `Promise<{ reset: number; protected: number }>`
+2. **لكن `syncToRateLibrary()` يكتب مباشرة إلى `rate_library` و `rate_sources` من الواجهة**
+   - بينما سياسات الوصول الحالية تسمح **بالقراءة للجميع فقط** على `rate_library` و `rate_sources`
+   - والكتابة هناك **للإدمن فقط**
+   - هذا يعني أن المستخدم العادي غالباً يحصل معه **حفظ جزئي**:
+     - البند في `boq_items` يتحدث
+     - لكن المكتبة لا تتحدث
+     - ثم إعادة التسعير تقرأ السعر القديم من المكتبة وتعيد الكتابة فوق البند
 
-### `src/components/BoQTable.tsx` — سطر 160-161
-- تحديث استقبال النتيجة: `const { reset: resetCount, protected: protectedCount } = await resetBoQPricing(boqFileId);`
-- تحديث الـ console.log ليعرض العددين
-- إضافة toast بعد إعادة التسعير (سطر ~198) يعرض: `"تم إعادة تعيين X بند، وتم الحفاظ على Y تعديل يدوي ✅"`
+3. **هناك ثغرة ثانية في إعادة التسعير**
+   - `runPricingEngine()` يحمي التعديلات اليدوية عبر `hasManualOverride()`
+   - لكن `repriceUnpricedItems()` و `repriceSingleItem()` لا تحتويان حماية مكافئة واضحة للتعديل اليدوي
+   - وبالتالي حتى لو تم حفظ `override_type = 'manual'`، توجد مسارات إعادة تسعير يمكن أن تعيد الكتابة
 
----
+## النتيجة
+المشكلة الحقيقية هي:
+```text
+حفظ البند اليدوي ≠ تحديث المكتبة
+و
+الحماية من إعادة التسعير ≠ مطبقة بنفس الصرامة في كل المسارات
+```
 
-## محور 1: اختبارات Regression
+## ما سأقوم بتنفيذه بعد الموافقة
+### 1) توحيد الحفظ في مسار backend واحد atomic
+إنشاء وظيفة backend واحدة تقوم في **معاملة واحدة** بـ:
+- تحديث `boq_items`
+- ضبط `override_type = 'manual'`
+- تحديث أو إنشاء السجل المقابل في `rate_library`
+- إضافة `rate_sources`
+- تحديث `linked_rate_id`
+- إرجاع نتيجة واضحة للواجهة
 
-### `src/lib/pricing/matchingV3.test.ts` — إضافة بعد سطر 651
-قسم `Cross-Category Conflict Gate` مع 8 اختبارات تستخدم `detectConcepts` و `hasConceptConflict` المُصدّرتين من `synonyms.ts`:
-- باب أمني ↔ نافذة → conflict
-- خزائن ↔ نافذة → conflict  
-- صحي ↔ نافذة → conflict
-- مراوح ↔ نافذة → conflict
-- نافذة أمنية ↔ نافذة عادية → conflict
-- باب أمني ↔ باب خشب → conflict
-- نافذة ↔ نافذة (نفس الفئة) → no conflict
-- `findRateLibraryMatchV3` مع linkedRateId خاطئ → يتجاهل الربط
+الهدف:
+```text
+إما أن تنجح العملية كاملة
+أو تفشل كاملة
+بدون حفظ جزئي
+```
 
----
+### 2) منع الواجهة من الكتابة المباشرة إلى المكتبة
+تعديل `PriceBreakdownModal` ليستخدم وظيفة backend الجديدة بدل:
+- تحديث `boq_items` مباشرة
+- ثم `syncToRateLibrary()` بشكل منفصل
 
-## محور 3: تنبيهات التعارض مع append للـ notes
+### 3) توحيد حماية manual override في كل مسارات إعادة التسعير
+إضافة guard صريح في:
+- `runPricingEngine()`
+- `repriceUnpricedItems()`
+- `repriceSingleItem()`
 
-### `src/lib/pricing/matchingV3.ts` — سطر 108 + 150-154
-- تغيير نوع الإرجاع إلى `{ item: RateLibraryItem; confidence: number; conflictNotes?: string }`
-- عند اكتشاف تعارض (سطر 150-152)، بناء `conflictNotes` بنوع التعارض
-- تمرير `conflictNotes` في كل `return` لاحق بالدالة
+بحيث إذا كان البند:
+- `override_type = 'manual'`
+- أو لديه `manual_overrides`
+فإنه **يُتخطى بالكامل** ولا يُعاد تسعيره.
 
-### `src/lib/pricingEngine.ts` — سطر 763
-- تعديل بناء `notes` ليأخذ بعين الاعتبار:
-  1. `existingNotes` من البند الأصلي (من `block.primaryRow`)
-  2. `conflictNotes` من نتيجة المطابقة
-  3. `cost.explanation` من محرك التسعير
-- الصيغة: append الثلاثة معاً بدل الكتابة فوق القديم
+### 4) تثبيت حالة البند اليدوي بشكل متسق
+مراجعة حالة الحفظ اليدوي لتكون متسقة وظيفياً:
+- إما إبقاؤها `manual_override`
+- أو `approved` مع `override_type = 'manual'`
 
-### ملاحظة على نوع الإرجاع في wrapper
-- `findRateLibraryMatch` في `pricingEngine.ts` (سطر 117) يستخدم نفس نوع الإرجاع — يجب تحديثه أيضاً ليمرر `conflictNotes`
+وسأعتمد الخيار الذي لا يكسر الواجهات الحالية، لكن الأهم أن:
+- الحماية تعتمد على **بيانات override الفعلية**
+- لا على نص الحالة فقط
 
----
+### 5) تحسين الرسالة للمستخدم
+بدل الرسائل المضللة الحالية، ستعرض الواجهة نتيجة دقيقة مثل:
+- تم حفظ التعديل اليدوي وتحديث المكتبة بنجاح
+- أو فشل تحديث المكتبة ولم يتم اعتماد العملية
+
+أي لا نترك المستخدم يظن أن كل شيء تم بينما الواقع حفظ جزئي.
+
+### 6) اختبارات Regression إلزامية
+إضافة اختبارات تغطي:
+- حفظ يدوي ناجح يحدّث `boq_items` و `rate_library` معاً
+- فشل تحديث المكتبة يمنع اعتماد الحفظ بالكامل
+- إعادة التسعير الكامل لا تلمس البنود اليدوية
+- إعادة تسعير بند واحد لا تلمس بنداً يدوياً
+- إعادة تسعير غير المسعّر لا تلمس بنداً يدوياً
+- بقاء `linked_rate_id` على السجل الصحيح بعد التعديل
 
 ## الملفات المتأثرة
+- `src/components/PriceBreakdownModal.tsx`
+- `src/lib/pricing/rateSyncService.ts`
+- `src/lib/pricingEngine.ts`
+- **migration / backend function or RPC** لمسار الحفظ الذري
+- ملفات اختبار مرتبطة بالتسعير والحفظ اليدوي
 
-| الملف | التغيير |
-|---|---|
-| `src/lib/pricingEngine.ts` | حماية reset + append notes + تحديث wrapper type |
-| `src/components/BoQTable.tsx` | toast بالتفصيل |
-| `src/lib/pricing/matchingV3.test.ts` | 8 اختبارات regression |
-| `src/lib/pricing/matchingV3.ts` | `conflictNotes` في الإرجاع |
+## ملاحظة مهمة
+بناءً على الكود الحالي، **الاحتمال الأقوى جداً** أن السبب الأساسي هو RLS على مكتبة الأسعار:  
+المستخدم غير الإدمن يستطيع تعديل `boq_items` لكنه لا يستطيع تحديث `rate_library` من الواجهة، لذلك المشكلة تعود كل مرة حتى لو بدا أن الحفظ نجح.
 
+## بعد التنفيذ
+سيصبح السلوك المتوقع:
+```text
+حفظ 3500 ريال يكتب التعديل اليدوي + يحدّث المكتبة + يربط البند + يمنع أي إعادة تسعير لاحقة من الكتابة فوقه
+```
+
+## الترتيب التنفيذي
+1. بناء مسار الحفظ الذري في الـ backend
+2. ربط الواجهة به
+3. إضافة guards لكل مسارات إعادة التسعير
+4. إضافة اختبارات regression
+5. التحقق من سيناريو المستخدم نفسه end-to-end
