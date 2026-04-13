@@ -125,9 +125,31 @@ export function findRateLibraryMatchV3(
           linkedDimsCheck.filter(d => d.type === "thickness").some(cT => Math.abs(bT.values[0] - cT.values[0]) >= 1)
         );
       
-      if (wxhConflict || thickConflict) {
-        // Dimensions mismatch — fall through to scoring instead of blind trust
-        console.log(`[V3] linked_rate_id ${linkedRateId} dimension mismatch, re-scoring`);
+      // Concept conflict check — prevent cross-category trust
+      const boqConceptsCheck = detectConcepts(
+        description + " " + (descriptionEn || "")
+      );
+      const linkedText = (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "");
+      const linkedConceptsCheck = detectConcepts(linkedText);
+      const conceptConflict = hasConceptConflict(boqConceptsCheck, linkedConceptsCheck);
+
+      // Cross-category regex check — hard pairs that must never link
+      const CROSS_CATEGORY_PAIRS: [RegExp, RegExp][] = [
+        [/أبواب|باب|door/i, /نافذ|نوافذ|window|شباك/i],
+        [/أمني|أمنية|security\s*door/i, /نافذ|نوافذ|window/i],
+        [/حوض|مرحاض|مغسل|sanitary|lavatory|WC/i, /نافذ|نوافذ|window|شباك/i],
+        [/خزائن|كاونتر|cabinet|kitchen/i, /نافذ|نوافذ|window|شباك/i],
+        [/مروح|fan|exhaust/i, /نافذ|نوافذ|window|شباك/i],
+        [/فتحة وصول|roof hatch|access hatch/i, /نافذ|نوافذ|window|شباك/i],
+      ];
+      const categoryConflict = CROSS_CATEGORY_PAIRS.some(([patA, patB]) =>
+        (patA.test(description) && patB.test(linkedText)) ||
+        (patB.test(description) && patA.test(linkedText))
+      );
+
+      if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
+        // Conflict detected — fall through to scoring instead of blind trust
+        console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (dim=${wxhConflict}, thick=${thickConflict}, concept=${conceptConflict}, category=${categoryConflict}), re-scoring`);
       } else {
         return { item: linked, confidence: 95 };
       }
