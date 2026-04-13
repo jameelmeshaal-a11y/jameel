@@ -13,7 +13,7 @@ import {
   type BreakdownValues, type BreakdownField, type RatioSource, type RatioResolution,
 } from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
-import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
+// syncToRateLibrary is now handled atomically via save_manual_price RPC
 import { useAuth } from "@/contexts/AuthContext";
 
 interface BoQItemRow {
@@ -260,49 +260,31 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       const overridesObj: Record<string, boolean> = {};
       manualFields.forEach(f => { overridesObj[f] = true; });
 
-      const { error } = await supabase
-        .from("boq_items")
-        .update({
-          materials: values.materials,
-          labor: values.labor,
-          equipment: values.equipment,
-          logistics: values.logistics,
-          risk: values.risk,
-          profit: values.profit,
-          unit_rate: unitRate,
-          total_price: totalPrice,
-          status: "approved",
-          notes: item.notes || "Manual pricing adjustment",
-          manual_overrides: overridesObj,
-          override_at: new Date().toISOString(),
-          override_reason: correctionNote || null,
-          override_type: "manual",
-        })
-        .eq("id", item.id);
+      // Atomic save: updates boq_items + rate_library + rate_sources in one transaction
+      const { data: rpcResult, error } = await supabase.rpc("save_manual_price", {
+        p_item_id: item.id,
+        p_boq_file_id: item.boq_file_id,
+        p_materials: values.materials,
+        p_labor: values.labor,
+        p_equipment: values.equipment,
+        p_logistics: values.logistics,
+        p_risk: values.risk,
+        p_profit: values.profit,
+        p_unit_rate: unitRate,
+        p_total_price: totalPrice,
+        p_manual_overrides: overridesObj,
+        p_correction_note: correctionNote || null,
+        p_user_id: user?.id || null,
+      });
 
       if (error) {
-        console.error("[Save] Error:", error);
+        console.error("[Save] Atomic save failed:", error);
         toast.error("فشل حفظ التعديل: " + error.message);
         return;
       }
 
-      const syncResult = await syncToRateLibrary({
-        itemId: item.id,
-        boqFileId: item.boq_file_id,
-        values,
-        unitRate,
-        correctionNote: correctionNote || undefined,
-        userId: user?.id,
-      });
-
-      if (!syncResult) {
-        await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).then(() => {}, () => {});
-        toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
-        return;
-      }
-
-      await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
-      toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+      console.log("[Save] Atomic save result:", rpcResult);
+      toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال ✅`);
       setEditing(false);
       onUpdated?.();
       onClose();
