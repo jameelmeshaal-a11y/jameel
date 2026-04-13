@@ -648,4 +648,75 @@ describe("findRateLibraryMatchV3 — Parent Authority", () => {
       expect(result.item.id).not.toBe("lib-blinding-10cm");
     }
   });
+
+  // ─── Cross-Category Conflict Gate ────────────────────────────────────────
+  describe("Cross-Category Conflict Gate", () => {
+    it("security door ↔ window → conflict", () => {
+      const a = detectConcepts("توريد وتركيب باب أمني STUVE D2 مقاس 100×210");
+      const b = detectConcepts("نافذة عادية W09 ألمنيوم 120×150");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("kitchen cabinets ↔ window → conflict", () => {
+      const a = detectConcepts("خزائن مطبخ علوية kitchen cabinet");
+      const b = detectConcepts("نافذة ألمنيوم W03 شباك");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("sanitary LAV ↔ window → conflict", () => {
+      const a = detectConcepts("حوض غسيل lavatory مغسلة صحية");
+      const b = detectConcepts("نافذة W09 window شباك");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("exhaust fan ↔ window → conflict", () => {
+      const a = detectConcepts("مروحة شفط exhaust fan طرد هواء");
+      const b = detectConcepts("نافذة ألمنيوم W05 window");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("security window ↔ normal window → conflict", () => {
+      const a = detectConcepts("نافذة أمنية Ws مصفحة security window");
+      const b = detectConcepts("نافذة عادية W09 ألمنيوم");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("security door ↔ wooden door → conflict", () => {
+      const a = detectConcepts("باب أمني مصفح STUVE security door");
+      const b = detectConcepts("باب خشب MDF داخلي wooden door");
+      expect(hasConceptConflict(a, b)).toBe(true);
+    });
+
+    it("window W09 ↔ window W09 (same category) → NO conflict", () => {
+      const a = detectConcepts("نافذة ألمنيوم W09 مقاس 120×150");
+      const b = detectConcepts("نافذة ألمنيوم W09 مع زجاج مزدوج");
+      expect(hasConceptConflict(a, b)).toBe(false);
+    });
+
+    it("findRateLibraryMatchV3 rejects wrong linkedRateId (door → window)", () => {
+      const windowRate: any = {
+        id: "rate-window-w09",
+        standard_name_ar: "نافذة عادية W09 ألمنيوم",
+        standard_name_en: "Standard Window W09 Aluminum",
+        category: "finishing",
+        unit: "عدد",
+        base_rate: 850,
+        min_rate: 700,
+        max_rate: 1000,
+        target_rate: 850,
+        keywords: ["نافذة", "window", "W09"],
+      };
+      const result = findRateLibraryMatchV3(
+        "توريد وتركيب باب أمني STUVE D2 مقاس 100×210",
+        "Security door STUVE D2 100x210",
+        "عدد", "finishing",
+        [windowRate],
+        "rate-window-w09",
+      );
+      // Should either return null (no match) or NOT return confidence 95 (rejected the linked rate)
+      if (result) {
+        expect(result.confidence).toBeLessThan(95);
+      }
+    });
+  });
 });
