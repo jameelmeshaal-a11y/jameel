@@ -44,6 +44,7 @@ export function useUpdatePriceItem() {
         item_code: string | null; item_description: string | null; item_name_aliases: string[] | null;
         approved_by: string | null; approved_at: string | null; source_type: string;
         notes: string | null; is_locked: boolean; updated_at: string;
+        keywords: string[];
       }>;
       oldPrice?: number;
       newPrice?: number;
