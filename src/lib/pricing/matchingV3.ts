@@ -210,6 +210,31 @@ export function findRateLibraryMatchV3(
     }
   }
 
+  // If linked candidate passed validation, add it with a small bonus
+  if (linkedCandidate) {
+    const alreadyScored = viableCandidates.find(vc => vc.candidate.id === linkedCandidate!.id);
+    if (alreadyScored) {
+      // Give a small bonus (5pts) for being the existing link, but not 95
+      alreadyScored.score = Math.min(99, alreadyScored.score + 5);
+      alreadyScored.notes += " | linked-bonus:+5";
+    } else {
+      // Linked item didn't pass unit gate or scored < 50 — score it now with bonus
+      const result = scoreCandidate(
+        enrichedDesc, descriptionEn, category,
+        boqCodes, boqTokens, boqDimensions, boqConcepts,
+        linkedCandidate, useEnriched,
+      );
+      if (result.score >= 30) { // Lower threshold for linked items
+        viableCandidates.push({
+          candidate: linkedCandidate,
+          score: Math.min(99, Math.max(result.score + 10, 50)),
+          textScore: result.textScore,
+          notes: result.notes + " | linked-rescue:+10",
+        });
+      }
+    }
+  }
+
   if (viableCandidates.length > 0) {
     // Sort by total score descending
     viableCandidates.sort((a, b) => b.score - a.score);
