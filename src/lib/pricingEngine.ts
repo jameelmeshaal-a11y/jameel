@@ -1032,6 +1032,12 @@ export async function repriceUnpricedItems(
     const row = unpricedRows[i];
     onProgress?.(i + 1, unpricedRows.length);
 
+    // Guard: skip manual override items
+    if (row.override_type === 'manual') {
+      console.log(`[RepriceUnpriced] Skipping manual override item ${row.id}`);
+      continue;
+    }
+
     const description = row.description || "";
     const descriptionEn = row.description_en || "";
     const detection = detectCategory(description, descriptionEn);
@@ -1136,6 +1142,19 @@ export async function repriceSingleItem(
     .single();
 
   if (itemErr || !item) throw new Error("لم يتم العثور على البند");
+
+  // Guard: skip manual override items
+  if (item.override_type === 'manual') {
+    console.log(`[RepriceSingle] Skipping manual override item ${itemId}`);
+    return {
+      success: false,
+      unitRate: item.unit_rate,
+      totalPrice: item.total_price,
+      confidence: item.confidence || 0,
+      source: "manual",
+      matchedName: null,
+    };
+  }
 
   // 2. Fetch dependencies in parallel
   const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
