@@ -295,7 +295,7 @@ export function findRateLibraryMatchV3(
       console.log(`[V3] ⚠️ High Price Cap: single match at ${finalPrice}, confidence capped at 70`);
     }
 
-    return { item: best.candidate, confidence: best.score };
+    return { item: best.candidate, confidence: best.score, conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
   }
 
   // Path C — Approved-rate fallback (threshold 50, capped at 55)
@@ -322,7 +322,7 @@ export function findRateLibraryMatchV3(
     }
 
     if (fallbackMatch) {
-      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55) };
+      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55), conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
     }
   }
 
