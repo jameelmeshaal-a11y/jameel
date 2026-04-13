@@ -219,7 +219,7 @@ export function findRateLibraryMatchV3(
     }
 
     // ── Price Magnitude Guard ──────────────────────────────────────────
-    // If multiple candidates exist with extreme price variance (>50x),
+    // If multiple candidates exist with extreme price variance (>10x),
     // prefer the one with highest text similarity to avoid catastrophic mismatch.
     if (viableCandidates.length >= 2) {
       const prices = viableCandidates
@@ -230,7 +230,7 @@ export function findRateLibraryMatchV3(
         const maxPrice = Math.max(...prices);
         const minPrice = Math.min(...prices);
         
-        if (minPrice > 0 && maxPrice / minPrice > 50) {
+        if (minPrice > 0 && maxPrice / minPrice > 10) {
           // Extreme variance detected — pick highest text score instead
           const textBest = viableCandidates.reduce((prev, curr) =>
             curr.textScore > prev.textScore ? curr : prev
