@@ -86,6 +86,8 @@ const WEIGHTS = {
   LIBRARY_KEYWORDS: 15,     // hits against library keywords field
   PARENT_CONTEXT_BOOST: 10, // enriched description improved the score
   CORRECTION_NOTES_BOOST: 12, // correction notes keyword match
+  PARENT_AUTHORITY_BOOST: 15, // parent segment concept matches candidate
+  PARENT_CONFLICT_PENALTY: -10, // parent segment concept conflicts with candidate
 } as const;
 
 // ─── Main V3 Matcher ────────────────────────────────────────────────────────
