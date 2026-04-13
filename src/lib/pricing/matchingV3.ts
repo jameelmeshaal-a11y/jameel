@@ -105,7 +105,7 @@ export function findRateLibraryMatchV3(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
-): { item: RateLibraryItem; confidence: number } | null {
+): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   // Path A — Direct lookup with dimension validation
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
@@ -149,7 +149,16 @@ export function findRateLibraryMatchV3(
 
       if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
         // Conflict detected — fall through to scoring instead of blind trust
-        console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (dim=${wxhConflict}, thick=${thickConflict}, concept=${conceptConflict}, category=${categoryConflict}), re-scoring`);
+        const conflictTypes = [
+          wxhConflict && "أبعاد",
+          thickConflict && "سُمك",
+          conceptConflict && "مفهومي",
+          categoryConflict && "فئوي",
+        ].filter(Boolean).join("+");
+        const conflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
+        console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (${conflictTypes}), re-scoring`);
+        // Store conflict note to pass through if a new match is found
+        var _pathAConflictNote = conflictNote;
       } else {
         return { item: linked, confidence: 95 };
       }
@@ -286,7 +295,7 @@ export function findRateLibraryMatchV3(
       console.log(`[V3] ⚠️ High Price Cap: single match at ${finalPrice}, confidence capped at 70`);
     }
 
-    return { item: best.candidate, confidence: best.score };
+    return { item: best.candidate, confidence: best.score, conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
   }
 
   // Path C — Approved-rate fallback (threshold 50, capped at 55)
@@ -313,7 +322,7 @@ export function findRateLibraryMatchV3(
     }
 
     if (fallbackMatch) {
-      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55) };
+      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55), conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
     }
   }
 

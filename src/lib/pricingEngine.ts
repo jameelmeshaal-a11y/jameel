@@ -114,7 +114,7 @@ function findRateLibraryMatch(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
-): { item: RateLibraryItem; confidence: number } | null {
+): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
@@ -760,7 +760,11 @@ export async function runPricingEngine(
       source: matchConfidence >= 70 ? "library-high" : "library-medium",
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
-      notes: cost.explanation,
+      notes: [
+        (block.primaryRow as any).notes,
+        cost.explanation,
+        libraryMatchResult?.conflictNotes,
+      ].filter(Boolean).join(" | "),
     };
     const { error: updateError } = await supabase
       .from("boq_items")
@@ -926,43 +930,50 @@ export async function runPricingEngine(
  * Completely zeros out all pricing data for a BoQ file.
  * Called before re-pricing to ensure a clean slate — no cached/stale data.
  */
-export async function resetBoQPricing(boqFileId: string): Promise<number> {
+export async function resetBoQPricing(boqFileId: string): Promise<{ reset: number; protected: number }> {
   const { data: items, error: fetchErr } = await supabase
     .from("boq_items")
-    .select("id, quantity, unit, item_no")
+    .select("id, quantity, unit, item_no, override_type")
     .eq("boq_file_id", boqFileId);
 
   if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
-  if (!items || items.length === 0) return 0;
+  if (!items || items.length === 0) return { reset: 0, protected: 0 };
 
-  const { error: updateErr } = await supabase
-    .from("boq_items")
-    .update({
-      unit_rate: null,
-      total_price: null,
-      materials: null,
-      labor: null,
-      equipment: null,
-      logistics: null,
-      risk: null,
-      profit: null,
-      confidence: null,
-      source: null,
-      linked_rate_id: null,
-      location_factor: null,
-      notes: null,
-      status: "pending",
-      override_type: null,
-      override_reason: null,
-      override_by: null,
-      override_at: null,
-      manual_overrides: null,
-    })
-    .eq("boq_file_id", boqFileId);
+  const manualItems = items.filter(i => i.override_type === 'manual');
+  const normalItems = items.filter(i => i.override_type !== 'manual');
 
-  if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
+  // Only reset non-manual items in batches of 100
+  for (let i = 0; i < normalItems.length; i += 100) {
+    const batch = normalItems.slice(i, i + 100).map(item => item.id);
+    const { error: updateErr } = await supabase
+      .from("boq_items")
+      .update({
+        unit_rate: null,
+        total_price: null,
+        materials: null,
+        labor: null,
+        equipment: null,
+        logistics: null,
+        risk: null,
+        profit: null,
+        confidence: null,
+        source: null,
+        linked_rate_id: null,
+        location_factor: null,
+        notes: null,
+        status: "pending",
+        override_type: null,
+        override_reason: null,
+        override_by: null,
+        override_at: null,
+        manual_overrides: null,
+      })
+      .in("id", batch);
 
-  return items.length;
+    if (updateErr) throw new Error(`Failed to reset pricing batch: ${updateErr.message}`);
+  }
+
+  return { reset: normalItems.length, protected: manualItems.length };
 }
 
 // ─── Reprice Unpriced Items Only ────────────────────────────────────────────
