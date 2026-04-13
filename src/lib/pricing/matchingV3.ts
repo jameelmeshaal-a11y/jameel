@@ -359,7 +359,7 @@ function scoreCandidate(
     const candHasWxH = candDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
     if (boqHasWxH && candHasWxH) {
       parts.push(`⛔ dim-mismatch: hard skip (WxH differs)`);
-      return { score: 0, notes: parts.join(" | ") };
+      return { score: 0, textScore: 0, notes: parts.join(" | ") };
     }
     score += WEIGHTS.DIMENSION_MISMATCH;
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);
@@ -376,7 +376,7 @@ function scoreCandidate(
     // Anti-confusion gate — zero score if conflicting concepts
     if (hasConceptConflict(boqConcepts, candConcepts)) {
       parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
-      return { score: 0, notes: parts.join(" | ") };
+      return { score: 0, textScore: 0, notes: parts.join(" | ") };
     }
 
     // Synonym boost
