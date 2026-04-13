@@ -13,7 +13,7 @@ import {
   type BreakdownValues, type BreakdownField, type RatioSource, type RatioResolution,
 } from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
-import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
+// syncToRateLibrary is now handled atomically via save_manual_price RPC
 import { useAuth } from "@/contexts/AuthContext";
 
 interface BoQItemRow {
