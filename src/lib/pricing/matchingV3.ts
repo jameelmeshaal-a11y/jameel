@@ -115,8 +115,15 @@ export function findRateLibraryMatchV3(
       );
       const boqHasWxH = boqDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
       const linkedHasWxH = linkedDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
+      const boqHasThick = boqDimsCheck.some(d => d.type === "thickness");
+      const linkedHasThick = linkedDimsCheck.some(d => d.type === "thickness");
+      const wxhConflict = boqHasWxH && linkedHasWxH && compareDimensions(boqDimsCheck, linkedDimsCheck) === -1;
+      const thickConflict = boqHasThick && linkedHasThick && 
+        boqDimsCheck.filter(d => d.type === "thickness").some(bT =>
+          linkedDimsCheck.filter(d => d.type === "thickness").some(cT => Math.abs(bT.values[0] - cT.values[0]) >= 1)
+        );
       
-      if (boqHasWxH && linkedHasWxH && compareDimensions(boqDimsCheck, linkedDimsCheck) === -1) {
+      if (wxhConflict || thickConflict) {
         // Dimensions mismatch — fall through to scoring instead of blind trust
         console.log(`[V3] linked_rate_id ${linkedRateId} dimension mismatch, re-scoring`);
       } else {
@@ -410,6 +417,21 @@ function scoreCandidate(
     if (boqHasWxH && candHasWxH) {
       parts.push(`⛔ dim-mismatch: hard skip (WxH differs)`);
       return { score: 0, textScore: 0, notes: parts.join(" | ") };
+    }
+    // Hard gate: if both have explicit thickness and they differ, zero out
+    const boqHasThickness = boqDimensions.some(d => d.type === "thickness");
+    const candHasThickness = candDimensions.some(d => d.type === "thickness");
+    if (boqHasThickness && candHasThickness) {
+      const thickConflict = boqDimensions
+        .filter(d => d.type === "thickness")
+        .some(bT => candDimensions
+          .filter(d => d.type === "thickness")
+          .some(cT => Math.abs(bT.values[0] - cT.values[0]) >= 1)
+        );
+      if (thickConflict) {
+        parts.push(`⛔ thickness-mismatch: hard skip`);
+        return { score: 0, textScore: 0, notes: parts.join(" | ") };
+      }
     }
     score += WEIGHTS.DIMENSION_MISMATCH;
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);

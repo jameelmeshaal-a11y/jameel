@@ -163,7 +163,7 @@ export function parseDimensions(text: string): ParsedDimension[] {
   }
 
   // Thickness: "سمك 3 مم", "thickness 5mm"
-  const thickPattern = /(?:سمك|thickness|thk)\s*(\d+(?:\.\d+)?)\s*(?:مم|mm)?/gi;
+  const thickPattern = /(?:بسمك|سمك|سماكة|سماكه|thickness|thk)\s*(\d+(?:\.\d+)?)\s*(?:مم|mm)?/gi;
   while ((m = thickPattern.exec(text)) !== null) {
     results.push({ type: "thickness", values: [parseFloat(m[1])], raw: m[0] });
   }
