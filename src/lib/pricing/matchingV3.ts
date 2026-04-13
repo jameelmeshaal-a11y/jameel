@@ -107,6 +107,11 @@ export function findRateLibraryMatchV3(
   notes?: string | null,
 ): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   // Path A — Direct lookup with dimension validation
+  // Treat linked_rate_id as a HINT, not absolute trust.
+  // Always run full scoring in parallel, and only use linked if it's truly the best.
+  let linkedCandidate: RateLibraryItem | null = null;
+  let linkedConflictNote: string | undefined;
+  
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
     if (linked) {
@@ -148,19 +153,18 @@ export function findRateLibraryMatchV3(
       );
 
       if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
-        // Conflict detected — fall through to scoring instead of blind trust
         const conflictTypes = [
           wxhConflict && "أبعاد",
           thickConflict && "سُمك",
           conceptConflict && "مفهومي",
           categoryConflict && "فئوي",
         ].filter(Boolean).join("+");
-        const conflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
+        linkedConflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
         console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (${conflictTypes}), re-scoring`);
-        // Store conflict note to pass through if a new match is found
-        var _pathAConflictNote = conflictNote;
+        // Don't use linked at all — fall through to full scoring
       } else {
-        return { item: linked, confidence: 95 };
+        // Keep linked as a candidate but still score all others
+        linkedCandidate = linked;
       }
     }
   }
@@ -203,6 +207,31 @@ export function findRateLibraryMatchV3(
         textScore: result.textScore,
         notes: result.notes,
       });
+    }
+  }
+
+  // If linked candidate passed validation, add it with a small bonus
+  if (linkedCandidate) {
+    const alreadyScored = viableCandidates.find(vc => vc.candidate.id === linkedCandidate!.id);
+    if (alreadyScored) {
+      // Give a small bonus (5pts) for being the existing link, but not 95
+      alreadyScored.score = Math.min(99, alreadyScored.score + 5);
+      alreadyScored.notes += " | linked-bonus:+5";
+    } else {
+      // Linked item didn't pass unit gate or scored < 50 — score it now with bonus
+      const result = scoreCandidate(
+        enrichedDesc, descriptionEn, category,
+        boqCodes, boqTokens, boqDimensions, boqConcepts,
+        linkedCandidate, useEnriched,
+      );
+      if (result.score >= 30) { // Lower threshold for linked items
+        viableCandidates.push({
+          candidate: linkedCandidate,
+          score: Math.min(99, Math.max(result.score + 10, 50)),
+          textScore: result.textScore,
+          notes: result.notes + " | linked-rescue:+10",
+        });
+      }
     }
   }
 
@@ -295,7 +324,7 @@ export function findRateLibraryMatchV3(
       console.log(`[V3] ⚠️ High Price Cap: single match at ${finalPrice}, confidence capped at 70`);
     }
 
-    return { item: best.candidate, confidence: best.score, conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
+    return { item: best.candidate, confidence: best.score, conflictNotes: linkedConflictNote };
   }
 
   // Path C — Approved-rate fallback (threshold 50, capped at 55)
@@ -322,7 +351,7 @@ export function findRateLibraryMatchV3(
     }
 
     if (fallbackMatch) {
-      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55), conflictNotes: typeof _pathAConflictNote === 'string' ? _pathAConflictNote : undefined };
+      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55), conflictNotes: linkedConflictNote };
     }
   }
 
