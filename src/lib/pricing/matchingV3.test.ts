@@ -930,3 +930,43 @@ describe("Manual item protection", () => {
     expect(isManuallyProtected({ override_type: null, status: "manual_override" })).toBe(true);
   });
 });
+
+// ─── Insulated block conflict test ──────────────────────────────────────────
+
+const wallBlock200 = {
+  id: "lib-wall-200mm",
+  category: "structural",
+  standard_name_ar: "جدار بسمك 200 مم",
+  standard_name_en: "200mm Block Wall",
+  unit: "م2",
+  base_rate: 200, target_rate: 200, min_rate: 180, max_rate: 220,
+  base_city: "Riyadh",
+  materials_pct: 50, labor_pct: 30, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+  keywords: ["جدار", "بلوك", "200"],
+  is_locked: false, weight_class: "medium", complexity: "medium", source_type: "Approved",
+  item_name_aliases: ["حائط 200مم", "بلوك 200مم"], item_code: null, item_description: null,
+} as any;
+
+describe("Insulated block vs standard block conflict", () => {
+  it("does NOT match insulated block 200mm to standard wall 200mm", () => {
+    const result = findRateLibraryMatchV3(
+      "حائط من البلوك المعزول مسبقاً بسمك 200مم",
+      "Insulated Block Wall 200mm",
+      "م2", "structural",
+      [wallBlock200],
+    );
+    // Should be null (concept conflict blocks the match)
+    expect(result).toBeNull();
+  });
+
+  it("matches standard block 200mm to wall 200mm correctly", () => {
+    const result = findRateLibraryMatchV3(
+      "بلوك أسمنتي 200 مم",
+      "Cement Block 200mm",
+      "م2", "structural",
+      [wallBlock200],
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-wall-200mm");
+  });
+});

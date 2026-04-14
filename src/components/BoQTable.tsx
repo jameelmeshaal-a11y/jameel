@@ -8,7 +8,7 @@ import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
 import { exportOriginalWithPrices } from "@/lib/boqOriginalExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, repricePendingItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -234,6 +234,37 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         toast.success(`تم تسعير ${result.pricedCount} بند — ${result.stillUnpricedCount} بند لا يزال بدون سعر`);
       } else {
         toast.info("لم يتم العثور على تطابقات جديدة للبنود غير المسعّرة");
+      }
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
+    }
+  }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
+
+  const handleRepricePending = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
+    try {
+      const onItemPricedCb = makeOnItemPriced();
+      const result = await repricePendingItems(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      }, onItemPricedCb);
+      if (result.pricedCount > 0) {
+        toast.success(`✅ تم تسعير ${result.pricedCount} بند pending — ${result.stillPendingCount} بند لا يزال pending${result.skippedManual > 0 ? ` | تم تخطي ${result.skippedManual} بند يدوي` : ""}`);
+      } else {
+        toast.info("لم يتم العثور على تطابقات جديدة للبنود الـ pending");
       }
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
@@ -705,6 +736,11 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               {priceableCount - pricedCount > 0 && (
                 <Button variant="secondary" size="sm" className="gap-1" onClick={handleRepriceUnpriced} disabled={pricing}>
                   <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
+                </Button>
+              )}
+              {items.filter(i => i.status === "pending").length > 0 && (
+                <Button variant="secondary" size="sm" className="gap-1 border-primary/30" onClick={handleRepricePending} disabled={pricing}>
+                  <Play className="w-3 h-3" /> تسعير الـ Pending ({items.filter(i => i.status === "pending").length})
                 </Button>
               )}
               {pricedCount > 0 && (

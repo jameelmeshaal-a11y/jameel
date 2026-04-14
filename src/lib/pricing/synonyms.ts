@@ -90,6 +90,7 @@ export const SYNONYM_GROUPS: Record<string, string[]> = {
 
   // ── Blockwork by thickness ──
   "بلوك": ["بلوك", "block", "طابوق", "بلك", "blockwork", "طوب"],
+  "بلوك_معزول": ["بلوك معزول", "معزول مسبقا", "insulated block", "بلوك عازل", "بلك معزول", "بلوك معزول مسبقا"],
   "بلوك_مقاوم_حريق": ["بلوك مقاوم حريق", "بلوك مقاوم للحريق", "fire rated block", "fire resistant block", "بلك مقاوم"],
   "جدار_بلوك": ["جدار", "حوائط", "حائط", "wall", "جدران", "حيطان", "جدار بلوك", "حوائط بلوك"],
   "بلاطة_مجوفة": ["بلاطه مجوفه", "بلاطة مجوفة", "hollow core slab", "هولوكور", "hollow slab", "بلاطه هولوكور"],
@@ -294,6 +295,9 @@ export const ANTI_CONFUSION_PAIRS: [string, string][] = [
   // Parapet vs wall — different elements
   ["دروة", "جدار_بلوك"],
   ["دروة", "بلوك"],
+  // Insulated block vs standard block — never cross-match
+  ["بلوك_معزول", "جدار_بلوك"],
+  ["بلوك_معزول", "بلوك"],
 ];
 
 // ─── Dimension Parser ──────────────────────────────────────────────────────
