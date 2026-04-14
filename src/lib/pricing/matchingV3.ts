@@ -605,9 +605,9 @@ function scoreCandidate(
   // Use clean segment (item_no / last segment after —) for structural detection
   const boqCleanForStruct = extractCleanSegment(description);
   const boqStructText = boqCleanForStruct + " " + extractCleanSegment(descriptionEn || "");
-  const boqStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(boqStructText));
+  const boqStructType = detectStructuralType(boqStructText, STRUCTURAL_TYPES);
   const candStructText = (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "");
-  const candStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(candStructText));
+  const candStructType = detectStructuralType(candStructText, STRUCTURAL_TYPES);
   if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
     parts.push(`⛔ structural-gate: ${boqStructType[0]}↔${candStructType[0]}`);
     return { score: 0, textScore: 0, notes: parts.join(" | ") };
