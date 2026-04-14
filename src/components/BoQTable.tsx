@@ -281,6 +281,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
 
+  const handleExport = async () => {
     if (items.length === 0) return;
 
     const unmatchedCount = items.filter(i => i.status === "unmatched" || i.source === "no_match").length;
