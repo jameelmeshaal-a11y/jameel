@@ -750,7 +750,10 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
-    const pricedUpdate = {
+    // Check if this match inherited manual override from a previous project
+    const isInheritedManual = libraryMatchResult?.overrideType === "manual";
+
+    const pricedUpdate: Record<string, any> = {
       materials: cost.materials,
       labor: cost.labor,
       equipment: cost.equipment,
@@ -761,14 +764,16 @@ export async function runPricingEngine(
       total_price: cost.totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: cost.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
       notes: [
         (block.primaryRow as any).notes,
         cost.explanation,
         libraryMatchResult?.conflictNotes,
+        isInheritedManual ? "⭐ تسعير يدوي موروث من مشروع سابق" : null,
       ].filter(Boolean).join(" | "),
+      ...(isInheritedManual ? { override_type: "manual" } : {}),
     };
     const { error: updateError } = await supabase
       .from("boq_items")
