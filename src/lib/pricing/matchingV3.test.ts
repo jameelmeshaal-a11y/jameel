@@ -1133,3 +1133,172 @@ describe("Blinding concrete must NOT match structural elements", () => {
     expect(result!.item.id).toBe("lib-blinding");
   });
 });
+
+// ─── item_no Priority Tests ──────────────────────────────────────────────
+describe("item_no priority over long description", () => {
+  const columnLib = {
+    id: "lib-columns",
+    category: "concrete",
+    standard_name_ar: "الاعمدة",
+    standard_name_en: "Columns",
+    unit: "م3",
+    base_rate: 1350,
+    base_city: "Riyadh",
+    target_rate: 1350,
+    min_rate: 1100,
+    max_rate: 1600,
+    materials_pct: 45, labor_pct: 30, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["اعمده", "عمود", "column"],
+    is_locked: false, weight_class: "Heavy", complexity: "Medium", source_type: "Approved",
+    item_name_aliases: ["الأعمدة"],
+  };
+
+  const slab12Lib = {
+    id: "lib-slab-12cm",
+    category: "concrete",
+    standard_name_ar: "البلاطات الخرسانية سمك 12 سم",
+    standard_name_en: "Concrete Slabs 12cm Thick",
+    unit: "م3",
+    base_rate: 1200,
+    base_city: "Riyadh",
+    target_rate: 1200,
+    min_rate: 1000,
+    max_rate: 1500,
+    materials_pct: 45, labor_pct: 30, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["بلاطات", "خرسانيه", "سمك", "12"],
+    is_locked: false, weight_class: "Heavy", complexity: "Medium", source_type: "Approved",
+    item_name_aliases: ["البلاطات الخرسانية سمك 12 سم"],
+  };
+
+  const excavationLib = {
+    id: "lib-excavation",
+    category: "earthwork",
+    standard_name_ar: "حفر وخنادق",
+    standard_name_en: "Excavation and Trenches",
+    unit: "م3",
+    base_rate: 42,
+    base_city: "Riyadh",
+    target_rate: 42,
+    min_rate: 30,
+    max_rate: 60,
+    materials_pct: 10, labor_pct: 40, equipment_pct: 40, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["حفر", "خنادق", "excavation"],
+    is_locked: false, weight_class: "Heavy", complexity: "Low", source_type: "Approved",
+    item_name_aliases: ["حفر وخنادق"],
+  };
+
+  const beamLib = {
+    id: "lib-beams",
+    category: "concrete",
+    standard_name_ar: "الكمرات",
+    standard_name_en: "Beams",
+    unit: "م3",
+    base_rate: 1350,
+    base_city: "Riyadh",
+    target_rate: 1350,
+    min_rate: 1100,
+    max_rate: 1600,
+    materials_pct: 45, labor_pct: 30, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["كمرات", "beam"],
+    is_locked: false, weight_class: "Heavy", complexity: "Medium", source_type: "Approved",
+    item_name_aliases: ["الكمرات"],
+  };
+
+  const slabOnGradeLib = {
+    id: "lib-slab-on-grade",
+    category: "concrete",
+    standard_name_ar: "بلاطة على الأرض سمك 125مم",
+    standard_name_en: "Slab on Grade 125mm",
+    unit: "م3",
+    base_rate: 850,
+    base_city: "Riyadh",
+    target_rate: 850,
+    min_rate: 700,
+    max_rate: 1100,
+    materials_pct: 50, labor_pct: 25, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["بلاطه", "ارض", "slab", "grade"],
+    is_locked: false, weight_class: "Heavy", complexity: "Medium", source_type: "Approved",
+    item_name_aliases: ["بلاطة على الأرض"],
+  };
+
+  const stairsLib = {
+    id: "lib-stairs",
+    category: "concrete",
+    standard_name_ar: "السلالم",
+    standard_name_en: "Stairs",
+    unit: "م3",
+    base_rate: 1500,
+    base_city: "Riyadh",
+    target_rate: 1500,
+    min_rate: 1200,
+    max_rate: 1800,
+    materials_pct: 45, labor_pct: 30, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["سلالم", "stairs"],
+    is_locked: false, weight_class: "Heavy", complexity: "High", source_type: "Approved",
+    item_name_aliases: ["السلالم"],
+  };
+
+  const allLib = [columnLib, slab12Lib, excavationLib, beamLib, slabOnGradeLib, stairsLib];
+
+  it("item_no 'البلاطات الخرسانية سمك 12 سم' matches slab, NOT columns", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة مصبوبة في الموقع — البلاطات الخرسانية سمك 12 سم",
+      "Reinforced concrete — Slabs 12cm",
+      "م3", "concrete",
+      allLib,
+      null, new Set(), null,
+      "البلاطات الخرسانية سمك 12 سم",
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-slab-12cm");
+  });
+
+  it("item_no 'الكمرات' matches beams, NOT excavation", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة مصبوبة في الموقع — الكمرات",
+      "Reinforced concrete — Beams",
+      "م3", "concrete",
+      allLib,
+      null, new Set(), null,
+      "الكمرات",
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-beams");
+  });
+
+  it("item_no 'السلالم' matches stairs, NOT slab on grade", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة مصبوبة في الموقع — السلالم",
+      "Reinforced concrete — Stairs",
+      "م3", "concrete",
+      allLib,
+      null, new Set(), null,
+      "السلالم",
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-stairs");
+  });
+
+  it("structural gate blocks slab from matching column even without item_no", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — البلاطات الخرسانية",
+      "Slabs",
+      "م3", "concrete",
+      [columnLib],
+      null, new Set(), null,
+    );
+    // Should NOT match columns
+    expect(result).toBeNull();
+  });
+
+  it("structural gate blocks beams from matching excavation", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — الكمرات",
+      "Beams",
+      "م3", "concrete",
+      [excavationLib],
+      null, new Set(), null,
+    );
+    expect(result).toBeNull();
+  });
+});
