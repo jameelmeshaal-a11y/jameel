@@ -283,8 +283,65 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         return;
       }
 
-      console.log("[Save] Atomic save result:", rpcResult);
-      toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال ✅`);
+      const result = rpcResult as any;
+      console.log("[Save] Atomic save result:", result);
+
+      // Auto-sync: fix any stale_price items that the RPC just flagged
+      let syncedCount = 0;
+      try {
+        const { data: staleItems } = await supabase
+          .from("boq_items")
+          .select("id, linked_rate_id, item_no, description, unit_rate, location_factor, quantity, override_type")
+          .eq("boq_file_id", item.boq_file_id)
+          .eq("status", "stale_price");
+
+        if (staleItems && staleItems.length > 0) {
+          // Only sync non-manual items
+          const toSync = staleItems.filter(si => si.override_type !== "manual");
+          if (toSync.length > 0) {
+            // Get library rates for these items
+            const linkedIds = [...new Set(toSync.map(s => s.linked_rate_id).filter(Boolean))] as string[];
+            const { data: libEntries } = await supabase
+              .from("rate_library")
+              .select("id, target_rate, materials_pct, labor_pct, equipment_pct, logistics_pct, risk_pct, profit_pct")
+              .in("id", linkedIds);
+            const libMap = new Map((libEntries || []).map(l => [l.id, l]));
+
+            for (const si of toSync) {
+              const lib = si.linked_rate_id ? libMap.get(si.linked_rate_id) : null;
+              if (!lib) continue;
+              const locFactor = si.location_factor || 1.0;
+              const newRate = +(lib.target_rate * locFactor).toFixed(2);
+              const totalPct = (lib.materials_pct || 0) + (lib.labor_pct || 0) + (lib.equipment_pct || 0) + (lib.logistics_pct || 0) + (lib.risk_pct || 0) + (lib.profit_pct || 0);
+              const bd = totalPct > 0 ? {
+                materials: +(newRate * (lib.materials_pct || 0) / totalPct).toFixed(2),
+                labor: +(newRate * (lib.labor_pct || 0) / totalPct).toFixed(2),
+                equipment: +(newRate * (lib.equipment_pct || 0) / totalPct).toFixed(2),
+                logistics: +(newRate * (lib.logistics_pct || 0) / totalPct).toFixed(2),
+                risk: +(newRate * (lib.risk_pct || 0) / totalPct).toFixed(2),
+                profit: +(newRate * (lib.profit_pct || 0) / totalPct).toFixed(2),
+              } : { materials: newRate, labor: 0, equipment: 0, logistics: 0, risk: 0, profit: 0 };
+
+              await supabase.from("boq_items").update({
+                unit_rate: newRate,
+                total_price: +(newRate * si.quantity).toFixed(2),
+                ...bd,
+                status: "approved",
+              }).eq("id", si.id);
+              syncedCount++;
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn("[Save] Auto-sync stale items failed:", syncErr);
+      }
+
+      const libMsg = result?.is_new
+        ? "تم إنشاء بند جديد في المكتبة"
+        : "تم تحديث المكتبة";
+      const syncMsg = syncedCount > 0 ? ` + مزامنة ${syncedCount} بند مرتبط` : "";
+      toast.success(`✅ ${libMsg}${syncMsg} — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
+
       setEditing(false);
       onUpdated?.();
       onClose();
