@@ -114,12 +114,13 @@ function findRateLibraryMatch(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
+  itemNo?: string | null,
 ): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
-      rateLibrary, linkedRateId, approvedRateIds, notes,
+      rateLibrary, linkedRateId, approvedRateIds, notes, itemNo,
     );
   }
 
@@ -586,6 +587,7 @@ export async function runPricingEngine(
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
       (block.primaryRow as any).notes,
+      block.itemNo || (block.primaryRow as any).item_no || null,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
@@ -1047,6 +1049,7 @@ export async function repriceUnpricedItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       row.linked_rate_id, approvedRateIds,
+      undefined, row.item_no || null,
     );
 
     // Historical fallback
@@ -1192,6 +1195,7 @@ export async function repricePendingItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       row.linked_rate_id, approvedRateIds,
+      undefined, row.item_no || null,
     );
 
     // Historical fallback
@@ -1369,6 +1373,7 @@ export async function fixMislinkedItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       null, approvedRateIds, row.notes,
+      row.item_no || null,
     );
 
     if (!matchResult) {
@@ -1521,6 +1526,7 @@ export async function repriceSingleItem(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
+    item.item_no || null,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
