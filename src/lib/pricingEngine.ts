@@ -375,7 +375,7 @@ function libraryItem_risk(item: RateLibraryItem): number {
 async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
   const { data } = await supabase
     .from("boq_items")
-    .select("description, description_en, unit, linked_rate_id, source")
+    .select("description, description_en, unit, linked_rate_id, source, override_type")
     .not("linked_rate_id", "is", null)
     .in("source", ["library-high", "manual", "project_override", "master_update"])
     .limit(2000);
@@ -394,6 +394,7 @@ async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
       tokens: tokenize(d.description + " " + (d.description_en || "")),
       linkedRateId: d.linked_rate_id!,
       unit: d.unit,
+      overrideType: d.override_type ?? null,
     }));
 }
 
