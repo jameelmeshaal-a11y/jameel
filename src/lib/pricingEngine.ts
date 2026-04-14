@@ -433,7 +433,7 @@ function findHistoricalMatch(
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93, overrideType: hist.overrideType };
     }
   }
 
@@ -448,7 +448,7 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90, overrideType: hist.overrideType };
     }
   }
 
