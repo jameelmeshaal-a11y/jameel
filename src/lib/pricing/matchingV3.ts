@@ -241,10 +241,36 @@ export function findRateLibraryMatchV3(
       candidate, useEnriched,
     );
 
-    if (result.score >= 50) {
+    // ── item_no Priority Bonus ──────────────────────────────────────────
+    // If item_no is provided and meaningful, compare it directly to library names.
+    // This is the STRONGEST signal — item_no contains the precise item name.
+    let itemNoBonus = 0;
+    const cleanItemNo = itemNo?.trim();
+    if (cleanItemNo && cleanItemNo.length >= 4 && cleanItemNo !== description) {
+      const itemNoSim = Math.max(
+        textSimilarity(cleanItemNo, candidate.standard_name_ar || ""),
+        textSimilarity(cleanItemNo, candidate.standard_name_en || ""),
+        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, a) : 0),
+      );
+      if (itemNoSim >= 0.95) {
+        // Near-exact match — override confidence to 99
+        itemNoBonus = 50;
+        result.notes += ` | ⭐ itemNo-exact:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
+      } else if (itemNoSim >= 0.85) {
+        itemNoBonus = 40;
+        result.notes += ` | ⭐ itemNo-high:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
+      } else if (itemNoSim >= 0.70) {
+        itemNoBonus = 20;
+        result.notes += ` | itemNo-medium:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
+      }
+    }
+
+    const finalScore = Math.min(99, result.score + itemNoBonus);
+
+    if (finalScore >= 50) {
       viableCandidates.push({
         candidate,
-        score: result.score,
+        score: finalScore,
         textScore: result.textScore,
         notes: result.notes,
       });
