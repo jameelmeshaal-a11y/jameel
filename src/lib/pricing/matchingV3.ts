@@ -366,6 +366,9 @@ interface ScoringResult {
   notes: string;
 }
 
+const ACCESS_HATCH_PATTERN = /(فتحة\s*وصول|access\s*hatch|roof\s*hatch)/i;
+const ROOF_SYSTEM_PATTERN = /(سقف|أسقف|بلاطة|بلاطات|slab|roofing|waterproof|membrane|عزل)/i;
+
 function scoreCandidate(
   description: string,
   descriptionEn: string,
@@ -512,6 +515,23 @@ function scoreCandidate(
   if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
     parts.push(`⛔ structural-gate: ${boqStructType[0]}↔${candStructType[0]}`);
     return { score: 0, textScore: 0, notes: parts.join(" | ") };
+  }
+
+  // 6a. Access hatch guard — never let roof/slab system entries absorb hatch items
+  const boqCombinedText = description + " " + (descriptionEn || "");
+  const candCombinedText = [
+    candidate.standard_name_ar || "",
+    candidate.standard_name_en || "",
+    candidate.item_description || "",
+    ...(candidate.item_name_aliases || []),
+  ].join(" ");
+  if (ACCESS_HATCH_PATTERN.test(boqCombinedText)) {
+    const candidateLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candCombinedText);
+    const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candCombinedText);
+    if (!candidateLooksLikeHatch && candidateLooksLikeRoofSystem) {
+      parts.push("⛔ access-hatch-gate: hatch item cannot match roof/slab system");
+      return { score: 0, textScore: 0, notes: parts.join(" | ") };
+    }
   }
 
   // 7. Synonym / Anti-confusion

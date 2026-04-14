@@ -718,5 +718,49 @@ describe("findRateLibraryMatchV3 — Parent Authority", () => {
         expect(result.confidence).toBeLessThan(95);
       }
     });
+
+    it("prefers roof access hatch over roof slab system even with wrong linked rate", () => {
+      const roofSystemRate: any = {
+        id: "rate-roof-system",
+        standard_name_ar: "نظام تغطية الأسطح",
+        standard_name_en: "Roofing System",
+        category: "slab_concrete",
+        unit: "عدد",
+        base_rate: 3600,
+        min_rate: 3200,
+        max_rate: 4000,
+        target_rate: 3600,
+        keywords: ["نظام", "تغطية", "الأسطح", "slab"],
+        item_description: "نظام تغطية الأسطح الذي يتالف من طبقة من الزلط وغشاء عازل للمياه",
+        item_name_aliases: ["نظام تغطية الأسطح — فتحة وصول للسطح السقف"],
+      };
+
+      const hatchRate: any = {
+        id: "rate-access-hatch",
+        standard_name_ar: "فتحة وصول للسطح",
+        standard_name_en: "Roof Access Hatch",
+        category: "steel_misc",
+        unit: "عدد",
+        base_rate: 3500,
+        min_rate: 3000,
+        max_rate: 3800,
+        target_rate: 3500,
+        keywords: ["فتحة", "وصول", "سطح", "access", "hatch"],
+        item_description: "توريد وتركيب غطاء من الحديد لفتحة وصول السطح شامل السلم والإطار",
+        item_name_aliases: ["فتحة وصول للسطح السقف", "Access Hatch"],
+      };
+
+      const result = findRateLibraryMatchV3(
+        "نظام تغطية الأسطح الذي يتالف من طبقة من الزلط وغشاء عازل للمياه — فتحة وصول للسطح السقف",
+        "",
+        "عدد",
+        "steel_misc",
+        [roofSystemRate, hatchRate],
+        "rate-roof-system",
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.item.id).toBe("rate-access-hatch");
+    });
   });
 });
