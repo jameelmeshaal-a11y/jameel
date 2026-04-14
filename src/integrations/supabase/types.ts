@@ -745,6 +745,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      extract_sub_item: { Args: { full_desc: string }; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
