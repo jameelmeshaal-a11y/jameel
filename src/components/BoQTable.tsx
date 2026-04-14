@@ -250,7 +250,37 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
 
-  const handleExport = async () => {
+  const handleRepricePending = useCallback(async () => {
+    if (!boqFileId) return;
+    setPricing(true);
+    setPricingProgress({ current: 0, total: 0 });
+    setRunningTotal(0);
+    setCurrentItemName("");
+    try {
+      const onItemPricedCb = makeOnItemPriced();
+      const result = await repricePendingItems(boqFileId, cities, (current, total) => {
+        setPricingProgress({ current, total });
+      }, onItemPricedCb);
+      if (result.pricedCount > 0) {
+        toast.success(`✅ تم تسعير ${result.pricedCount} بند pending — ${result.stillPendingCount} بند لا يزال pending${result.skippedManual > 0 ? ` | تم تخطي ${result.skippedManual} بند يدوي` : ""}`);
+      } else {
+        toast.info("لم يتم العثور على تطابقات جديدة للبنود الـ pending");
+      }
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
+        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setPricing(false);
+      setRunningTotal(null);
+      setCurrentItemName("");
+    }
+  }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
+
     if (items.length === 0) return;
 
     const unmatchedCount = items.filter(i => i.status === "unmatched" || i.source === "no_match").length;
