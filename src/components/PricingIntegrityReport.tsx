@@ -33,6 +33,9 @@ export default function PricingIntegrityReport({ open, onOpenChange, report, boq
   const [fixingItem, setFixingItem] = useState<string | null>(null);
   const [currentReport, setCurrentReport] = useState<IntegrityReport | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<IssueType>>(new Set());
+  const [deviationItems, setDeviationItems] = useState<DeviationItem[]>([]);
+  const [loadingDeviations, setLoadingDeviations] = useState(false);
+  const [activeTab, setActiveTab] = useState("integrity");
 
   const activeReport = currentReport || report;
 
@@ -120,6 +123,18 @@ export default function PricingIntegrityReport({ open, onOpenChange, report, boq
       toast.error(err.message);
     } finally {
       setFixingItem(null);
+    }
+  };
+
+  const handleLoadDeviations = async () => {
+    setLoadingDeviations(true);
+    try {
+      const items = await findDeviationItems(boqFileId);
+      setDeviationItems(items);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setLoadingDeviations(false);
     }
   };
 
