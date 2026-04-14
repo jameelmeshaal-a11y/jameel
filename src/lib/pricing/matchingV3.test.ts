@@ -13,7 +13,7 @@ import {
   buildEnrichedDescription,
   extractParentContext,
 } from "./synonyms";
-import { findRateLibraryMatchV3 } from "./matchingV3";
+import { findRateLibraryMatchV3, extractCleanSegment } from "./matchingV3";
 
 // ─── Dimension Parsing ──────────────────────────────────────────────────────
 
