@@ -1,75 +1,43 @@
 
 
-# إصلاح جذري دائم — قاعدة "النوع الأول في النص يفوز"
+# تنفيذ: نقل شارة "محمي يدوياً" + إصلاح الفلترة
 
-## المشكلة بالضبط
+## التغييرات في `src/components/BoQTable.tsx`
 
-السطر 608 في `matchingV3.ts`:
+### 1. إصلاح الفلترة (سطر 416)
+المشكلة: `if (activeFilters.size === 0) return items;` يرجع قبل فحص `statusFilter`.
+الحل: تغيير الشرط ليفحص `statusFilter` أيضاً:
 ```typescript
-const candStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(candStructText));
+if (activeFilters.size === 0 && !statusFilter) return items;
 ```
 
-لسجل مكتبة اسمه **"حفر وخنادق للأساسات والكمرات"**:
-- `.find()` يختبر كل regex **بترتيب المصفوفة** (ليس بترتيب ظهوره في النص)
-- `beam` (كمرات) يظهر في المصفوفة **قبل** `excavation` (حفر)
-- النتيجة: السجل يُصنّف كـ "beam" بدل "excavation"
-- البوابة ترى: beam = beam → يمرّ → سعر 42 ريال بدل 1,350
-
-## الحل — قاعدة دائمة لا تعتمد على ترتيب المصفوفة
-
-**القاعدة**: عندما يطابق نص واحد أكثر من نوع إنشائي، **النوع الذي يظهر أولاً في النص** هو النوع الصحيح.
-
-هذه قاعدة لغوية ثابتة: الكلمة الأولى في اسم أي بند هي التي تحدد هويته.
-
-### التغيير في `src/lib/pricing/matchingV3.ts`
-
-استبدال `.find()` بدالة `detectStructuralType()` جديدة:
-
-```typescript
-function detectStructuralType(text: string): [string, RegExp] | undefined {
-  // Find ALL matching types with their position in the text
-  const matches: { entry: [string, RegExp]; pos: number }[] = [];
-  for (const entry of STRUCTURAL_TYPES) {
-    const m = text.match(entry[1]);
-    if (m && m.index !== undefined) {
-      matches.push({ entry, pos: m.index });
-    }
-  }
-  if (matches.length === 0) return undefined;
-  // Return the type that appears EARLIEST in the text
-  matches.sort((a, b) => a.pos - b.pos);
-  return matches[0].entry;
-}
+### 2. حذف شارة "محمي يدوياً" من عمود الوصف (أسطر 940-944)
+حذف كامل لهذا الجزء:
+```tsx
+{item.override_type === "manual" && (
+  <Badge variant="outline" className="...">
+    <Lock className="w-3 h-3" /> محمي يدوياً
+  </Badge>
+)}
 ```
 
-تطبيقها في مكانين:
-- سطر 608: `const boqStructType = detectStructuralType(boqStructText);`
-- سطر 610: `const candStructType = detectStructuralType(candStructText);`
+### 3. إضافة حالة "محمي يدوياً" في عمود المطابقة (أسطر 949-962)
+إضافة شرط أولي قبل باقي الحالات:
+```tsx
+<td className="text-center">
+  {item.override_type === "manual" ? (
+    <Badge variant="outline" className="text-[9px] border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 font-semibold gap-1 px-1.5 py-0.5">
+      <Lock className="w-3 h-3" /> محمي يدوياً
+    </Badge>
+  ) : isPriced && (
+    // ... باقي الحالات كما هي (✅🟡🔴🟢)
+  )}
+</td>
+```
 
-### إصلاح البند في قاعدة البيانات
+### 4. العمود الأول — لا تغيير
+القفل 🔒 بجانب رقم البند يبقى كما هو.
 
-تحديث البند `6318167b`:
-- `linked_rate_id` → `1e9c15b8` (الكمرات - 1,350 ريال)
-- `unit_rate` → 1,350
-- `total_price` → 610 × 1,350 = 823,500
-- `status` → `approved`, `confidence` → 99
-
-### اختبار تراجعي في `matchingV3.test.ts`
-
-اختبار يؤكد أن "حفر وخنادق للأساسات والكمرات" تُصنّف كـ `excavation` وليس `beam`.
-
-## لماذا هذا الحل دائم ولا يتكرر الخطأ
-
-- لا يعتمد على ترتيب المصفوفة — يعتمد على **موقع الكلمة في النص**
-- ينطبق تلقائياً على أي بند مستقبلي يحتوي على أكثر من نوع إنشائي
-- مثال: "بلاطات سقف للكمرات" → `slab` (بلاطات في الموقع 0) وليس `beam`
-- مثال: "حفر لأساسات الأعمدة" → `excavation` (حفر في الموقع 0) وليس `column`
-
-## الملفات المتأثرة
-
-| الملف | التغيير |
-|---|---|
-| `src/lib/pricing/matchingV3.ts` | دالة `detectStructuralType` بدل `.find()` |
-| `src/lib/pricing/matchingV3.test.ts` | اختبار تراجعي |
-| قاعدة البيانات | إصلاح البند `6318167b` |
+## ملف واحد فقط: `src/components/BoQTable.tsx`
+لا تغيير في الخوارزميات أو المعادلات.
 
