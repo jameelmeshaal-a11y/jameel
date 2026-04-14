@@ -119,6 +119,7 @@ export function findRateLibraryMatchV3(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
+  itemNo?: string | null,
 ): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
   const fullIncomingText = description + " " + (descriptionEn || "");
   const isAccessHatchItem = ACCESS_HATCH_PATTERN.test(fullIncomingText);
@@ -565,13 +566,15 @@ function scoreCandidate(
   const STRUCTURAL_TYPES: [string, RegExp][] = [
     ["shear_wall", /حوائط\s*(?:ال)?قص|shear\s*wall/i],
     ["tie_beam", /كمرات\s*ربط|tie\s*beam/i],
-    ["neck_column", /رقاب\s*(?:ال)?اعمد|neck\s*column|column\s*neck/i],
-    ["slab_on_grade", /بلاطه?\s*على\s*(?:ال)?ارض|slab\s*on\s*grade|ground\s*slab/i],
-    ["stairs", /سلالم|سلم|stairs|staircase|درج/i],
-    ["slab", /بلاطات|بلاطه|slab/i],
-    ["beam", /كمرات|كمره|beam/i],
-    ["column", /اعمده|عمود|column/i],
-    ["foundation", /قواعد|قاعده|اساسات|foundation/i],
+    ["neck_column", /رقاب\s*(?:ال)?(?:ا|أ)عمد|neck\s*column|column\s*neck/i],
+    ["slab_on_grade", /بلاطه?\s*على\s*(?:ال)?(?:ا|أ)رض|slab\s*on\s*grade|ground\s*slab/i],
+    ["stairs", /(?:ال)?سلالم|سلم|stairs|staircase|درج/i],
+    ["slab_ceiling", /(?:ال)?بلاطات\s*(?:ال)?خرسان|ceiling\s*slab|suspended\s*slab/i],
+    ["slab", /(?:ال)?بلاطات|بلاطه|slab/i],
+    ["beam", /(?:ال)?كمرات|كمره|beam/i],
+    ["column", /(?:ال)?(?:ا|أ)عمد[ةه]|عمود|column/i],
+    ["foundation", /(?:ال)?قواعد|قاعده|(?:ال)?(?:ا|أ)ساسات|foundation/i],
+    ["excavation", /حفر|حفريات|خنادق|excavation|earthwork/i],
   ];
   // Use clean segment (item_no / last segment after —) for structural detection
   const boqCleanForStruct = extractCleanSegment(description);
