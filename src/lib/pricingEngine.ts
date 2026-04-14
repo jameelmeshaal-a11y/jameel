@@ -101,6 +101,7 @@ interface HistoricalMapping {
   tokens: string[];
   linkedRateId: string;
   unit: string;
+  overrideType: string | null;
 }
 
 // ─── Rate Library Matching ──────────────────────────────────────────────────
@@ -374,7 +375,7 @@ function libraryItem_risk(item: RateLibraryItem): number {
 async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
   const { data } = await supabase
     .from("boq_items")
-    .select("description, description_en, unit, linked_rate_id, source")
+    .select("description, description_en, unit, linked_rate_id, source, override_type")
     .not("linked_rate_id", "is", null)
     .in("source", ["library-high", "manual", "project_override", "master_update"])
     .limit(2000);
@@ -393,6 +394,7 @@ async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
       tokens: tokenize(d.description + " " + (d.description_en || "")),
       linkedRateId: d.linked_rate_id!,
       unit: d.unit,
+      overrideType: d.override_type ?? null,
     }));
 }
 
@@ -406,7 +408,7 @@ function findHistoricalMatch(
   unit: string,
   historicalMap: HistoricalMapping[],
   rateLibrary: RateLibraryItem[],
-): { item: RateLibraryItem; confidence: number } | null {
+): { item: RateLibraryItem; confidence: number; overrideType?: string | null } | null {
   const itemText = normalizeArabicText(description + " " + (descriptionEn || ""));
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
@@ -431,7 +433,7 @@ function findHistoricalMatch(
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93, overrideType: hist.overrideType };
     }
   }
 
@@ -446,7 +448,7 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
+      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90, overrideType: hist.overrideType };
     }
   }
 
@@ -748,7 +750,10 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
-    const pricedUpdate = {
+    // Check if this match inherited manual override from a previous project
+    const isInheritedManual = (libraryMatchResult as any)?.overrideType === "manual";
+
+    const pricedUpdate: Record<string, any> = {
       materials: cost.materials,
       labor: cost.labor,
       equipment: cost.equipment,
@@ -759,18 +764,20 @@ export async function runPricingEngine(
       total_price: cost.totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: cost.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
       notes: [
         (block.primaryRow as any).notes,
         cost.explanation,
         libraryMatchResult?.conflictNotes,
+        isInheritedManual ? "⭐ تسعير يدوي موروث من مشروع سابق" : null,
       ].filter(Boolean).join(" | "),
+      ...(isInheritedManual ? { override_type: "manual" } : {}),
     };
     const { error: updateError } = await supabase
       .from("boq_items")
-      .update(pricedUpdate)
+      .update(pricedUpdate as any)
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
@@ -1096,18 +1103,20 @@ export async function repriceUnpricedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    const repricedUpdate = {
+    const isInheritedManual2 = (libraryMatchResult as any)?.overrideType === "manual";
+    const repricedUpdate: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual2 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual2 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual2 ? { override_type: "manual" } : {}),
     };
-    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
     onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
@@ -1249,18 +1258,20 @@ export async function repricePendingItems(
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
     const conflictNotes = libraryMatchResult.conflictNotes || "";
 
-    const repricedUpdate = {
+    const isInheritedManual3 = (libraryMatchResult as any)?.overrideType === "manual";
+    const repricedUpdate: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual3 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `📚 Pending→Priced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${conflictNotes ? " | " + conflictNotes : ""}`,
+      notes: `📚 Pending→Priced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${conflictNotes ? " | " + conflictNotes : ""}${isInheritedManual3 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual3 ? { override_type: "manual" } : {}),
     };
-    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
     onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
@@ -1418,19 +1429,21 @@ export async function fixMislinkedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    const update = {
+    const isInheritedManual4 = (matchResult as any)?.overrideType === "manual";
+    const update: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual4 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual4 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual4 ? { override_type: "manual" } : {}),
     };
 
-    await supabase.from("boq_items").update(update).eq("id", row.id);
+    await supabase.from("boq_items").update(update as any).eq("id", row.id);
     onItemPriced?.(row.id, update);
 
     const detail = details.find(d => d.id === row.id);
@@ -1685,19 +1698,21 @@ export async function repriceSingleItem(
   const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
   const sourceLabel = matchConfidence >= 70 ? "library-high" : "library-medium";
 
-  const pricedUpdate = {
+    const isInheritedManual5 = (libraryMatchResult as any)?.overrideType === "manual";
+    const pricedUpdate: Record<string, any> = {
     materials, labor, equipment, logistics, risk, profit,
     unit_rate: unitRate,
     total_price: totalPrice,
     confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
     location_factor: result.locationFactor,
-    source: sourceLabel,
+    source: isInheritedManual5 ? "manual" : sourceLabel,
     linked_rate_id: matchedItem.id,
     status: itemStatus,
-    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual5 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+    ...(isInheritedManual5 ? { override_type: "manual" } : {}),
   };
 
-  await supabase.from("boq_items").update(pricedUpdate).eq("id", itemId);
+  await supabase.from("boq_items").update(pricedUpdate as any).eq("id", itemId);
 
   // Recalculate project total
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();

@@ -1358,3 +1358,45 @@ describe("Position-aware structural type detection", () => {
     expect(result!.item.id).toBe("lib-col");
   });
 });
+
+// ─── Regression: itemNo vs extractCleanSegment ──────────────────────────────
+
+describe("itemNo matches extractCleanSegment of long library name", () => {
+  const makeLib2 = (overrides: any) => ({
+    id: "lib-" + Math.random().toString(36).slice(2, 8),
+    category: "general", standard_name_ar: "", standard_name_en: "",
+    unit: "عدد", base_rate: 100, target_rate: 100, min_rate: 80, max_rate: 120,
+    materials_pct: 50, labor_pct: 30, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: [] as string[], is_locked: false, weight_class: "Medium", complexity: "Medium",
+    source_type: "Manual", item_name_aliases: [] as string[], base_city: "Riyadh",
+    ...overrides,
+  });
+
+  it("gives ≥95 confidence when item_no matches the clean segment exactly", () => {
+    const lib = makeLib2({
+      id: "lib-steel-ladder",
+      standard_name_ar: "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد بما في ذلك الدهان والتثبيت — سلم من الحديد",
+      standard_name_en: "Steel Ladder",
+      category: "steel_misc",
+      unit: "عدد",
+      base_rate: 7500,
+      target_rate: 7500,
+      keywords: ["سلم", "حديد"],
+    });
+
+    const result = findRateLibraryMatchV3(
+      "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد — سلم من الحديد",
+      "Steel Ladder",
+      "عدد",
+      "steel_misc",
+      [lib],
+      null,
+      new Set(),
+      null,
+      "سلم من الحديد",
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.confidence).toBeGreaterThanOrEqual(95);
+  });
+});
