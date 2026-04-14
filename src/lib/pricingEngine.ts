@@ -1429,19 +1429,21 @@ export async function fixMislinkedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    const update = {
+    const isInheritedManual4 = (matchResult as any)?.overrideType === "manual";
+    const update: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual4 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual4 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual4 ? { override_type: "manual" } : {}),
     };
 
-    await supabase.from("boq_items").update(update).eq("id", row.id);
+    await supabase.from("boq_items").update(update as any).eq("id", row.id);
     onItemPriced?.(row.id, update);
 
     const detail = details.find(d => d.id === row.id);
@@ -1696,19 +1698,21 @@ export async function repriceSingleItem(
   const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
   const sourceLabel = matchConfidence >= 70 ? "library-high" : "library-medium";
 
-  const pricedUpdate = {
+    const isInheritedManual5 = (libraryMatchResult as any)?.overrideType === "manual";
+    const pricedUpdate: Record<string, any> = {
     materials, labor, equipment, logistics, risk, profit,
     unit_rate: unitRate,
     total_price: totalPrice,
     confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
     location_factor: result.locationFactor,
-    source: sourceLabel,
+    source: isInheritedManual5 ? "manual" : sourceLabel,
     linked_rate_id: matchedItem.id,
     status: itemStatus,
-    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual5 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+    ...(isInheritedManual5 ? { override_type: "manual" } : {}),
   };
 
-  await supabase.from("boq_items").update(pricedUpdate).eq("id", itemId);
+  await supabase.from("boq_items").update(pricedUpdate as any).eq("id", itemId);
 
   // Recalculate project total
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
