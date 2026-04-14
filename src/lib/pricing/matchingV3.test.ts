@@ -1358,3 +1358,35 @@ describe("Position-aware structural type detection", () => {
     expect(result!.item.id).toBe("lib-col");
   });
 });
+
+// ─── Regression: itemNo vs extractCleanSegment ──────────────────────────────
+
+describe("itemNo matches extractCleanSegment of long library name", () => {
+  it("gives ≥95 confidence when item_no matches the clean segment exactly", () => {
+    const lib = makeLibItem({
+      id: "lib-steel-ladder",
+      standard_name_ar: "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد بما في ذلك الدهان والتثبيت — سلم من الحديد",
+      standard_name_en: "Steel Ladder",
+      category: "steel_misc",
+      unit: "عدد",
+      base_rate: 7500,
+      target_rate: 7500,
+      keywords: ["سلم", "حديد"],
+    });
+
+    const result = findRateLibraryMatchV3(
+      "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد — سلم من الحديد",
+      "Steel Ladder",
+      "عدد",
+      "steel_misc",
+      [lib],
+      null,
+      new Set(),
+      null,
+      "سلم من الحديد", // item_no
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.confidence).toBeGreaterThanOrEqual(95);
+  });
+});
