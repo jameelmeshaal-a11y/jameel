@@ -56,6 +56,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [currentItemName, setCurrentItemName] = useState<string>("");
   const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
   const [repricingItemId, setRepricingItemId] = useState<string | null>(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "manual" | "non_manual" | "pending">("all");
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
