@@ -265,6 +265,9 @@ export async function fixIntegrityIssues(
       const item = itemMap.get(issue.itemId);
       if (!item) { failed++; continue; }
 
+      // Guard: never touch manual override items
+      if (item.override_type === "manual") { continue; }
+
       if (issue.fixAction === "reprice" && issue.linkedRateId) {
         const lib = libMap.get(issue.linkedRateId);
         if (!lib) { failed++; continue; }
