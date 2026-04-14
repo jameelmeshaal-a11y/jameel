@@ -890,7 +890,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
                 {items.some(i => i.section_no && i.section_no !== "") && <td className="protected-col font-mono text-xs">{item.section_no}</td>}
-                <td className="protected-col font-mono text-xs">{item.item_no}</td>
+                <td className="protected-col font-mono text-xs">
+                  <span className="inline-flex items-center gap-1">
+                    {item.item_no}
+                    {item.override_type === "manual" && <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />}
+                  </span>
+                </td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
