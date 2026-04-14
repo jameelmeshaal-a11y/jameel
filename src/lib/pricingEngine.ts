@@ -1271,7 +1271,179 @@ export async function repricePendingItems(
   return { pricedCount: newlyPriced, stillPendingCount: stillPending, skippedManual };
 }
 
+// ─── Fix Mislinked Items — unlink items wrongly matched to a library record ──
+
+export async function fixMislinkedItems(
+  libraryId: string,
+  correctItemPattern: RegExp,
+  boqFileId: string,
+  cities: string[],
+  onProgress?: (current: number, total: number) => void,
+  onItemPriced?: OnItemPricedCallback,
+): Promise<{ unlinked: number; repriced: number; stillPending: number; details: { id: string; item_no: string; action: string }[] }> {
+  // 1. Fetch all items linked to this library record
+  const { data: linkedItems, error } = await supabase
+    .from("boq_items")
+    .select("*")
+    .eq("linked_rate_id", libraryId)
+    .eq("boq_file_id", boqFileId)
+    .order("row_index", { ascending: true });
+
+  if (error) throw new Error(`Failed to fetch linked items: ${error.message}`);
+  if (!linkedItems || linkedItems.length === 0) {
+    return { unlinked: 0, repriced: 0, stillPending: 0, details: [] };
+  }
+
+  const details: { id: string; item_no: string; action: string }[] = [];
+  const itemsToReprice: typeof linkedItems = [];
+
+  for (const item of linkedItems) {
+    // Skip manual overrides
+    if (item.override_type === 'manual') {
+      details.push({ id: item.id, item_no: item.item_no, action: "skipped_manual" });
+      continue;
+    }
+
+    // Check if item_no matches the correct pattern (keep these linked)
+    const itemName = item.item_no || "";
+    if (correctItemPattern.test(itemName)) {
+      details.push({ id: item.id, item_no: item.item_no, action: "kept_correct" });
+      continue;
+    }
+
+    // This item is mislinked — unlink and queue for repricing
+    await supabase.from("boq_items").update({
+      linked_rate_id: null,
+      status: "pending",
+      source: null,
+      confidence: 0,
+      unit_rate: null,
+      total_price: null,
+      materials: null, labor: null, equipment: null,
+      logistics: null, risk: null, profit: null,
+      notes: `🔧 [تصحيح مطابقة] فُك الربط عن سجل "${libraryId}" — البند "${itemName}" لا ينتمي لهذا السجل`,
+    }).eq("id", item.id);
+
+    details.push({ id: item.id, item_no: item.item_no, action: "unlinked" });
+    itemsToReprice.push(item);
+  }
+
+  // 2. Reprice unlinked items using V3 engine
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+    supabase.from("rate_library").select("*"),
+    fetchLocationFactors(),
+    fetchAllSources(),
+    supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
+    buildHistoricalMap(),
+  ]);
+
+  const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
+  const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
+  const projectCity = cities[0] || "";
+
+  const approvedRateIds = new Set<string>();
+  for (const [rateId, sources] of sourcesMap.entries()) {
+    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
+  }
+  for (const libItem of rateLibrary) {
+    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+      approvedRateIds.add(libItem.id);
+    }
+  }
+
+  const locationMatch = resolveLocationFactor(cities, locationFactors);
+  const locFactor = locationMatch.location_factor;
+
+  let repriced = 0;
+  let stillPending = 0;
+
+  for (let i = 0; i < itemsToReprice.length; i++) {
+    const row = itemsToReprice[i];
+    onProgress?.(i + 1, itemsToReprice.length);
+
+    const description = row.description || "";
+    const descriptionEn = row.description_en || "";
+    const detection = detectCategory(description, descriptionEn);
+
+    let matchResult = findRateLibraryMatch(
+      description, descriptionEn, row.unit,
+      detection.category, rateLibrary,
+      null, approvedRateIds, row.notes,
+    );
+
+    if (!matchResult) {
+      matchResult = findHistoricalMatch(description, descriptionEn, row.unit, historicalMap, rateLibrary);
+    }
+
+    if (!matchResult || matchResult.item.target_rate <= 0) {
+      stillPending++;
+      const detail = details.find(d => d.id === row.id);
+      if (detail) detail.action = "unlinked→pending";
+      continue;
+    }
+
+    const matchedItem = matchResult.item;
+    const matchConfidence = matchResult.confidence;
+
+    const itemSources = sourcesMap.get(matchedItem.id) || [];
+    const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
+
+    const isApprovedRate = sourceResolution.method === "approved"
+      || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+      || !!matchedItem.approved_at;
+
+    const effectiveRate = isApprovedRate
+      ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
+      : (sourceResolution.resolvedRate || matchedItem.target_rate);
+
+    let result = priceFromApprovedRate(
+      effectiveRate, matchedItem, row.quantity, locFactor,
+      matchedItem.base_city || "", projectCity, detection.category,
+    );
+
+    let { materials, labor, equipment, logistics, risk, profit } = result;
+    let unitRate = result.unitRate;
+    let totalPrice = result.totalPrice;
+
+    if (ownerMaterials) {
+      materials = 0;
+      unitRate = +(labor + equipment + logistics + risk + profit).toFixed(2);
+      totalPrice = +(unitRate * row.quantity).toFixed(2);
+    }
+
+    const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
+
+    const update = {
+      materials, labor, equipment, logistics, risk, profit,
+      unit_rate: unitRate,
+      total_price: totalPrice,
+      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
+      location_factor: result.locationFactor,
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      linked_rate_id: matchedItem.id,
+      status: itemStatus,
+      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+    };
+
+    await supabase.from("boq_items").update(update).eq("id", row.id);
+    onItemPriced?.(row.id, update);
+
+    const detail = details.find(d => d.id === row.id);
+    if (detail) detail.action = `repriced→${matchedItem.standard_name_ar} (${unitRate} ر.س)`;
+    repriced++;
+  }
+
+  // Recalculate project total
+  const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
+  if (boqFile) {
+    await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
+  }
+
+  return { unlinked: itemsToReprice.length, repriced, stillPending, details };
+}
+
 // ─── Reprice Single Item ────────────────────────────────────────────────────
+
 
 export async function repriceSingleItem(
   boqFileId: string,

@@ -970,3 +970,86 @@ describe("Insulated block vs standard block conflict", () => {
     expect(result?.item.id).toBe("lib-wall-200mm");
   });
 });
+
+// ─── Structural Type Gate Tests ──────────────────────────────────────────────
+
+const shearWallLib = {
+  id: "lib-shear-wall",
+  category: "structural",
+  standard_name_ar: "حوائط القص الخرسانية",
+  standard_name_en: "Shear Walls",
+  unit: "م3",
+  base_rate: 680, target_rate: 680, min_rate: 600, max_rate: 750,
+  base_city: "Riyadh",
+  materials_pct: 50, labor_pct: 30, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+  keywords: ["حوائط", "قص"],
+  is_locked: false, weight_class: "heavy", complexity: "high", source_type: "Approved",
+  item_name_aliases: [], item_code: null, item_description: null,
+} as any;
+
+const tieBeamLib = {
+  id: "lib-tie-beam",
+  category: "structural",
+  standard_name_ar: "كمرات ربط الأساسات",
+  standard_name_en: "Tie Beams",
+  unit: "م3",
+  base_rate: 1350, target_rate: 1350, min_rate: 1200, max_rate: 1500,
+  base_city: "Riyadh",
+  materials_pct: 50, labor_pct: 30, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+  keywords: ["كمرات", "ربط"],
+  is_locked: false, weight_class: "heavy", complexity: "high", source_type: "Approved",
+  item_name_aliases: ["كمرات ربط"], item_code: null, item_description: null,
+} as any;
+
+describe("Structural Type Gate — cross-type prevention", () => {
+  it("does NOT match 'كمرات ربط الأساسات' to shear wall library", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — كمرات ربط الأساسات",
+      "Reinforced Concrete — Tie Beams",
+      "م3", "structural",
+      [shearWallLib],
+    );
+    expect(result).toBeNull();
+  });
+
+  it("matches 'كمرات ربط' to tie beam library (same type)", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — كمرات ربط الأساسات",
+      "Reinforced Concrete — Tie Beams",
+      "م3", "structural",
+      [tieBeamLib],
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-tie-beam");
+  });
+
+  it("does NOT match 'السلالم' to shear wall library", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — السلالم",
+      "Reinforced Concrete — Stairs",
+      "م3", "structural",
+      [shearWallLib],
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does NOT match 'بلاطة على الأرض' to shear wall library", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — بلاطة على الأرض بسمك 125 مم",
+      "Slab on grade 125mm",
+      "م3", "structural",
+      [shearWallLib],
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does NOT match 'رقاب الأعمدة' to shear wall library", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — رقاب الأعمدة",
+      "Neck Columns",
+      "م3", "structural",
+      [shearWallLib],
+    );
+    expect(result).toBeNull();
+  });
+});
