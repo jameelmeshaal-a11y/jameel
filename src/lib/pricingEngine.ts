@@ -101,6 +101,7 @@ interface HistoricalMapping {
   tokens: string[];
   linkedRateId: string;
   unit: string;
+  overrideType: string | null;
 }
 
 // ─── Rate Library Matching ──────────────────────────────────────────────────

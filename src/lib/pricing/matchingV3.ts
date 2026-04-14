@@ -250,7 +250,10 @@ export function findRateLibraryMatchV3(
       const itemNoSim = Math.max(
         textSimilarity(cleanItemNo, candidate.standard_name_ar || ""),
         textSimilarity(cleanItemNo, candidate.standard_name_en || ""),
+        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_ar || "")),
+        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_en || "")),
         ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, a) : 0),
+        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, extractCleanSegment(a)) : 0),
       );
       if (itemNoSim >= 0.95) {
         // Near-exact match — override confidence to 99
