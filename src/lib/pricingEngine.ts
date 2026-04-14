@@ -408,7 +408,7 @@ function findHistoricalMatch(
   unit: string,
   historicalMap: HistoricalMapping[],
   rateLibrary: RateLibraryItem[],
-): { item: RateLibraryItem; confidence: number } | null {
+): { item: RateLibraryItem; confidence: number; overrideType?: string | null } | null {
   const itemText = normalizeArabicText(description + " " + (descriptionEn || ""));
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
