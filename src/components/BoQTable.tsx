@@ -413,7 +413,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   }, []);
 
   const filteredItems = useMemo(() => {
-    if (activeFilters.size === 0) return items;
+    if (activeFilters.size === 0 && !statusFilter) return items;
 
     let result = [...items];
 
@@ -937,17 +937,16 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
-                  {item.override_type === "manual" && (
-                    <Badge variant="outline" className="text-[10px] mt-1 border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 font-semibold gap-1">
-                      <Lock className="w-3 h-3" /> محمي يدوياً
-                    </Badge>
-                  )}
                   {item.status === "unmatched" && (
                     <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
                   )}
                 </td>
                 <td className="text-center">
-                  {isPriced && (
+                  {item.override_type === "manual" ? (
+                    <Badge variant="outline" className="text-[9px] border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 font-semibold gap-1 px-1.5 py-0.5">
+                      <Lock className="w-3 h-3" /> محمي يدوياً
+                    </Badge>
+                  ) : isPriced && (
                     item.linked_rate_id && item.source === "library-high" ? (
                       <span title="موجود في المكتبة — معتمد">✅</span>
                     ) : item.linked_rate_id && item.source === "library-medium" ? (
