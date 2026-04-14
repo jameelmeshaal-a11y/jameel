@@ -1302,3 +1302,59 @@ describe("item_no priority over long description", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("Position-aware structural type detection", () => {
+  const makeLib = (overrides: any) => ({
+    id: "lib-" + Math.random().toString(36).slice(2, 8),
+    category: "concrete", standard_name_ar: "", standard_name_en: "",
+    unit: "م3", base_rate: 100, target_rate: 100, min_rate: 80, max_rate: 120,
+    materials_pct: 50, labor_pct: 30, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: [] as string[], is_locked: false, weight_class: "Medium", complexity: "Medium",
+    source_type: "Manual", item_name_aliases: [] as string[], base_city: "Riyadh",
+    ...overrides,
+  });
+
+  it("excavation record containing 'كمرات' does NOT match beam item", () => {
+    const excavationLib = makeLib({
+      id: "lib-excavation",
+      standard_name_ar: "حفر وخنادق للأساسات والكمرات",
+      standard_name_en: "Excavation for foundations and beams",
+      category: "earthworks", unit: "م3", base_rate: 42, target_rate: 42,
+    });
+    const beamLib = makeLib({
+      id: "lib-beam",
+      standard_name_ar: "الكمرات",
+      standard_name_en: "Beams",
+      category: "concrete", unit: "م3", base_rate: 1350, target_rate: 1350,
+    });
+
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — الكمرات", "Beams", "م3", "concrete",
+      [excavationLib, beamLib], null, new Set(), null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-beam");
+  });
+
+  it("'حفر لأساسات الأعمدة' is classified as excavation not column", () => {
+    const excavationLib = makeLib({
+      id: "lib-exc2",
+      standard_name_ar: "حفر لأساسات الأعمدة",
+      standard_name_en: "Excavation for column foundations",
+      category: "earthworks", unit: "م3", base_rate: 42, target_rate: 42,
+    });
+    const columnLib = makeLib({
+      id: "lib-col",
+      standard_name_ar: "الأعمدة",
+      standard_name_en: "Columns",
+      category: "concrete", unit: "م3", base_rate: 1350, target_rate: 1350,
+    });
+
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة — الأعمدة", "Columns", "م3", "concrete",
+      [excavationLib, columnLib], null, new Set(), null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-col");
+  });
+});

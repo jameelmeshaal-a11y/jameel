@@ -588,7 +588,20 @@ function scoreCandidate(
   }
 
   // 6. Structural Type Gate — hard block if structural element types differ
-  // Uses item_no (sub-item name) for precise classification when available
+  // Uses position-aware detection: when text contains multiple types, the EARLIEST in text wins
+  function detectStructuralType(text: string, types: [string, RegExp][]): [string, RegExp] | undefined {
+    const matches: { entry: [string, RegExp]; pos: number }[] = [];
+    for (const entry of types) {
+      const m = text.match(entry[1]);
+      if (m && m.index !== undefined) {
+        matches.push({ entry, pos: m.index });
+      }
+    }
+    if (matches.length === 0) return undefined;
+    matches.sort((a, b) => a.pos - b.pos);
+    return matches[0].entry;
+  }
+
   const STRUCTURAL_TYPES: [string, RegExp][] = [
     ["shear_wall", /حوائط\s*(?:ال)?قص|shear\s*wall/i],
     ["tie_beam", /كمرات\s*ربط|tie\s*beam/i],
