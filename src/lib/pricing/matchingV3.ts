@@ -33,6 +33,20 @@ import {
   buildEnrichedDescription,
 } from "./synonyms";
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Extract the meaningful item segment from a hierarchical description.
+ * Mirrors the DB function `extract_sub_item`.
+ * Priority: `—` → ` - ` → `|`
+ */
+export function extractCleanSegment(desc: string): string {
+  if (desc.includes("—")) return desc.split("—").pop()!.trim();
+  if (desc.includes(" - ")) return desc.split(" - ").pop()!.trim();
+  if (desc.includes("|")) return desc.split("|").pop()!.trim();
+  return desc;
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface RateLibraryItem {
@@ -186,12 +200,15 @@ export function findRateLibraryMatchV3(
   const enrichedDesc = buildEnrichedDescription(description, notes);
   const useEnriched = enrichedDesc !== description;
 
-  // Pre-compute BoQ item features
+  // Pre-compute BoQ item features — use clean segment for tokens/concepts/dims
   const fullText = enrichedDesc + " " + (descriptionEn || "");
-  const boqCodes = extractModelCodes(fullText);
-  const boqTokens = tokenize(fullText);
-  const boqDimensions = parseDimensions(fullText);
-  const boqConcepts = detectConcepts(fullText);
+  const cleanDesc = extractCleanSegment(enrichedDesc);
+  const cleanEn = extractCleanSegment(descriptionEn || "");
+  const featureText = cleanDesc + " " + (cleanEn || "");
+  const boqCodes = extractModelCodes(fullText); // keep full for model codes
+  const boqTokens = tokenize(featureText);
+  const boqDimensions = parseDimensions(featureText);
+  const boqConcepts = detectConcepts(featureText);
 
   // Collect all viable candidates for magnitude guard
   interface ScoredCandidate {
@@ -409,11 +426,9 @@ function scoreCandidate(
   // 1. Text similarity (max WEIGHTS.TEXT_SIMILARITY pts)
   // For merged descriptions (Header — Sub — Item), also try the last segment
   const descSegments = [description];
-  if (description.includes("—")) {
-    const lastSegment = description.split("—").pop()?.trim();
-    if (lastSegment && lastSegment.length > 3) {
-      descSegments.push(lastSegment);
-    }
+  const cleanSeg = extractCleanSegment(description);
+  if (cleanSeg !== description && cleanSeg.length > 3) {
+    descSegments.push(cleanSeg);
   }
 
   const candFullText = [
@@ -439,8 +454,10 @@ function scoreCandidate(
   }
 
   // Also try char n-gram (max 30 pts, take better of token vs ngram)
+  const cleanSegForNgram = extractCleanSegment(description);
   const ngramScore = Math.max(
     charNgramSimilarity(description, candidate.standard_name_ar || ""),
+    charNgramSimilarity(cleanSegForNgram, candidate.standard_name_ar || ""),
     charNgramSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
   ) * 30;
 
@@ -567,7 +584,11 @@ function scoreCandidate(
 
   if (boqConcepts.length > 0 && candConcepts.length > 0) {
     // Anti-confusion gate — zero score if conflicting concepts
-    if (hasConceptConflict(boqConcepts, candConcepts)) {
+    // BUT skip if clean segment has very high text similarity (same item, ambiguous concepts)
+    const cleanSegText = extractCleanSegment(description);
+    const candNames = [candidate.standard_name_ar || "", candidate.standard_name_en || ""];
+    const highTextMatch = candNames.some(cn => cn && textSimilarity(cleanSegText, cn) >= 0.85);
+    if (hasConceptConflict(boqConcepts, candConcepts) && !highTextMatch) {
       parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
       return { score: 0, textScore: 0, notes: parts.join(" | ") };
     }

@@ -13,7 +13,7 @@ import {
   buildEnrichedDescription,
   extractParentContext,
 } from "./synonyms";
-import { findRateLibraryMatchV3 } from "./matchingV3";
+import { findRateLibraryMatchV3, extractCleanSegment } from "./matchingV3";
 
 // ─── Dimension Parsing ──────────────────────────────────────────────────────
 
@@ -826,6 +826,97 @@ describe("Cross-category conflict regression", () => {
     const conceptsA = detectConcepts("كمرات خرسانة مسلحة أرضية ground beams");
     const conceptsB = detectConcepts("حفر وخنادق للأساسات excavation");
     expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+});
+
+// ─── extractCleanSegment unit tests ─────────────────────────────────────────
+
+describe("extractCleanSegment", () => {
+  it("extracts after — when both | and — present", () => {
+    expect(extractCleanSegment("إجمالي النوافذ | أعمال التشطيبات — بلاط سيراميك للحوائط"))
+      .toBe("بلاط سيراميك للحوائط");
+  });
+
+  it("extracts after | when no —", () => {
+    expect(extractCleanSegment("إجمالي النوافذ | بلاط سيراميك"))
+      .toBe("بلاط سيراميك");
+  });
+
+  it("returns original when no separators", () => {
+    expect(extractCleanSegment("بلاط سيراميك للحوائط"))
+      .toBe("بلاط سيراميك للحوائط");
+  });
+});
+
+// ─── Hierarchical description matching ──────────────────────────────────────
+
+const ceramicLibEntry = {
+  id: "lib-ceramic-tile",
+  category: "finishing",
+  standard_name_ar: "بلاط سيراميك للحوائط",
+  standard_name_en: "Ceramic Wall Tiles",
+  unit: "م2",
+  base_rate: 120,
+  base_city: "الرياض",
+  target_rate: 120,
+  min_rate: 80,
+  max_rate: 180,
+  materials_pct: 65, labor_pct: 20, equipment_pct: 5, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+  keywords: ["بلاط", "سيراميك", "حوائط", "ceramic", "tiles"],
+  is_locked: false, weight_class: "medium", complexity: "low", source_type: "Approved",
+  item_name_aliases: null, item_code: null, item_description: null,
+} as any;
+
+const hvacLibEntry = {
+  id: "lib-ahu-unit",
+  category: "hvac",
+  standard_name_ar: "وحدة مناولة هواء",
+  standard_name_en: "Air Handling Unit AHU",
+  unit: "عدد",
+  base_rate: 45000,
+  base_city: "الرياض",
+  target_rate: 45000,
+  min_rate: 30000,
+  max_rate: 60000,
+  materials_pct: 60, labor_pct: 20, equipment_pct: 10, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+  keywords: ["وحدة", "مناولة", "هواء", "AHU"],
+  is_locked: false, weight_class: "heavy", complexity: "high", source_type: "Approved",
+  item_name_aliases: ["AHU"], item_code: null, item_description: null,
+} as any;
+
+describe("Hierarchical description matching", () => {
+  it("matches ceramic tiles with | and — hierarchy", () => {
+    const result = findRateLibraryMatchV3(
+      "إجمالي النوافذ | أعمال التشطيبات — بلاط سيراميك للحوائط",
+      "Ceramic Wall Tiles",
+      "م2", "finishing",
+      [ceramicLibEntry],
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-ceramic-tile");
+    expect(result!.confidence).toBeGreaterThanOrEqual(50);
+  });
+
+  it("matches ceramic tiles with | only (no —)", () => {
+    const result = findRateLibraryMatchV3(
+      "إجمالي النوافذ | بلاط سيراميك للحوائط",
+      "",
+      "م2", "finishing",
+      [ceramicLibEntry],
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-ceramic-tile");
+  });
+
+  it("matches HVAC unit with long hierarchy path", () => {
+    const result = findRateLibraryMatchV3(
+      "أعمال التكييف | المعدات الميكانيكية — وحدة مناولة هواء",
+      "Air Handling Unit",
+      "عدد", "hvac",
+      [hvacLibEntry],
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-ahu-unit");
   });
 });
 

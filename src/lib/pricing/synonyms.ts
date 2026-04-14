@@ -425,6 +425,8 @@ export function hasConceptConflict(conceptsA: string[], conceptsB: string[]): bo
   for (const cA of conceptsA) {
     for (const cB of conceptsB) {
       if (cA === cB) continue;
+      // Skip if both concepts appear in both lists (shared ambiguity, not a real conflict)
+      if (conceptsA.includes(cB) && conceptsB.includes(cA)) continue;
       const isPair = ANTI_CONFUSION_PAIRS.some(
         ([x, y]) => (x === cA && y === cB) || (x === cB && y === cA)
       );
