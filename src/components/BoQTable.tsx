@@ -8,7 +8,7 @@ import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
 import { exportOriginalWithPrices } from "@/lib/boqOriginalExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, repricePendingItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
