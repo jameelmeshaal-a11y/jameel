@@ -413,7 +413,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   }, []);
 
   const filteredItems = useMemo(() => {
-    if (activeFilters.size === 0) return items;
+    if (activeFilters.size === 0 && !statusFilter) return items;
 
     let result = [...items];
 
