@@ -584,7 +584,11 @@ function scoreCandidate(
 
   if (boqConcepts.length > 0 && candConcepts.length > 0) {
     // Anti-confusion gate — zero score if conflicting concepts
-    if (hasConceptConflict(boqConcepts, candConcepts)) {
+    // BUT skip if clean segment has very high text similarity (same item, ambiguous concepts)
+    const cleanSegText = extractCleanSegment(description);
+    const candNames = [candidate.standard_name_ar || "", candidate.standard_name_en || ""];
+    const highTextMatch = candNames.some(cn => cn && textSimilarity(cleanSegText, cn) >= 0.85);
+    if (hasConceptConflict(boqConcepts, candConcepts) && !highTextMatch) {
       parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
       return { score: 0, textScore: 0, notes: parts.join(" | ") };
     }
