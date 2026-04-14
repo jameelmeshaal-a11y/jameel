@@ -751,7 +751,7 @@ export async function runPricingEngine(
 
     // 8. Write to primary row in DB
     // Check if this match inherited manual override from a previous project
-    const isInheritedManual = libraryMatchResult?.overrideType === "manual";
+    const isInheritedManual = (libraryMatchResult as any)?.overrideType === "manual";
 
     const pricedUpdate: Record<string, any> = {
       materials: cost.materials,
@@ -777,7 +777,7 @@ export async function runPricingEngine(
     };
     const { error: updateError } = await supabase
       .from("boq_items")
-      .update(pricedUpdate)
+      .update(pricedUpdate as any)
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
