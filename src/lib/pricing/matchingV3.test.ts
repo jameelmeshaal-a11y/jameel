@@ -764,3 +764,43 @@ describe("findRateLibraryMatchV3 — Parent Authority", () => {
     });
   });
 });
+
+// ─── Regression: Cross-category conflict prevention ────────────────────────
+
+describe("Cross-category conflict regression", () => {
+  it("ceramic tiles must NOT match epoxy", () => {
+    const conceptsA = detectConcepts("بلاط سيراميك للأرضيات 300x300");
+    const conceptsB = detectConcepts("مادة ايبوكسية ذاتية الاستواء بسمك 3 ملم");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("beams must NOT match excavation", () => {
+    const conceptsA = detectConcepts("خرسانة مسلحة — الكمرات");
+    const conceptsB = detectConcepts("حفر وخنادق للأساسات والكمرات");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("pumps must NOT match sprinklers", () => {
+    const conceptsA = detectConcepts("مضخة حريق ديزل نوع DFP-01");
+    const conceptsB = detectConcepts("رشاشات حريق من النوع الجانبي");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("pendent sprinklers must NOT match sidewall sprinklers", () => {
+    const conceptsA = detectConcepts("رشاشات حريق من النوع المتدلي Pendent");
+    const conceptsB = detectConcepts("رشاشات حريق من النوع الجانبي Vandal Proof");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("parapet must NOT match wall", () => {
+    const conceptsA = detectConcepts("دروة بسمك 200 مم");
+    const conceptsB = detectConcepts("جدار بسمك 100 مم");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("door WD01 must NOT match window Ws02", () => {
+    const conceptsA = detectConcepts("باب حديد معدني WD01");
+    const conceptsB = detectConcepts("نافذه Ws02 نوع Ws02");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+});
