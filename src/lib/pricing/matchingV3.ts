@@ -465,6 +465,24 @@ function scoreCandidate(
   score += effectiveTextScore;
   parts.push(`text:${effectiveTextScore.toFixed(0)}`);
 
+  // ── Perfect Name Match Bonus ──────────────────────────────────────────
+  // If the clean segment (item name after "—") matches a library name with
+  // very high similarity (≥ 0.90), grant a large bonus to ensure exact matches
+  // always win over generic description matches.
+  const cleanSegForNameMatch = extractCleanSegment(description);
+  if (cleanSegForNameMatch.length >= 5) {
+    const nameMatchSim = Math.max(
+      textSimilarity(cleanSegForNameMatch, candidate.standard_name_ar || ""),
+      textSimilarity(cleanSegForNameMatch, candidate.standard_name_en || ""),
+      ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanSegForNameMatch, a) : 0),
+    );
+    if (nameMatchSim >= 0.90) {
+      const PERFECT_NAME_BONUS = 30;
+      score += PERFECT_NAME_BONUS;
+      parts.push(`perfect-name:+${PERFECT_NAME_BONUS} (${(nameMatchSim * 100).toFixed(0)}%)`);
+    }
+  }
+
   // 2. Category match (+15 pts)
   const catFirst = category.replace(/_/g, " ").split(" ")[0];
   if (candidate.category.toLowerCase().includes(catFirst)) {

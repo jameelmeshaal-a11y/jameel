@@ -1053,3 +1053,83 @@ describe("Structural Type Gate — cross-type prevention", () => {
     expect(result).toBeNull();
   });
 });
+
+// ─── Blinding Concrete vs Structural Elements ─────────────────────────────
+describe("Blinding concrete must NOT match structural elements", () => {
+  const blindingLib = {
+    id: "lib-blinding",
+    category: "concrete",
+    standard_name_ar: "خرسانة عادية - فرشات نظافة تحت الأساسات",
+    standard_name_en: "Plain Concrete - Blinding under foundations",
+    unit: "م3",
+    base_rate: 188.4,
+    base_city: "Riyadh",
+    target_rate: 188.4,
+    min_rate: 150,
+    max_rate: 230,
+    materials_pct: 60, labor_pct: 25, equipment_pct: 10, logistics_pct: 3, risk_pct: 1, profit_pct: 1,
+    keywords: ["فرشات", "نظافه", "خرسانه", "عاديه"],
+    is_locked: false,
+    weight_class: "Heavy",
+    complexity: "Low",
+    source_type: "Approved",
+    item_name_aliases: ["فرشات نظافة", "خرسانة نظافة"],
+  };
+
+  const tieBeamLib = {
+    id: "lib-tie-beam",
+    category: "concrete",
+    standard_name_ar: "كمرات ربط الأساسات",
+    standard_name_en: "Tie Beams",
+    unit: "م3",
+    base_rate: 1350,
+    base_city: "Riyadh",
+    target_rate: 1350,
+    min_rate: 1100,
+    max_rate: 1600,
+    materials_pct: 45, labor_pct: 30, equipment_pct: 15, logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+    keywords: ["كمرات", "ربط", "اساسات"],
+    is_locked: false,
+    weight_class: "Heavy",
+    complexity: "Medium",
+    source_type: "Approved",
+    item_name_aliases: ["كمرات ربط الأساسات", "كمرات ربط"],
+  };
+
+  it("tie beam description matches tie beam library, NOT blinding", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة مصبوبة في الموقع بقوة لا تقل عن 350 كجم/سم2 — كمرات ربط الأساسات",
+      "Reinforced concrete cast in situ — Tie Beams",
+      "م3", "concrete",
+      [blindingLib, tieBeamLib],
+      null, new Set(), null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-tie-beam");
+    expect(result!.confidence).toBeGreaterThanOrEqual(60);
+  });
+
+  it("tie beam does NOT match blinding when blinding is only option", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة مصبوبة — كمرات ربط الأساسات",
+      "Tie Beams",
+      "م3", "concrete",
+      [blindingLib],
+      null, new Set(), null,
+    );
+    // Should be null because concept conflict blocks it
+    expect(result).toBeNull();
+  });
+
+  it("blinding matches blinding correctly", () => {
+    const result = findRateLibraryMatchV3(
+      "خرسانة عادية فرشات نظافة أسفل الأساسات",
+      "Blinding concrete under foundations",
+      "م3", "concrete",
+      [blindingLib, tieBeamLib],
+      null, new Set(), null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.item.id).toBe("lib-blinding");
+  });
+});
