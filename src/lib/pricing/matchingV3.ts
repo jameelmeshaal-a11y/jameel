@@ -150,6 +150,10 @@ export function findRateLibraryMatchV3(
         [/خزائن|كاونتر|cabinet|kitchen/i, /نافذ|نوافذ|window|شباك/i],
         [/مروح|fan|exhaust/i, /نافذ|نوافذ|window|شباك/i],
         [/فتحة وصول|roof hatch|access hatch/i, /نافذ|نوافذ|window|شباك/i],
+        [/كمرات|كمره|beam/i, /حفر|حفريات|خنادق|excavation|earthwork/i],
+        [/مضخ|pump/i, /رشاش|sprinkler/i],
+        [/ايبوكسي|إيبوكسي|epoxy/i, /بلاط|سيراميك|ceramic|tile/i],
+        [/دروه|دروة|parapet/i, /جدار.*100|wall.*100/i],
       ];
       const categoryConflict = CROSS_CATEGORY_PAIRS.some(([patA, patB]) =>
         (patA.test(description) && patB.test(linkedText)) ||
