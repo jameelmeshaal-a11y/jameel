@@ -386,10 +386,21 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     let result = [...items];
 
+    // Status filter (manual/non-manual/pending)
+    if (statusFilter === "manual") {
+      result = result.filter(i => i.override_type === "manual");
+    } else if (statusFilter === "non_manual") {
+      result = result.filter(i => i.override_type !== "manual");
+    } else if (statusFilter === "pending") {
+      result = result.filter(i => i.status === "pending");
+    }
+
+    if (activeFilters.size === 0) return result;
+
     // Build top-20 sets if needed
     const top20UnitRate = activeFilters.has("top_unit_rate")
       ? new Set(
-          [...items]
+          [...result]
             .filter(i => i.unit_rate && i.unit_rate > 0)
             .sort((a, b) => (b.unit_rate || 0) - (a.unit_rate || 0))
             .slice(0, 20)
@@ -399,7 +410,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     const top20Total = activeFilters.has("top_total")
       ? new Set(
-          [...items]
+          [...result]
             .filter(i => i.total_price && i.total_price > 0)
             .sort((a, b) => (b.total_price || 0) - (a.total_price || 0))
             .slice(0, 20)
@@ -417,7 +428,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     });
 
     return result;
-  }, [items, activeFilters]);
+  }, [items, activeFilters, statusFilter]);
 
   const canExport = exportSummary.canExport;
 
