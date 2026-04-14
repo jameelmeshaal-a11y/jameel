@@ -519,6 +519,7 @@ function scoreCandidate(
 
   // 6a. Access hatch guard — never let roof/slab system entries absorb hatch items
   const boqCombinedText = description + " " + (descriptionEn || "");
+  const candidatePrimaryText = [candidate.standard_name_ar || "", candidate.standard_name_en || ""].join(" ");
   const candCombinedText = [
     candidate.standard_name_ar || "",
     candidate.standard_name_en || "",
@@ -526,9 +527,9 @@ function scoreCandidate(
     ...(candidate.item_name_aliases || []),
   ].join(" ");
   if (ACCESS_HATCH_PATTERN.test(boqCombinedText)) {
-    const candidateLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candCombinedText);
-    const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candCombinedText);
-    if (!candidateLooksLikeHatch && candidateLooksLikeRoofSystem) {
+    const candidatePrimaryLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candidatePrimaryText);
+    const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candidatePrimaryText) || ROOF_SYSTEM_PATTERN.test(candidate.item_description || "");
+    if (!candidatePrimaryLooksLikeHatch && candidateLooksLikeRoofSystem) {
       parts.push("⛔ access-hatch-gate: hatch item cannot match roof/slab system");
       return { score: 0, textScore: 0, notes: parts.join(" | ") };
     }
