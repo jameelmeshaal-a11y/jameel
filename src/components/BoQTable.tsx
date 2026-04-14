@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X } from "lucide-react";
+import { Eye, EyeOff, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X, Lock, Columns } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +56,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [currentItemName, setCurrentItemName] = useState<string>("");
   const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
   const [repricingItemId, setRepricingItemId] = useState<string | null>(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "manual" | "non_manual" | "pending">("all");
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
@@ -384,10 +386,21 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     let result = [...items];
 
+    // Status filter (manual/non-manual/pending)
+    if (statusFilter === "manual") {
+      result = result.filter(i => i.override_type === "manual");
+    } else if (statusFilter === "non_manual") {
+      result = result.filter(i => i.override_type !== "manual");
+    } else if (statusFilter === "pending") {
+      result = result.filter(i => i.status === "pending");
+    }
+
+    if (activeFilters.size === 0) return result;
+
     // Build top-20 sets if needed
     const top20UnitRate = activeFilters.has("top_unit_rate")
       ? new Set(
-          [...items]
+          [...result]
             .filter(i => i.unit_rate && i.unit_rate > 0)
             .sort((a, b) => (b.unit_rate || 0) - (a.unit_rate || 0))
             .slice(0, 20)
@@ -397,7 +410,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     const top20Total = activeFilters.has("top_total")
       ? new Set(
-          [...items]
+          [...result]
             .filter(i => i.total_price && i.total_price > 0)
             .sort((a, b) => (b.total_price || 0) - (a.total_price || 0))
             .slice(0, 20)
@@ -415,7 +428,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     });
 
     return result;
-  }, [items, activeFilters]);
+  }, [items, activeFilters, statusFilter]);
 
   const canExport = exportSummary.canExport;
 
@@ -766,6 +779,30 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded-lg border bg-muted/20">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs text-muted-foreground ml-1">فلترة:</span>
+
+          {/* Status quick-filters */}
+          {([
+            { key: "all" as const, label: "الكل", icon: null },
+            { key: "manual" as const, label: "🔒 يدوي معتمد", icon: null },
+            { key: "non_manual" as const, label: "غير يدوي", icon: null },
+            { key: "pending" as const, label: "⏳ pending", icon: null },
+          ] as const).map(f => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
+                statusFilter === f.key
+                  ? "bg-primary/15 text-primary border-primary/40 font-medium shadow-sm"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+
+          <span className="w-px h-4 bg-border mx-1" />
+
+          {/* Existing advanced filters */}
           {[
             { key: "top_unit_rate", label: "الأعلى سعر وحدة", color: "bg-primary/10 text-primary border-primary/30" },
             { key: "top_total", label: "الأعلى إجمالي", color: "bg-primary/10 text-primary border-primary/30" },
@@ -785,13 +822,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               {f.label}
             </button>
           ))}
-          {activeFilters.size > 0 && (
+          {(activeFilters.size > 0 || statusFilter !== "all") && (
             <>
               <span className="text-[11px] text-muted-foreground mx-1">
                 عرض {filteredItems.length} من {items.length} بند
               </span>
               <button
-                onClick={() => setActiveFilters(new Set())}
+                onClick={() => { setActiveFilters(new Set()); setStatusFilter("all"); }}
                 className="text-[11px] px-2 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all flex items-center gap-1"
               >
                 <X className="w-3 h-3" /> مسح
@@ -801,12 +838,18 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
-        <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
-        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
-        <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
+          <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
+          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
+          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setShowBreakdown(prev => !prev)}>
+          {showBreakdown ? <EyeOff className="w-3.5 h-3.5" /> : <Columns className="w-3.5 h-3.5" />}
+          {showBreakdown ? "إخفاء التحليل" : "عرض التحليل"}
+        </Button>
       </div>
 
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
@@ -824,12 +867,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
               <th className="w-10"></th>
-              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
-              <th className="pricing-col w-20 text-right">{t("labor")}</th>
-              <th className="pricing-col w-20 text-right">{t("equip")}</th>
-              <th className="pricing-col w-20 text-right">{t("logis")}</th>
-              <th className="pricing-col w-16 text-right">{t("risk")}</th>
-              <th className="pricing-col w-16 text-right">{t("profit")}</th>
+              {showBreakdown && !ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("labor")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("equip")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("logis")}</th>}
+              {showBreakdown && <th className="pricing-col w-16 text-right">{t("risk")}</th>}
+              {showBreakdown && <th className="pricing-col w-16 text-right">{t("profit")}</th>}
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
@@ -847,14 +890,21 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
                 {items.some(i => i.section_no && i.section_no !== "") && <td className="protected-col font-mono text-xs">{item.section_no}</td>}
-                <td className="protected-col font-mono text-xs">{item.item_no}</td>
+                <td className="protected-col font-mono text-xs">
+                  <span className="inline-flex items-center gap-1">
+                    {item.item_no}
+                    {item.override_type === "manual" && <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />}
+                  </span>
+                </td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
                   {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                   {item.override_type === "manual" && (
-                    <Badge variant="outline" className="text-[9px] mt-1 border-amber-500 text-amber-700 dark:text-amber-400">🔒 محمي يدوياً</Badge>
+                    <Badge variant="outline" className="text-[10px] mt-1 border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 font-semibold gap-1">
+                      <Lock className="w-3 h-3" /> محمي يدوياً
+                    </Badge>
                   )}
                   {item.status === "unmatched" && (
                     <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
@@ -922,12 +972,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </Button>
                   )}
                 </td>
-                {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>
+                {showBreakdown && !ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
+                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>}
+                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>}
+                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>}
+                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>}
+                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>}
                 <td className="text-center">
                   {isPriced && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>
