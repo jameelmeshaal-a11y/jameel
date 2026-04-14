@@ -838,12 +838,18 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
-        <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
-        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
-        <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
+          <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
+          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
+          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setShowBreakdown(prev => !prev)}>
+          {showBreakdown ? <EyeOff className="w-3.5 h-3.5" /> : <Columns className="w-3.5 h-3.5" />}
+          {showBreakdown ? "إخفاء التحليل" : "عرض التحليل"}
+        </Button>
       </div>
 
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
@@ -861,12 +867,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
               <th className="w-10"></th>
-              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
-              <th className="pricing-col w-20 text-right">{t("labor")}</th>
-              <th className="pricing-col w-20 text-right">{t("equip")}</th>
-              <th className="pricing-col w-20 text-right">{t("logis")}</th>
-              <th className="pricing-col w-16 text-right">{t("risk")}</th>
-              <th className="pricing-col w-16 text-right">{t("profit")}</th>
+              {showBreakdown && !ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("labor")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("equip")}</th>}
+              {showBreakdown && <th className="pricing-col w-20 text-right">{t("logis")}</th>}
+              {showBreakdown && <th className="pricing-col w-16 text-right">{t("risk")}</th>}
+              {showBreakdown && <th className="pricing-col w-16 text-right">{t("profit")}</th>}
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
