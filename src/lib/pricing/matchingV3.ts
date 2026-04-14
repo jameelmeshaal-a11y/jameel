@@ -106,6 +106,9 @@ export function findRateLibraryMatchV3(
   approvedRateIds?: Set<string>,
   notes?: string | null,
 ): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
+  const fullIncomingText = description + " " + (descriptionEn || "");
+  const isAccessHatchItem = ACCESS_HATCH_PATTERN.test(fullIncomingText);
+
   // Path A — Direct lookup with dimension validation
   // Treat linked_rate_id as a HINT, not absolute trust.
   // Always run full scoring in parallel, and only use linked if it's truly the best.
@@ -135,6 +138,7 @@ export function findRateLibraryMatchV3(
         description + " " + (descriptionEn || "")
       );
       const linkedText = (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "");
+      const linkedPrimaryText = linkedText;
       const linkedConceptsCheck = detectConcepts(linkedText);
       const conceptConflict = hasConceptConflict(boqConceptsCheck, linkedConceptsCheck);
 
@@ -152,12 +156,17 @@ export function findRateLibraryMatchV3(
         (patB.test(description) && patA.test(linkedText))
       );
 
-      if (wxhConflict || thickConflict || conceptConflict || categoryConflict) {
+      const accessHatchConflict = isAccessHatchItem
+        && !ACCESS_HATCH_PATTERN.test(linkedPrimaryText)
+        && ROOF_SYSTEM_PATTERN.test(linkedPrimaryText + " " + (linked.item_description || ""));
+
+      if (wxhConflict || thickConflict || conceptConflict || categoryConflict || accessHatchConflict) {
         const conflictTypes = [
           wxhConflict && "أبعاد",
           thickConflict && "سُمك",
           conceptConflict && "مفهومي",
           categoryConflict && "فئوي",
+          accessHatchConflict && "فتحة-وصول",
         ].filter(Boolean).join("+");
         linkedConflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
         console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (${conflictTypes}), re-scoring`);
@@ -193,6 +202,16 @@ export function findRateLibraryMatchV3(
     // Unit gate — hard gate for units
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
     if (!unitMatch) continue;
+
+    if (isAccessHatchItem) {
+      const candidatePrimaryText = [candidate.standard_name_ar || "", candidate.standard_name_en || ""].join(" ");
+      const candidateExtendedText = candidatePrimaryText + " " + (candidate.item_description || "");
+      const candidateLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candidatePrimaryText);
+      const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candidateExtendedText);
+      if (!candidateLooksLikeHatch && candidateLooksLikeRoofSystem) {
+        continue;
+      }
+    }
 
     const result = scoreCandidate(
       enrichedDesc, descriptionEn, category,
