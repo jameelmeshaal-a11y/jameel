@@ -799,8 +799,8 @@ describe("Cross-category conflict regression", () => {
   });
 
   it("door WD01 must NOT match window Ws02", () => {
-    const conceptsA = detectConcepts("باب WD01");
-    const conceptsB = detectConcepts("نافذة Ws02 نوع Ws02");
+    const conceptsA = detectConcepts("باب حديد معدني WD01");
+    const conceptsB = detectConcepts("نافذه Ws02 نوع Ws02");
     expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
   });
 });
