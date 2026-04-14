@@ -1103,18 +1103,20 @@ export async function repriceUnpricedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    const repricedUpdate = {
+    const isInheritedManual2 = (libraryMatchResult as any)?.overrideType === "manual";
+    const repricedUpdate: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual2 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
+      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual2 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual2 ? { override_type: "manual" } : {}),
     };
-    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
     onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
@@ -1256,18 +1258,20 @@ export async function repricePendingItems(
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
     const conflictNotes = libraryMatchResult.conflictNotes || "";
 
-    const repricedUpdate = {
+    const isInheritedManual3 = (libraryMatchResult as any)?.overrideType === "manual";
+    const repricedUpdate: Record<string, any> = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: isInheritedManual3 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `📚 Pending→Priced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${conflictNotes ? " | " + conflictNotes : ""}`,
+      notes: `📚 Pending→Priced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${conflictNotes ? " | " + conflictNotes : ""}${isInheritedManual3 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
+      ...(isInheritedManual3 ? { override_type: "manual" } : {}),
     };
-    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
+    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
     onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
