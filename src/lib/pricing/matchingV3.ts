@@ -588,7 +588,20 @@ function scoreCandidate(
   }
 
   // 6. Structural Type Gate — hard block if structural element types differ
-  // Uses item_no (sub-item name) for precise classification when available
+  // Uses position-aware detection: when text contains multiple types, the EARLIEST in text wins
+  function detectStructuralType(text: string, types: [string, RegExp][]): [string, RegExp] | undefined {
+    const matches: { entry: [string, RegExp]; pos: number }[] = [];
+    for (const entry of types) {
+      const m = text.match(entry[1]);
+      if (m && m.index !== undefined) {
+        matches.push({ entry, pos: m.index });
+      }
+    }
+    if (matches.length === 0) return undefined;
+    matches.sort((a, b) => a.pos - b.pos);
+    return matches[0].entry;
+  }
+
   const STRUCTURAL_TYPES: [string, RegExp][] = [
     ["shear_wall", /حوائط\s*(?:ال)?قص|shear\s*wall/i],
     ["tie_beam", /كمرات\s*ربط|tie\s*beam/i],
@@ -605,9 +618,9 @@ function scoreCandidate(
   // Use clean segment (item_no / last segment after —) for structural detection
   const boqCleanForStruct = extractCleanSegment(description);
   const boqStructText = boqCleanForStruct + " " + extractCleanSegment(descriptionEn || "");
-  const boqStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(boqStructText));
+  const boqStructType = detectStructuralType(boqStructText, STRUCTURAL_TYPES);
   const candStructText = (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "");
-  const candStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(candStructText));
+  const candStructType = detectStructuralType(candStructText, STRUCTURAL_TYPES);
   if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
     parts.push(`⛔ structural-gate: ${boqStructType[0]}↔${candStructType[0]}`);
     return { score: 0, textScore: 0, notes: parts.join(" | ") };
