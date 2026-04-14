@@ -543,13 +543,22 @@ function scoreCandidate(
   }
 
   // 6. Structural Type Gate — hard block if structural element types differ
+  // Uses item_no (sub-item name) for precise classification when available
   const STRUCTURAL_TYPES: [string, RegExp][] = [
+    ["shear_wall", /حوائط\s*(?:ال)?قص|shear\s*wall/i],
+    ["tie_beam", /كمرات\s*ربط|tie\s*beam/i],
+    ["neck_column", /رقاب\s*(?:ال)?اعمد|neck\s*column|column\s*neck/i],
+    ["slab_on_grade", /بلاطه?\s*على\s*(?:ال)?ارض|slab\s*on\s*grade|ground\s*slab/i],
+    ["stairs", /سلالم|سلم|stairs|staircase|درج/i],
     ["slab", /بلاطات|بلاطه|slab/i],
     ["beam", /كمرات|كمره|beam/i],
     ["column", /اعمده|عمود|column/i],
     ["foundation", /قواعد|قاعده|اساسات|foundation/i],
   ];
-  const boqStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(description + " " + (descriptionEn || "")));
+  // Use clean segment (item_no / last segment after —) for structural detection
+  const boqCleanForStruct = extractCleanSegment(description);
+  const boqStructText = boqCleanForStruct + " " + extractCleanSegment(descriptionEn || "");
+  const boqStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(boqStructText));
   const candStructText = (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "");
   const candStructType = STRUCTURAL_TYPES.find(([, rx]) => rx.test(candStructText));
   if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
