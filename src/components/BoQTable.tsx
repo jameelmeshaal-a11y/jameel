@@ -779,6 +779,30 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded-lg border bg-muted/20">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs text-muted-foreground ml-1">فلترة:</span>
+
+          {/* Status quick-filters */}
+          {([
+            { key: "all" as const, label: "الكل", icon: null },
+            { key: "manual" as const, label: "🔒 يدوي معتمد", icon: null },
+            { key: "non_manual" as const, label: "غير يدوي", icon: null },
+            { key: "pending" as const, label: "⏳ pending", icon: null },
+          ] as const).map(f => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
+                statusFilter === f.key
+                  ? "bg-primary/15 text-primary border-primary/40 font-medium shadow-sm"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+
+          <span className="w-px h-4 bg-border mx-1" />
+
+          {/* Existing advanced filters */}
           {[
             { key: "top_unit_rate", label: "الأعلى سعر وحدة", color: "bg-primary/10 text-primary border-primary/30" },
             { key: "top_total", label: "الأعلى إجمالي", color: "bg-primary/10 text-primary border-primary/30" },
@@ -798,13 +822,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               {f.label}
             </button>
           ))}
-          {activeFilters.size > 0 && (
+          {(activeFilters.size > 0 || statusFilter !== "all") && (
             <>
               <span className="text-[11px] text-muted-foreground mx-1">
                 عرض {filteredItems.length} من {items.length} بند
               </span>
               <button
-                onClick={() => setActiveFilters(new Set())}
+                onClick={() => { setActiveFilters(new Set()); setStatusFilter("all"); }}
                 className="text-[11px] px-2 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all flex items-center gap-1"
               >
                 <X className="w-3 h-3" /> مسح
