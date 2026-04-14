@@ -388,3 +388,91 @@ function calculateBreakdown(
 
   return { materials, labor, equipment, logistics, risk, profit };
 }
+
+// ─── Deviation Report ───────────────────────────────────────────────────────
+
+export interface DeviationItem {
+  itemId: string;
+  itemNo: string;
+  description: string;
+  unit: string;
+  unitRate: number;
+  libraryRate: number;
+  deviationPct: number;
+  linkedRateId: string;
+  libraryName: string;
+  classification: "likely_mislink" | "spec_difference" | "needs_review";
+}
+
+/**
+ * Find all items with >30% deviation from their linked library rate.
+ * Classifies each as mislink, spec difference, or needs review.
+ */
+export async function findDeviationItems(boqFileId: string): Promise<DeviationItem[]> {
+  const [itemsRes, libraryRes] = await Promise.all([
+    supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId),
+    supabase.from("rate_library").select("*"),
+  ]);
+
+  const items = itemsRes.data || [];
+  const library = libraryRes.data || [];
+  const libMap = new Map(library.map(l => [l.id, l]));
+
+  const deviations: DeviationItem[] = [];
+
+  for (const item of items) {
+    if (!item.linked_rate_id || !item.unit_rate || item.unit_rate <= 0) continue;
+    if (item.override_type === "manual") continue; // skip manual items
+
+    const lib = libMap.get(item.linked_rate_id);
+    if (!lib || lib.target_rate <= 0) continue;
+
+    const locFactor = item.location_factor || 1.0;
+    const expectedRate = lib.target_rate * locFactor;
+    const deviationPct = Math.abs(item.unit_rate - expectedRate) / expectedRate * 100;
+
+    if (deviationPct < 30) continue;
+
+    // Classify the deviation
+    let classification: DeviationItem["classification"] = "needs_review";
+    if (deviationPct > 100) {
+      classification = "likely_mislink";
+    } else if (item.unit !== lib.unit) {
+      classification = "likely_mislink";
+    } else {
+      // Check concept conflict
+      const itemConcepts = detectCategory(item.description || "", item.description_en || "");
+      const libConcepts = detectCategory(lib.standard_name_ar || "", lib.standard_name_en || "");
+      if (itemConcepts.category !== libConcepts.category) {
+        classification = "likely_mislink";
+      } else {
+        classification = deviationPct > 60 ? "needs_review" : "spec_difference";
+      }
+    }
+
+    deviations.push({
+      itemId: item.id,
+      itemNo: item.item_no,
+      description: item.description,
+      unit: item.unit,
+      unitRate: item.unit_rate,
+      libraryRate: +(expectedRate).toFixed(2),
+      deviationPct: +deviationPct.toFixed(1),
+      linkedRateId: item.linked_rate_id,
+      libraryName: lib.standard_name_ar,
+      classification,
+    });
+  }
+
+  return deviations.sort((a, b) => b.deviationPct - a.deviationPct);
+}
+
+// ─── Manual Protection Guard ────────────────────────────────────────────────
+
+/**
+ * Checks if an item is manually overridden and blocks automated changes.
+ * Returns true if item is protected (should NOT be modified).
+ */
+export function isManuallyProtected(item: { override_type?: string | null; status?: string }): boolean {
+  return item.override_type === "manual" || item.status === "manual_override";
+}

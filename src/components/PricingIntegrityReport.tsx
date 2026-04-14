@@ -3,10 +3,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle, AlertTriangle, XCircle, Shield, Wrench, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CheckCircle, AlertTriangle, XCircle, Shield, Wrench, Loader2, ChevronDown, ChevronUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
-import type { IntegrityReport, IntegrityIssue, IssueType, FixAction } from "@/lib/pricing/integrityChecker";
-import { fixIntegrityIssues, runIntegrityCheck } from "@/lib/pricing/integrityChecker";
+import type { IntegrityReport, IntegrityIssue, IssueType, FixAction, DeviationItem } from "@/lib/pricing/integrityChecker";
+import { fixIntegrityIssues, runIntegrityCheck, findDeviationItems } from "@/lib/pricing/integrityChecker";
 import { formatNumber } from "@/lib/mockData";
 
 interface Props {

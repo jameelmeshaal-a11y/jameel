@@ -803,4 +803,39 @@ describe("Cross-category conflict regression", () => {
     const conceptsB = detectConcepts("نافذه Ws02 نوع Ws02");
     expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
   });
+
+  it("pump must NOT match sprinkler", () => {
+    const conceptsA = detectConcepts("مضخة حريق رئيسية diesel pump");
+    const conceptsB = detectConcepts("رشاش حريق متدلي pendent sprinkler");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("pendent sprinkler must NOT match sidewall sprinkler", () => {
+    const conceptsA = detectConcepts("رشاش متدلي Pendent K5.6");
+    const conceptsB = detectConcepts("رشاش جانبي Sidewall vandal proof");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("epoxy must NOT match ceramic tiles", () => {
+    const conceptsA = detectConcepts("دهان ايبوكسي ذاتي التسوية epoxy self-leveling");
+    const conceptsB = detectConcepts("بلاط سيراميك ارضيات ceramic floor tiles 30x30");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+
+  it("beam must NOT match excavation", () => {
+    const conceptsA = detectConcepts("كمرات خرسانة مسلحة أرضية ground beams");
+    const conceptsB = detectConcepts("حفر وخنادق للأساسات excavation");
+    expect(hasConceptConflict(conceptsA, conceptsB)).toBe(true);
+  });
+});
+
+// ─── Manual item protection regression ──────────────────────────────────────
+
+describe("Manual item protection", () => {
+  it("isManuallyProtected returns true for manual override items", async () => {
+    const { isManuallyProtected } = await import("./integrityChecker");
+    expect(isManuallyProtected({ override_type: "manual", status: "approved" })).toBe(true);
+    expect(isManuallyProtected({ override_type: null, status: "approved" })).toBe(false);
+    expect(isManuallyProtected({ override_type: null, status: "manual_override" })).toBe(true);
+  });
 });
