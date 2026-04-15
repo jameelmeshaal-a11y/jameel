@@ -343,6 +343,26 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         console.warn("[Save] Auto-sync stale items failed:", syncErr);
       }
 
+      // Audit log with approval notes
+      try {
+        await supabase.from("pricing_audit_log").insert({
+          item_id: item.id,
+          project_id: projectId,
+          action_type: "manual_approve",
+          edit_type: "manual_override",
+          change_scope: "item_and_linked",
+          reason: approvalNotes || correctionNote || null,
+          changed_by: user?.id || null,
+          old_values: { unit_rate: item.unit_rate, total_price: item.total_price },
+          new_values: { unit_rate: unitRate, total_price: totalPrice },
+          changed_fields: overridesObj,
+          affected_items_count: 1 + (result?.linked_items_count || 0),
+          master_rate_updated: true,
+        });
+      } catch (auditErr) {
+        console.warn("[Save] Audit log failed:", auditErr);
+      }
+
       const libMsg = result?.is_new
         ? "تم إنشاء بند جديد في المكتبة"
         : "تم تحديث المكتبة";
@@ -350,6 +370,8 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       toast.success(`✅ ${libMsg}${syncMsg} — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
 
       setEditing(false);
+      setShowConfirmDialog(false);
+      setApprovalNotes("");
       onUpdated?.();
       onClose();
     } catch (err: any) {
