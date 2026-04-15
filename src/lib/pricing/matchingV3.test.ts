@@ -1438,7 +1438,10 @@ describe("extractCleanSegment regression", () => {
       "تصميم و توريد وإنشاء سلم من الحديد بما في ذلك — سلم من الحديد",
       "",
       "عدد",
+      "steel_misc",
       candidates as any,
+      null,
+      undefined,
       null,
       "سلم من الحديد",
     );
