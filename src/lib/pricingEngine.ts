@@ -759,7 +759,7 @@ export async function runPricingEngine(
         status: "pending",
         notes: `⏳ تطابق منخفض (${Math.round(matchConfidence)}%) — يحتاج مراجعة يدوية`,
       };
-      await supabase.from("boq_items").update(pendingUpdate).eq("id", block.primaryRow.id);
+      await supabase.from("boq_items").update(pendingUpdate as any).eq("id", block.primaryRow.id);
       onItemPriced?.(block.primaryRow.id, pendingUpdate);
       processedCount++;
       onProgress?.(processedCount, items.length);
