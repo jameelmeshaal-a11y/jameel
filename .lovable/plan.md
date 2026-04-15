@@ -1,51 +1,64 @@
 
 
-# إضافة Propagation 2 محصورة بنفس ملف جدول الكميات
+# بوابة تحقق متعددة المراحل — 4 طبقات
 
-## التغيير
+## ترتيب التنفيذ (حسب طلبك): الطبقة 1 ← 4 ← 3 ← 2
 
-### Migration: تحديث `save_manual_price`
+---
 
-إضافة كتلة UPDATE ثانية بعد Propagation 1 (المطابقة بـ `extract_sub_item`) — تستهدف البنود المرتبطة بنفس `linked_rate_id` **داخل نفس الملف فقط**:
+### الطبقة 1: تنظيف البيانات (Migration SQL)
 
-```sql
--- Propagation 2: Same library item, same BoQ file only
-UPDATE public.boq_items bi
-SET
-    unit_rate = p_unit_rate,
-    total_price = round(p_unit_rate * bi.quantity, 2),
-    materials = p_materials, labor = p_labor,
-    equipment = p_equipment, logistics = p_logistics,
-    risk = p_risk, profit = p_profit,
-    status = 'approved',
-    override_type = 'manual',
-    source = 'manual',
-    confidence = 100,
-    override_at = now(),
-    override_by = p_user_id,
-    override_reason = 'موروث من تسعير يدوي — مرتبط بنفس بند المكتبة',
-    notes = concat_ws(' | ', bi.notes, '🔒 محمي يدوياً — موروث من بند ' || coalesce(v_item.item_no, p_item_id::text))
-WHERE bi.linked_rate_id = v_library_id
-  AND bi.id <> p_item_id
-  AND bi.boq_file_id = v_item.boq_file_id
-  AND (bi.override_type IS NULL OR bi.override_type != 'manual');
+فك ارتباط 17 بنداً مرتبطة خطأً بسجل `8db5d710` (أحواض، مراحيض، مراوح، نوافذ). إعادتها لـ `pending` لإعادة تسعيرها بشكل صحيح.
+
+---
+
+### الطبقة 4: INCOMPATIBLE_GROUPS في `matchingV3.ts`
+
+إضافة hard gate قبل إضافة أي مرشح لـ `viableCandidates`:
+
+```typescript
+const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
+  doors: ['windows','plumbing_fixtures','plumbing_pipes','hvac_equipment','hvac_ductwork'],
+  windows: ['doors','plumbing_fixtures','plumbing_pipes','hvac_equipment','steel_misc'],
+  plumbing_fixtures: ['doors','windows','hvac_equipment','steel_misc','electrical_fixtures'],
+  hvac_equipment: ['doors','windows','plumbing_fixtures','steel_misc'],
+};
 ```
 
-يُضاف مباشرة بعد `GET DIAGNOSTICS v_linked_count = ROW_COUNT;` الحالي، مع تحديث العدّاد:
+**ملاحظتك مطبّقة**: `fire_fighting` غير موجودة في قائمة `doors` — أبواب الحريق لن تُحظر.
+
+---
+
+### الطبقة 3: Category Gate في Edge Function
+
+**الملف**: `supabase/functions/match-price-item/index.ts`
+
+1. إضافة دالة `detectItemCategory(name)` (regex-based)
+2. إضافة `areCategoriesCompatible()` بنفس INCOMPATIBLE_GROUPS
+3. تخطي أي سجل مكتبة ذي فئة غير متوافقة قبل حساب النقاط
+
+---
+
+### الطبقة 2: Propagation 2 بشرط similarity (Migration SQL — الأخيرة)
+
+**ملاحظتك مطبّقة**: `pg_trgm` غير مفعّل حالياً — سيُفعّل أولاً. `extract_sub_item` موجودة بالفعل ✓
 
 ```sql
-GET DIAGNOSTICS v_linked_count = ROW_COUNT;
-
--- Propagation 2 here...
-
-v_linked_count := v_linked_count + v_linked_count_2;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
-### ملف واحد: Migration SQL فقط
+ثم تحديث Propagation 2 في `save_manual_price` بإضافة:
+```sql
+AND similarity(public.extract_sub_item(bi.description), v_sub_item_name) > 0.25
+```
 
-| العنصر | التفصيل |
+---
+
+## الملفات المتأثرة
+
+| الملف | التغيير |
 |---|---|
-| النطاق | نفس `boq_file_id` فقط — لا يمتد لمشاريع أخرى |
-| الشرط | `linked_rate_id` متطابق + نفس الملف + ليس محمياً مسبقاً |
-| النتيجة | Ws04/05/06 ستحصل على `override_type = 'manual'` + `confidence = 100` + شارة 🔒 |
+| Migration SQL | تنظيف بيانات + `pg_trgm` + تحديث `save_manual_price` |
+| `src/lib/pricing/matchingV3.ts` | INCOMPATIBLE_GROUPS hard gate |
+| `supabase/functions/match-price-item/index.ts` | detectItemCategory + areCategoriesCompatible |
 
