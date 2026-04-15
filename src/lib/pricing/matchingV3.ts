@@ -220,10 +220,35 @@ export function findRateLibraryMatchV3(
   }
   const viableCandidates: ScoredCandidate[] = [];
 
+  // ── INCOMPATIBLE_GROUPS Hard Gate ──────────────────────────────────────
+  // Prevents cross-category matches that are logically impossible.
+  // fire_fighting is NOT blocked for doors (fire-rated doors exist).
+  const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
+    doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
+    windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
+    plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+    plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+    hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+    hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+    electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
+    electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
+  };
+
   for (const candidate of rateLibrary) {
     // Unit gate — hard gate for units
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
     if (!unitMatch) continue;
+
+    // Category incompatibility hard gate
+    const blockedCategories = INCOMPATIBLE_GROUPS[category];
+    if (blockedCategories && blockedCategories.includes(candidate.category)) {
+      continue; // ⛔ category-hard-gate: skip incompatible category
+    }
+    // Reverse check: candidate's category blocks the BoQ category
+    const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
+    if (reverseBlocked && reverseBlocked.includes(category)) {
+      continue; // ⛔ reverse category-hard-gate
+    }
 
     if (isAccessHatchItem) {
       const candidatePrimaryText = [candidate.standard_name_ar || "", candidate.standard_name_en || ""].join(" ");

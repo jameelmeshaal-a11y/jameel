@@ -5,15 +5,10 @@ import { corsHeaders } from "https://esm.sh/@supabase/supabase-js@2.95.0/cors";
 function normalizeArabicText(text: string): string {
   if (!text) return "";
   let t = text;
-  // Strip tashkeel
   t = t.replace(/[\u064B-\u065F\u0670]/g, "");
-  // Normalize alef variants
   t = t.replace(/[أإآ]/g, "ا");
-  // Taa marbuta → haa
   t = t.replace(/ة/g, "ه");
-  // Alef maqsura → yaa
   t = t.replace(/ى/g, "ي");
-  // Strip common prefixes per token
   const tokens = t
     .split(/\s+/)
     .map((w) => w.replace(/^(وال|بال|لل|ال|و)/, ""))
@@ -53,6 +48,63 @@ function jaccardTokens(a: string[], b: string[]): number {
   return union === 0 ? 0 : inter / union;
 }
 
+// ─── Category Detection (regex-based, mirrors categoryDetector.ts) ──────────
+
+type DetectedCategory = string;
+
+function detectItemCategory(name: string): DetectedCategory {
+  const text = (name || "").toLowerCase();
+  
+  const rules: [DetectedCategory, RegExp][] = [
+    ["doors", /باب|أبواب|door/i],
+    ["windows", /نافذة|شباك|نوافذ|window/i],
+    ["plumbing_fixtures", /مغسلة|حوض|مرحاض|toilet|basin|sink|خلاط|صنبور|أدوات صحية|sanitary|حنفية|مرايات/i],
+    ["plumbing_pipes", /مواسير صرف|مواسير مياه|pipe|أنابيب|سباكة|plumb/i],
+    ["hvac_equipment", /تكييف|مكيف|air condition|chiller|وحدة تبريد|split unit|مراوح|طرد هواء/i],
+    ["hvac_ductwork", /مجاري هواء|duct|دكت|مجلفن|مخرج هواء/i],
+    ["fire_fighting", /إطفاء|fire|حريق|رشاش|sprinkler|إنذار|alarm/i],
+    ["electrical_fixtures", /إنارة|light|مفتاح|switch|بريزة|socket|outlet|كشاف|luminaire/i],
+    ["electrical_panels", /لوحة كهرب|panel|لوحة توزيع|distribution board|MDB|SDB/i],
+    ["steel_misc", /فتحة\s*وصول|access\s*hatch|roof\s*hatch/i],
+    ["steel_structural", /هيكل حديد|steel structure|حديد إنشائي/i],
+    ["blockwork", /بلوك|طوب|block|brick|حوائط سمك/i],
+    ["tiling", /بلاط|سيراميك|رخام|tile|ceramic|marble|granite|بورسلين|porcelain/i],
+    ["painting", /دهان|طلاء|paint|بويه|ايبوكسي|إيبوكسي|epoxy/i],
+    ["plastering", /لياسة|بياض|plaster|render/i],
+    ["waterproofing", /عزل مائي|waterproof|ممبرين|membrane/i],
+    ["ceiling", /أسقف مستعارة|سقف مستعار|ceiling|جبس بورد|gypsum/i],
+  ];
+
+  for (const [cat, regex] of rules) {
+    if (regex.test(text)) return cat;
+  }
+  return "general";
+}
+
+// ─── Category Compatibility Gate ────────────────────────────────────────────
+
+const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
+  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
+  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
+  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
+  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
+};
+
+function areCategoriesCompatible(queryCategory: string, libraryCategory: string): boolean {
+  if (queryCategory === "general" || libraryCategory === "general") return true;
+  const blocked = INCOMPATIBLE_GROUPS[queryCategory];
+  if (blocked && blocked.includes(libraryCategory)) return false;
+  const reverseBlocked = INCOMPATIBLE_GROUPS[libraryCategory];
+  if (reverseBlocked && reverseBlocked.includes(queryCategory)) return false;
+  return true;
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
 interface LibraryItem {
   id: string;
   standard_name_ar: string;
@@ -78,6 +130,8 @@ interface MatchResult {
   confidence: number;
   match_level: "auto" | "suggestion" | "none";
 }
+
+// ─── Main Handler ───────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -113,24 +167,29 @@ Deno.serve(async (req) => {
     const queryTokens = tokenize(item_name);
     const queryLower = item_name.toLowerCase();
 
+    // ── Layer 3: Detect query category for gate ──
+    const queryCategory = detectItemCategory(item_name);
+
     const matches: MatchResult[] = [];
 
     for (const item of (items || []) as LibraryItem[]) {
+      // ⛔ Category Hard Gate — skip incompatible categories
+      if (!areCategoriesCompatible(queryCategory, item.category)) {
+        continue;
+      }
+
       let bestScore = 0;
 
       // Score against Arabic name
       const arNorm = normalizeArabicText(item.standard_name_ar);
       const arTokens = tokenize(item.standard_name_ar);
       
-      // Exact normalized match
       if (queryNorm === arNorm && queryNorm.length > 0) {
         bestScore = 98;
       } else {
-        // Jaccard token similarity
         const jaccard = jaccardTokens(queryTokens, arTokens);
         bestScore = Math.max(bestScore, jaccard * 100);
 
-        // Levenshtein-based similarity on normalized text
         if (queryNorm.length > 0 && arNorm.length > 0) {
           const maxLen = Math.max(queryNorm.length, arNorm.length);
           const levSim = (1 - levenshtein(queryNorm, arNorm) / maxLen) * 100;
@@ -189,7 +248,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Sort by confidence descending, limit to top 5
     matches.sort((a, b) => b.confidence - a.confidence);
     const topMatches = matches.slice(0, 5);
 
