@@ -1,73 +1,87 @@
 
 
-# تحليل المشكلة: لماذا اعتمد النظام سعر 26,000 ريال لجرس إنذار الحريق
+# خطة التنفيذ — المحاور 1→3 (+ تحضير المحاور 4→6)
 
-## السبب الجذري
+## الحالة الفعلية بعد المراجعة
 
-البند #423 "جرس انذار حريق" (17 عدد) تم ربطه بسجل المكتبة **"غرفة الاتصالات"** (26,000 ريال) بدلاً من **"جرس انذار حريق"** (320 ريال).
+### ما يحتاج إصلاح فعلاً:
 
-### كيف حدث هذا؟
+**المحور 1 — SQL Trigger**: `guard_manual_override` يحتاج إضافة استثناء `status='pending'` في البداية. الكود الحالي (أسطر 3-18) لا يحتوي على هذا الاستثناء.
 
-1. **حقل `item_no`** = "جرس انذار حريق" — مطابق **100%** لسجل المكتبة "جرس انذار حريق" (320 ريال)
-2. **حقل `description`** = نص طويل جداً يبدأ بـ "إجمالى نظام الدائرة التلفزيونية المغلقة | نظام الكشف والأنذار عن الحريق..." — ويحتوي عشرات الكلمات التقنية عن أنظمة الحريق والكابلات والمواسير واللوحات
-3. سجل "غرفة الاتصالات" في المكتبة يحتوي **keywords** تشمل: `جرس`, `انذار`, `حريق`, `كابلات`, `مواسير`, `لوحات`, `تحكم`, `نظام` — وهي كلمات كثيرة تتطابق مع الوصف الطويل
-4. **النتيجة**: jaccard similarity بين الوصف الطويل وكلمات "غرفة الاتصالات" أعلى من jaccard مع "جرس انذار حريق" البسيط
-5. رغم أن `itemNoBonus = +50` للمطابقة الصحيحة، فإن النتيجة الأساسية لـ "غرفة الاتصالات" من الوصف تتجاوزها
+**المحور 2 — `item_no` في Frontend Hooks**: 
+- `priceMatchService.ts` سطر 19: `body: { item_name: description, unit }` ← ينقصه `item_no`
+- `usePriceLibrary.ts` سطر 220: `body: { item_name: itemName, unit }` ← ينقصه `item_no`
+- Edge Function (سطر 154) **يستقبل** `item_no` بالفعل ✅
 
-### الخلاصة: المحرك يثق بالوصف الطويل أكثر من اسم البند الدقيق
+**المحور 3 — إزالة `!== description`**:
+- `matchingV3.ts` سطر 248: `cleanItemNoForOverride !== description` ← يجب إزالته
+- `matchingV3.ts` سطر 323: `cleanItemNo !== description` ← يجب إزالته
+- Edge Function **لا يحتوي** على هذا الشرط ✅ (سطر 188 يفحص فقط `cleanItemNo.length >= 4`)
+
+**المحور 4 — `INCOMPATIBLE_GROUPS` في pricingEngine**: 
+- ملاحظتك صحيحة 100%: `INCOMPATIBLE_GROUPS` معرّفة كمتغير محلي داخل `findRateLibraryMatchV3()` (سطر 232)، غير مُصدَّرة
+- `detectCategory` مُصدَّرة من `categoryDetector.ts` ✅
+- الحل: استخراج `INCOMPATIBLE_GROUPS` و `areCategoriesCompatible()` كدالة مُصدَّرة من `matchingV3.ts`، ثم استيرادها في `pricingEngine.ts`
+
+**المحور 5 — `itemNoBonus` في الحلقة**:
+- سطر 332-335: حالياً `itemNoBonus = 50` عند `≥ 0.95` — يجب تحويله إلى `return فوراً` بثقة 99
+- التدرج المطلوب: `≥0.95` → return 99, `≥0.85` → +40, `≥0.70` → +20
+
+**المحور 6 — Pending عند confidence < 70**:
+- سطر 731-738: حالياً `needs_review` مع كتابة السعر — يجب تحويله إلى `pending` بدون سعر مع `continue`
 
 ---
 
-## الحل: بوابة `item_no` الحاسمة (Hard Override)
+## التنفيذ (7 محاور)
 
-### المبدأ
-عندما يتطابق `item_no` مع اسم سجل في المكتبة بنسبة ≥ 95% **مع تطابق الوحدة** → هذا هو التطابق النهائي. لا مجال للمنافسة من الوصف.
-
-### التغييرات
-
-#### 1. `src/lib/pricing/matchingV3.ts` — بوابة item_no قبل التسجيل
-
-**قبل** حلقة `for (const candidate of rateLibrary)` التي تسجل النقاط، إضافة مسح أولي:
-
-```text
-// ── Pre-scan: item_no Hard Override ──
-// If item_no exactly matches a library name (≥95%), 
-// return that match immediately at confidence 99.
-// This prevents long descriptions from overriding the precise item name.
-
-for each candidate in rateLibrary:
-  if unit doesn't match → skip
-  if category incompatible → skip
-  compute itemNoSim = max similarity of (item_no vs candidate names/aliases)
-  if itemNoSim >= 0.95 → return immediately with confidence 99
+### المحور 1: SQL Migration
+```sql
+CREATE OR REPLACE FUNCTION public.guard_manual_override()
+  -- إضافة في البداية:
+  IF NEW.status = 'pending' AND NEW.override_type IS NULL THEN
+    RETURN NEW;
+  END IF;
+  -- باقي الكود كما هو
 ```
 
-هذا يضمن:
-- "جرس انذار حريق" (item_no) يطابق "جرس انذار حريق" (مكتبة) بنسبة ~100% → يُرجع فوراً بثقة 99
-- "غرفة الاتصالات" لن تحصل على فرصة للمنافسة أصلاً
+### المحور 2: إرسال `item_no`
+- `priceMatchService.ts`: إضافة `itemNo?: string` للدوال + `item_no: itemNo` في body
+- `usePriceLibrary.ts`: إضافة `itemNo?: string` في `match()` + تمريره
 
-#### 2. `supabase/functions/match-price-item/index.ts` — نفس البوابة
+### المحور 3: إزالة `!== description`
+- `matchingV3.ts` سطر 248: حذف `&& cleanItemNoForOverride !== description`
+- `matchingV3.ts` سطر 323: حذف `&& cleanItemNo !== description`
 
-إضافة معامل `item_no` اختياري للـ Edge Function وتطبيق نفس المنطق: إذا `item_no` تطابق اسم المكتبة بنسبة ≥95% مع تطابق الوحدة → يُرجع فوراً.
+### المحور 4: بوابات Historical Match
+- استخراج `INCOMPATIBLE_GROUPS` و `areCategoriesCompatible()` من داخل `findRateLibraryMatchV3` إلى مستوى الملف كـ `export`
+- استيرادهما في `pricingEngine.ts`
+- إضافة فحص الفئة في `findHistoricalMatch` (سطور 432-451)
+- إزالة `overrideType` من النتيجة المُرجعة
+- إزالة `isInheritedManual` (سطر 754) وكل الكود المرتبط (سطور 754-776)
+- إضافة تعليق توثيقي
 
-#### 3. حفظ القاعدة في الذاكرة
+### المحور 5: Hard Override في الحلقة
+- سطر 332: `if (itemNoSim >= 0.95)` → `return { item: candidate, confidence: 99 }` فوراً
 
-تحديث `mem://features/matching/v4-engine-core` بقاعدة:
-> item_no exact match (≥95%) is a HARD OVERRIDE — bypasses all description scoring.
+### المحور 6: Pending عند confidence < 70
+- سطر 733-738: تحويل `needs_review` إلى `pending` بدون سعر + `continue`
+- إضافة dry-run log مؤقت
+
+### المحور 7: تحديث Memory + تقرير تحقق
+- تحديث `mem://features/matching/v4-engine-core`
+- إنشاء `mem://features/pricing/hardened-governance`
+- اختبار 6 حالات عبر Edge Function
 
 ---
 
 ## الملفات المتأثرة
 
-| الملف | التغيير |
+| الملف | المحاور |
 |---|---|
-| `src/lib/pricing/matchingV3.ts` | Pre-scan loop: item_no ≥ 95% → return immediately |
-| `supabase/functions/match-price-item/index.ts` | Accept `item_no` param + same hard override |
-| Memory | حفظ قاعدة item_no Hard Override |
-
-## لماذا هذا يمنع التكرار مع بنود أخرى
-
-- أي بند له `item_no` واضح ودقيق (مثل "جرس انذار حريق"، "كاشف دخان"، "رشاش حريق") سيتطابق فوراً مع المكتبة بغض النظر عن طول الوصف
-- البنود ذات الوصف الطويل الموروث من السياق الأعلى لن تتداخل مع بنود أخرى غير ذات صلة
-- القاعدة تعمل كبوابة أولى قبل أي تحليل — لا تحذف أي منطق سابق، فقط تضيف أولوية حاسمة
+| Migration SQL | 1 |
+| `src/lib/pricing/matchingV3.ts` | 3, 4 (export), 5 |
+| `src/lib/pricing/priceMatchService.ts` | 2 |
+| `src/hooks/usePriceLibrary.ts` | 2 |
+| `src/lib/pricingEngine.ts` | 4, 6 |
+| Memory | 7 |
 
