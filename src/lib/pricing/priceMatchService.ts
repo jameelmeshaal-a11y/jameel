@@ -24,7 +24,7 @@ export async function matchItemToLibrary(description: string, unit?: string): Pr
 
   try {
     const { data, error } = await supabase.functions.invoke("match-price-item", {
-      body: { item_name: description, unit },
+      body: { item_name: description, unit, item_no: itemNo },
     });
     if (error) return [];
     const matches: PriceMatch[] = data?.matches || [];
@@ -41,11 +41,12 @@ export function matchItemDebounced(
   description: string,
   unit: string | undefined,
   callback: (matches: PriceMatch[]) => void,
-  delay = 300
+  delay = 300,
+  itemNo?: string,
 ) {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(async () => {
-    const matches = await matchItemToLibrary(description, unit);
+    const matches = await matchItemToLibrary(description, unit, itemNo);
     callback(matches);
   }, delay);
 }

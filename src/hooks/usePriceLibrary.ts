@@ -304,7 +304,7 @@ export function useMatchPriceItem() {
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const match = useCallback(async (itemName: string, unit?: string) => {
+  const match = useCallback(async (itemName: string, unit?: string, itemNo?: string) => {
     if (!itemName || itemName.length < 3) {
       setResults([]);
       return;
@@ -312,7 +312,7 @@ export function useMatchPriceItem() {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("match-price-item", {
-        body: { item_name: itemName, unit },
+        body: { item_name: itemName, unit, item_no: itemNo },
       });
       if (error) throw error;
       setResults(data?.matches || []);
