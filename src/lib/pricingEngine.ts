@@ -17,7 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+import { findRateLibraryMatchV3, areCategoriesCompatible } from "./pricing/matchingV3";
 import { parseDimensions, compareDimensions } from "./pricing/synonyms";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
@@ -408,10 +408,13 @@ function findHistoricalMatch(
   unit: string,
   historicalMap: HistoricalMapping[],
   rateLibrary: RateLibraryItem[],
-): { item: RateLibraryItem; confidence: number; overrideType?: string | null } | null {
+): { item: RateLibraryItem; confidence: number } | null {
   const itemText = normalizeArabicText(description + " " + (descriptionEn || ""));
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
+
+  // Category of the incoming BoQ item
+  const boqCategory = detectCategory(description + " " + (descriptionEn || "")).category;
 
   // Dimension check helper — returns true if dimensions conflict
   const hasDimensionConflict = (linked: RateLibraryItem): boolean => {
@@ -433,7 +436,16 @@ function findHistoricalMatch(
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93, overrideType: hist.overrideType };
+      if (!linked) continue;
+      // GOVERNANCE: Category hard gate for historical matches
+      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
+        console.log(`[A.5] Category conflict in historical: "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
+        continue;
+      }
+      // GOVERNANCE DECISION: Historical matches provide PRICES ONLY.
+      // They do NOT inherit manual override protection (overrideType removed).
+      // Reason: Prevents stale manual overrides from propagating to new items.
+      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
     }
   }
 
@@ -448,7 +460,13 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90, overrideType: hist.overrideType };
+      if (!linked) continue;
+      // GOVERNANCE: Category hard gate
+      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
+        console.log(`[A.5] Category conflict in historical (Jaccard): "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
+        continue;
+      }
+      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
     }
   }
 
@@ -728,14 +746,24 @@ export async function runPricingEngine(
       continue;
     }
 
-    // 6. Deterministic status assignment — no AI confidence checks
+    // 6. Deterministic status assignment — GOVERNANCE: confidence < 70 = Pending
     let itemStatus: string;
     if (matchConfidence >= 70) {
       itemStatus = "approved";
     } else {
-      // 50-69 range (guaranteed since unmatched items already continued above)
-      itemStatus = "needs_review";
-      cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
+      // GOVERNANCE: confidence < 70 = Pending — no price written
+      console.warn(`[DRY-RUN] Marking as pending: "${block.mergedDescription.slice(0, 60)}" conf=${matchConfidence}`);
+      const pendingUpdate: Record<string, any> = {
+        ...NULL_PRICING_FIELDS,
+        confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
+        status: "pending",
+        notes: `⏳ تطابق منخفض (${Math.round(matchConfidence)}%) — يحتاج مراجعة يدوية`,
+      };
+      await supabase.from("boq_items").update(pendingUpdate as any).eq("id", block.primaryRow.id);
+      onItemPriced?.(block.primaryRow.id, pendingUpdate);
+      processedCount++;
+      onProgress?.(processedCount, items.length);
+      continue; // ← prevents reaching the general update at line 778
     }
 
     // 7. Owner-supplied materials: zero out materials and recalculate
@@ -750,9 +778,8 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
-    // Check if this match inherited manual override from a previous project
-    const isInheritedManual = (libraryMatchResult as any)?.overrideType === "manual";
-
+    // GOVERNANCE DECISION: Historical matches provide PRICES ONLY.
+    // overrideType/"manual" is NOT inherited — prevents stale protection propagation.
     const pricedUpdate: Record<string, any> = {
       materials: cost.materials,
       labor: cost.labor,
@@ -764,16 +791,14 @@ export async function runPricingEngine(
       total_price: cost.totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: cost.locationFactor,
-      source: isInheritedManual ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
       notes: [
         (block.primaryRow as any).notes,
         cost.explanation,
         libraryMatchResult?.conflictNotes,
-        isInheritedManual ? "⭐ تسعير يدوي موروث من مشروع سابق" : null,
       ].filter(Boolean).join(" | "),
-      ...(isInheritedManual ? { override_type: "manual" } : {}),
     };
     const { error: updateError } = await supabase
       .from("boq_items")

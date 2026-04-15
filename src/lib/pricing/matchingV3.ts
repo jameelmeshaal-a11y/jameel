@@ -245,7 +245,7 @@ export function findRateLibraryMatchV3(
   // return immediately at confidence 99. This prevents long descriptions
   // from overriding the precise item name.
   const cleanItemNoForOverride = itemNo?.trim();
-  if (cleanItemNoForOverride && cleanItemNoForOverride.length >= 4 && cleanItemNoForOverride !== description) {
+  if (cleanItemNoForOverride && cleanItemNoForOverride.length >= 4) {
     for (const candidate of rateLibrary) {
       if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
       
@@ -320,7 +320,7 @@ export function findRateLibraryMatchV3(
     // This is the STRONGEST signal — item_no contains the precise item name.
     let itemNoBonus = 0;
     const cleanItemNo = itemNo?.trim();
-    if (cleanItemNo && cleanItemNo.length >= 4 && cleanItemNo !== description) {
+    if (cleanItemNo && cleanItemNo.length >= 4) {
       const itemNoSim = Math.max(
         textSimilarity(cleanItemNo, candidate.standard_name_ar || ""),
         textSimilarity(cleanItemNo, candidate.standard_name_en || ""),
@@ -330,9 +330,13 @@ export function findRateLibraryMatchV3(
         ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, extractCleanSegment(a)) : 0),
       );
       if (itemNoSim >= 0.95) {
-        // Near-exact match — override confidence to 99
-        itemNoBonus = 50;
-        result.notes += ` | ⭐ itemNo-exact:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
+        // GOVERNANCE: item_no exact match = HARD OVERRIDE — return immediately
+        console.log(`[V3] ⭐ itemNo loop override: "${cleanItemNo}" → "${candidate.standard_name_ar}" (${(itemNoSim * 100).toFixed(0)}%)`);
+        return {
+          item: candidate,
+          confidence: 99,
+          conflictNotes: linkedConflictNote,
+        };
       } else if (itemNoSim >= 0.85) {
         itemNoBonus = 40;
         result.notes += ` | ⭐ itemNo-high:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
@@ -821,4 +825,25 @@ function scoreCandidate(
   score = Math.max(score, 0);
 
   return { score, textScore: effectiveTextScore, notes: parts.join(" | ") };
+}
+
+// ── Exported Category Compatibility (used by pricingEngine for historical matches) ──
+export const INCOMPATIBLE_CATEGORY_GROUPS: Record<string, string[]> = {
+  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
+  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
+  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
+  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
+};
+
+export function areCategoriesCompatible(catA: string, catB: string): boolean {
+  if (catA === 'general' || catB === 'general') return true;
+  const blocked = INCOMPATIBLE_CATEGORY_GROUPS[catA];
+  if (blocked && blocked.includes(catB)) return false;
+  const reverse = INCOMPATIBLE_CATEGORY_GROUPS[catB];
+  if (reverse && reverse.includes(catA)) return false;
+  return true;
 }

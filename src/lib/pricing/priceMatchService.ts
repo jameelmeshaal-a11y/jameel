@@ -15,16 +15,16 @@ export interface PriceMatch {
 const cache = new Map<string, { matches: PriceMatch[]; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-export async function matchItemToLibrary(description: string, unit?: string): Promise<PriceMatch[]> {
+export async function matchItemToLibrary(description: string, unit?: string, itemNo?: string): Promise<PriceMatch[]> {
   if (!description || description.length < 3) return [];
 
-  const key = `${description}|${unit || ""}`;
+  const key = `${description}|${unit || ""}|${itemNo || ""}`;
   const cached = cache.get(key);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.matches;
 
   try {
     const { data, error } = await supabase.functions.invoke("match-price-item", {
-      body: { item_name: description, unit },
+      body: { item_name: description, unit, item_no: itemNo },
     });
     if (error) return [];
     const matches: PriceMatch[] = data?.matches || [];
@@ -41,11 +41,12 @@ export function matchItemDebounced(
   description: string,
   unit: string | undefined,
   callback: (matches: PriceMatch[]) => void,
-  delay = 300
+  delay = 300,
+  itemNo?: string,
 ) {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(async () => {
-    const matches = await matchItemToLibrary(description, unit);
+    const matches = await matchItemToLibrary(description, unit, itemNo);
     callback(matches);
   }, delay);
 }
