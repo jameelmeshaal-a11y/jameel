@@ -408,10 +408,13 @@ function findHistoricalMatch(
   unit: string,
   historicalMap: HistoricalMapping[],
   rateLibrary: RateLibraryItem[],
-): { item: RateLibraryItem; confidence: number; overrideType?: string | null } | null {
+): { item: RateLibraryItem; confidence: number } | null {
   const itemText = normalizeArabicText(description + " " + (descriptionEn || ""));
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
+
+  // Category of the incoming BoQ item
+  const boqCategory = detectCategory(description + " " + (descriptionEn || ""));
 
   // Dimension check helper — returns true if dimensions conflict
   const hasDimensionConflict = (linked: RateLibraryItem): boolean => {
@@ -433,7 +436,16 @@ function findHistoricalMatch(
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 93, overrideType: hist.overrideType };
+      if (!linked) continue;
+      // GOVERNANCE: Category hard gate for historical matches
+      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
+        console.log(`[A.5] Category conflict in historical: "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
+        continue;
+      }
+      // GOVERNANCE DECISION: Historical matches provide PRICES ONLY.
+      // They do NOT inherit manual override protection (overrideType removed).
+      // Reason: Prevents stale manual overrides from propagating to new items.
+      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
     }
   }
 
@@ -448,7 +460,13 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (linked && !hasDimensionConflict(linked)) return { item: linked, confidence: 90, overrideType: hist.overrideType };
+      if (!linked) continue;
+      // GOVERNANCE: Category hard gate
+      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
+        console.log(`[A.5] Category conflict in historical (Jaccard): "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
+        continue;
+      }
+      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
     }
   }
 
