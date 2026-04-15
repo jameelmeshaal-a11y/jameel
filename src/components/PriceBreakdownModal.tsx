@@ -667,6 +667,38 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           </div>
         </div>
       </div>
+
+      {/* Approval Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent dir="rtl" onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>تأكيد اعتماد السعر</AlertDialogTitle>
+            <AlertDialogDescription>
+              البند: <strong>{item.item_no}</strong> — سعر الوحدة الجديد: <strong>{formatNumber(getUnitRate(values))} ريال</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium">ملاحظات أو شروط الاعتماد (اختياري)</label>
+            <Textarea
+              placeholder="مثال: تمت مراجعة السعر مع المقاول واعتماده بناءً على عرض رقم..."
+              value={approvalNotes}
+              onChange={(e) => setApprovalNotes(e.target.value)}
+              dir="rtl"
+              className="min-h-[100px]"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              هذه الملاحظات تُحفظ في سجل المراجعة ولا يمكن حذفها
+            </p>
+          </div>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <Button onClick={handleSave} disabled={saving} className="gap-2">
+              <CheckCircle className="w-4 h-4" />
+              {saving ? "جاري الحفظ..." : "تأكيد الاعتماد"}
+            </Button>
+            <AlertDialogCancel disabled={saving}>إلغاء</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
