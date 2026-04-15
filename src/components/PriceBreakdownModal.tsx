@@ -62,6 +62,8 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [correctionNote, setCorrectionNote] = useState("");
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [approvalNotes, setApprovalNotes] = useState("");
   const { user } = useAuth();
   const [autoRebalance, setAutoRebalance] = useState(true);
 
