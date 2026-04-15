@@ -630,7 +630,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           <div className="flex flex-col gap-2 pt-2">
             {editing ? (
               <div className="flex gap-2">
-                <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
+                <Button className="flex-1 gap-2" onClick={() => setShowConfirmDialog(true)} disabled={saving || !hasChanges}>
                   <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ"}
                 </Button>
                 <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setTotalCostInput(""); setEditing(false); }}>
