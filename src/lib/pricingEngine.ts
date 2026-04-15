@@ -17,7 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+import { findRateLibraryMatchV3, areCategoriesCompatible } from "./pricing/matchingV3";
 import { parseDimensions, compareDimensions } from "./pricing/synonyms";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────

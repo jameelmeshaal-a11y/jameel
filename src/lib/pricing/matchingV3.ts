@@ -826,3 +826,24 @@ function scoreCandidate(
 
   return { score, textScore: effectiveTextScore, notes: parts.join(" | ") };
 }
+
+// ── Exported Category Compatibility (used by pricingEngine for historical matches) ──
+export const INCOMPATIBLE_CATEGORY_GROUPS: Record<string, string[]> = {
+  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
+  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
+  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
+  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
+  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
+  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
+};
+
+export function areCategoriesCompatible(catA: string, catB: string): boolean {
+  if (catA === 'general' || catB === 'general') return true;
+  const blocked = INCOMPATIBLE_CATEGORY_GROUPS[catA];
+  if (blocked && blocked.includes(catB)) return false;
+  const reverse = INCOMPATIBLE_CATEGORY_GROUPS[catB];
+  if (reverse && reverse.includes(catA)) return false;
+  return true;
+}
