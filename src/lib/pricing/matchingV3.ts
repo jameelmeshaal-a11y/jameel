@@ -240,6 +240,44 @@ export function findRateLibraryMatchV3(
     electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
   };
 
+  // ── Pre-scan: item_no Hard Override ──────────────────────────────────
+  // If item_no precisely matches a library name (≥95%) with unit match,
+  // return immediately at confidence 99. This prevents long descriptions
+  // from overriding the precise item name.
+  const cleanItemNoForOverride = itemNo?.trim();
+  if (cleanItemNoForOverride && cleanItemNoForOverride.length >= 4 && cleanItemNoForOverride !== description) {
+    for (const candidate of rateLibrary) {
+      if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
+      
+      // Category hard gate still applies
+      const candidateCatIsGen = candidate.category === 'general' || ARABIC_GENERAL_CATEGORIES.has(candidate.category);
+      const boqCatIsGen = category === 'general' || ARABIC_GENERAL_CATEGORIES.has(category);
+      if (!candidateCatIsGen && !boqCatIsGen) {
+        const blocked = INCOMPATIBLE_GROUPS[category];
+        if (blocked && blocked.includes(candidate.category)) continue;
+        const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
+        if (reverseBlocked && reverseBlocked.includes(category)) continue;
+      }
+
+      const itemNoSim = Math.max(
+        textSimilarity(cleanItemNoForOverride, candidate.standard_name_ar || ""),
+        textSimilarity(cleanItemNoForOverride, candidate.standard_name_en || ""),
+        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_ar || "")),
+        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_en || "")),
+        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNoForOverride, a) : 0),
+      );
+
+      if (itemNoSim >= 0.95) {
+        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}%`);
+        return {
+          item: candidate,
+          confidence: 99,
+          conflictNotes: linkedConflictNote,
+        };
+      }
+    }
+  }
+
   for (const candidate of rateLibrary) {
     // Unit gate — hard gate for units
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
