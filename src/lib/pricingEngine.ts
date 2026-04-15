@@ -414,7 +414,7 @@ function findHistoricalMatch(
   const normalizedItemUnit = normalizeUnit(unit);
 
   // Category of the incoming BoQ item
-  const boqCategory = detectCategory(description + " " + (descriptionEn || ""));
+  const boqCategory = detectCategory(description + " " + (descriptionEn || "")).category;
 
   // Dimension check helper — returns true if dimensions conflict
   const hasDimensionConflict = (linked: RateLibraryItem): boolean => {
