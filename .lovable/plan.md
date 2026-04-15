@@ -1,57 +1,51 @@
 
 
-# إضافة نافذة تأكيد الاعتماد مع ملاحظات
+# إضافة Propagation 2 محصورة بنفس ملف جدول الكميات
 
-## الملخص
+## التغيير
 
-عند الضغط على "حفظ" في نافذة تعديل السعر (`PriceBreakdownModal`), ستظهر نافذة تأكيد وسيطة تحتوي على:
-- حقل نصي لكتابة ملاحظات أو شروط قبل الاعتماد
-- زر "تأكيد الاعتماد" وزر "إلغاء"
-- الملاحظات تُحفظ في `pricing_audit_log` مع سجل الاعتماد
+### Migration: تحديث `save_manual_price`
 
-## التغييرات
+إضافة كتلة UPDATE ثانية بعد Propagation 1 (المطابقة بـ `extract_sub_item`) — تستهدف البنود المرتبطة بنفس `linked_rate_id` **داخل نفس الملف فقط**:
 
-### 1. `src/components/PriceBreakdownModal.tsx`
-
-**أ.** إضافة state جديد:
-```typescript
-const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-const [approvalNotes, setApprovalNotes] = useState("");
+```sql
+-- Propagation 2: Same library item, same BoQ file only
+UPDATE public.boq_items bi
+SET
+    unit_rate = p_unit_rate,
+    total_price = round(p_unit_rate * bi.quantity, 2),
+    materials = p_materials, labor = p_labor,
+    equipment = p_equipment, logistics = p_logistics,
+    risk = p_risk, profit = p_profit,
+    status = 'approved',
+    override_type = 'manual',
+    source = 'manual',
+    confidence = 100,
+    override_at = now(),
+    override_by = p_user_id,
+    override_reason = 'موروث من تسعير يدوي — مرتبط بنفس بند المكتبة',
+    notes = concat_ws(' | ', bi.notes, '🔒 محمي يدوياً — موروث من بند ' || coalesce(v_item.item_no, p_item_id::text))
+WHERE bi.linked_rate_id = v_library_id
+  AND bi.id <> p_item_id
+  AND bi.boq_file_id = v_item.boq_file_id
+  AND (bi.override_type IS NULL OR bi.override_type != 'manual');
 ```
 
-**ب.** تغيير زر "حفظ" (سطر 626) ليفتح نافذة التأكيد بدلاً من استدعاء `handleSave` مباشرة:
-```typescript
-onClick={() => setShowConfirmDialog(true)}
+يُضاف مباشرة بعد `GET DIAGNOSTICS v_linked_count = ROW_COUNT;` الحالي، مع تحديث العدّاد:
+
+```sql
+GET DIAGNOSTICS v_linked_count = ROW_COUNT;
+
+-- Propagation 2 here...
+
+v_linked_count := v_linked_count + v_linked_count_2;
 ```
 
-**ج.** إضافة `AlertDialog` يظهر عند `showConfirmDialog = true`:
-- عنوان: "تأكيد اعتماد السعر"
-- وصف: البند + السعر الجديد
-- حقل `Textarea` لملاحظات الاعتماد
-- زر "تأكيد الاعتماد" → يستدعي `handleSave` مع حفظ `approvalNotes`
-- زر "إلغاء" → يغلق النافذة
+### ملف واحد: Migration SQL فقط
 
-**د.** تعديل `handleSave` لحفظ `approvalNotes` في `pricing_audit_log`:
-```typescript
-// بعد نجاح save_manual_price، إدراج سجل في pricing_audit_log
-await supabase.from("pricing_audit_log").insert({
-  item_id: item.id,
-  project_id: boqFileProjectId,
-  action_type: "manual_approve",
-  edit_type: "manual_override",
-  change_scope: "item_and_linked",
-  reason: approvalNotes || null,
-  changed_by: user?.id,
-  old_values: { unit_rate: item.unit_rate },
-  new_values: { unit_rate: unitRate },
-  changed_fields: { ...overridesObj },
-  affected_items_count: 1 + (result?.linked_items_count || 0),
-});
-```
-
-### 2. لا تغيير في قاعدة البيانات
-
-جدول `pricing_audit_log` موجود بالفعل ويحتوي على عمود `reason` — مناسب تماماً لحفظ ملاحظات الاعتماد.
-
-## ملف واحد فقط: `src/components/PriceBreakdownModal.tsx`
+| العنصر | التفصيل |
+|---|---|
+| النطاق | نفس `boq_file_id` فقط — لا يمتد لمشاريع أخرى |
+| الشرط | `linked_rate_id` متطابق + نفس الملف + ليس محمياً مسبقاً |
+| النتيجة | Ws04/05/06 ستحصل على `override_type = 'manual'` + `confidence = 100` + شارة 🔒 |
 
