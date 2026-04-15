@@ -182,6 +182,66 @@ Deno.serve(async (req) => {
     // ── Layer 3: Detect query category for gate ──
     const queryCategory = detectItemCategory(item_name);
 
+    // ── Pre-scan: item_no Hard Override ──────────────────────────────
+    // If item_no matches a library name at ≥95% with unit match → return immediately
+    const cleanItemNo = (item_no || "").trim();
+    if (cleanItemNo && cleanItemNo.length >= 4) {
+      const itemNoNorm = normalizeArabicText(cleanItemNo);
+      const itemNoTokens = tokenize(cleanItemNo);
+
+      for (const item of (items || []) as LibraryItem[]) {
+        // Unit gate
+        if (unit && item.unit) {
+          const normUnit = (u: string) => u.toLowerCase().replace(/[^a-z0-9أ-ي]/g, "");
+          if (normUnit(unit) !== normUnit(item.unit)) continue;
+        }
+        // Category gate
+        if (!areCategoriesCompatible(queryCategory, item.category)) continue;
+
+        // Check item_no against library names
+        const namesToCheck = [
+          item.standard_name_ar,
+          item.standard_name_en,
+          ...(item.item_name_aliases || []),
+        ].filter(Boolean);
+
+        let bestItemNoScore = 0;
+        for (const name of namesToCheck) {
+          const nameNorm = normalizeArabicText(name);
+          if (itemNoNorm === nameNorm && itemNoNorm.length > 0) {
+            bestItemNoScore = 100;
+            break;
+          }
+          const nameTokens = tokenize(name);
+          const jaccard = jaccardTokens(itemNoTokens, nameTokens);
+          bestItemNoScore = Math.max(bestItemNoScore, jaccard * 100);
+          if (itemNoNorm.length > 0 && nameNorm.length > 0) {
+            const maxLen = Math.max(itemNoNorm.length, nameNorm.length);
+            const levSim = (1 - levenshtein(itemNoNorm, nameNorm) / maxLen) * 100;
+            bestItemNoScore = Math.max(bestItemNoScore, levSim);
+          }
+        }
+
+        if (bestItemNoScore >= 95) {
+          return new Response(JSON.stringify({
+            matches: [{
+              id: item.id,
+              name_ar: item.standard_name_ar,
+              name_en: item.standard_name_en,
+              category: item.category,
+              unit: item.unit,
+              unit_price: item.target_rate || item.base_rate,
+              item_code: item.item_code || "",
+              confidence: 99,
+              match_level: "auto" as const,
+            }],
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+
     const matches: MatchResult[] = [];
 
     for (const item of (items || []) as LibraryItem[]) {
