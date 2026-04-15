@@ -948,12 +948,12 @@ export async function resetBoQPricing(boqFileId: string): Promise<{ reset: numbe
   if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
   if (!items || items.length === 0) return { reset: 0, protected: 0 };
 
-  const manualItems = items.filter(i => i.override_type === 'manual');
-  const normalItems = items.filter(i => i.override_type !== 'manual');
+  // GOVERNANCE: Full reset — clear ALL items including manual overrides
+  // User explicitly confirmed via AlertDialog — no exceptions
+  const allItems = items;
 
-  // Only reset non-manual items in batches of 100
-  for (let i = 0; i < normalItems.length; i += 100) {
-    const batch = normalItems.slice(i, i + 100).map(item => item.id);
+  for (let i = 0; i < allItems.length; i += 100) {
+    const batch = allItems.slice(i, i + 100).map(item => item.id);
     const { error: updateErr } = await supabase
       .from("boq_items")
       .update({
@@ -982,7 +982,7 @@ export async function resetBoQPricing(boqFileId: string): Promise<{ reset: numbe
     if (updateErr) throw new Error(`Failed to reset pricing batch: ${updateErr.message}`);
   }
 
-  return { reset: normalItems.length, protected: manualItems.length };
+  return { reset: allItems.length, protected: 0 };
 }
 
 // ─── Reprice Unpriced Items Only ────────────────────────────────────────────
