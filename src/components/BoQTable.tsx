@@ -197,8 +197,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         }
       }
 
-      const protectionMsg = protectedCount > 0 ? ` | تم الحفاظ على ${protectedCount} تعديل يدوي ✅` : "";
-      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}${protectionMsg}`);
+      const protectionMsg = "";
+      toast.success(`تم إعادة التسعير الشاملة: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)} | تم تصفير جميع البنود بلا استثناء ✅`);
       
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
