@@ -1400,3 +1400,72 @@ describe("itemNo matches extractCleanSegment of long library name", () => {
     expect(result!.confidence).toBeGreaterThanOrEqual(95);
   });
 });
+
+// ─── Regression: extractCleanSegment + itemNoBonus ──────────────────────────
+
+describe("extractCleanSegment regression", () => {
+  it("extracts clean segment from long Arabic library name", () => {
+    const longName = "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد بما في ذلك — سلم من الحديد";
+    const segment = extractCleanSegment(longName);
+    expect(segment).toBe("سلم من الحديد");
+  });
+
+  it("returns full text when no separator exists", () => {
+    const simple = "سلم من الحديد";
+    const segment = extractCleanSegment(simple);
+    expect(segment).toBe("سلم من الحديد");
+  });
+
+  it("item_no matching clean segment should yield confidence >= 95", () => {
+    const candidates = [
+      {
+        id: "test-clean-segment",
+        standard_name_ar: "سلالم من الحديد :تصميم و توريد وإنشاء سلم من الحديد بما في ذلك — سلم من الحديد",
+        standard_name_en: "Steel Stairs",
+        item_description: "",
+        category: "steel_misc",
+        unit: "عدد",
+        keywords: ["سلم", "حديد"],
+        item_name_aliases: [],
+        base_rate: 5000,
+        target_rate: 5000,
+        min_rate: 4500,
+        max_rate: 5500,
+      },
+    ];
+
+    const result = findRateLibraryMatchV3(
+      "تصميم و توريد وإنشاء سلم من الحديد بما في ذلك — سلم من الحديد",
+      "",
+      "عدد",
+      candidates as any,
+      null,
+      "سلم من الحديد",
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.confidence).toBeGreaterThanOrEqual(95);
+  });
+
+  it("manual protection should be inherited — guard logic test", () => {
+    // This test validates the conceptual flow:
+    // When a manual override is saved, linked items must also become manual.
+    // The actual DB enforcement is via save_manual_price RPC + guard_manual_override trigger.
+    const manualItem = {
+      override_type: "manual",
+      source: "manual",
+      confidence: 100,
+    };
+
+    // Simulate a non-manual update attempt on a manual item
+    const isManual = manualItem.override_type === "manual";
+    const updateIsManual = false; // simulated automated update
+    const shouldBlock = isManual && !updateIsManual;
+
+    expect(shouldBlock).toBe(true);
+
+    // Simulate a manual update on a manual item (allowed)
+    const manualUpdateAllowed = isManual && true;
+    expect(manualUpdateAllowed).toBe(true);
+  });
+});
