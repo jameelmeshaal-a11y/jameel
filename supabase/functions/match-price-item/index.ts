@@ -151,7 +151,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { item_name, unit } = await req.json();
+    const { item_name, unit, item_no } = await req.json();
     if (!item_name || typeof item_name !== "string") {
       return new Response(JSON.stringify({ error: "item_name is required" }), {
         status: 400,
