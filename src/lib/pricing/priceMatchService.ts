@@ -15,10 +15,10 @@ export interface PriceMatch {
 const cache = new Map<string, { matches: PriceMatch[]; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-export async function matchItemToLibrary(description: string, unit?: string): Promise<PriceMatch[]> {
+export async function matchItemToLibrary(description: string, unit?: string, itemNo?: string): Promise<PriceMatch[]> {
   if (!description || description.length < 3) return [];
 
-  const key = `${description}|${unit || ""}`;
+  const key = `${description}|${unit || ""}|${itemNo || ""}`;
   const cached = cache.get(key);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.matches;
 
