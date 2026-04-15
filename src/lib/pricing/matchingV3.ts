@@ -220,6 +220,12 @@ export function findRateLibraryMatchV3(
   }
   const viableCandidates: ScoredCandidate[] = [];
 
+  // ── Arabic General Categories (always compatible) ──────────────────────
+  const ARABIC_GENERAL_CATEGORIES = new Set([
+    'تشطيبات', 'عام', 'أعمال معمارية', 'أعمال كهربائية',
+    'أعمال ميكانيكية', 'أعمال صحية', 'أعمال مدنية',
+  ]);
+
   // ── INCOMPATIBLE_GROUPS Hard Gate ──────────────────────────────────────
   // Prevents cross-category matches that are logically impossible.
   // fire_fighting is NOT blocked for doors (fire-rated doors exist).
@@ -240,14 +246,19 @@ export function findRateLibraryMatchV3(
     if (!unitMatch) continue;
 
     // Category incompatibility hard gate
-    const blockedCategories = INCOMPATIBLE_GROUPS[category];
-    if (blockedCategories && blockedCategories.includes(candidate.category)) {
-      continue; // ⛔ category-hard-gate: skip incompatible category
-    }
-    // Reverse check: candidate's category blocks the BoQ category
-    const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
-    if (reverseBlocked && reverseBlocked.includes(category)) {
-      continue; // ⛔ reverse category-hard-gate
+    // Arabic library categories are always compatible (treated as general)
+    const candidateCatIsGeneral = candidate.category === 'general' || ARABIC_GENERAL_CATEGORIES.has(candidate.category);
+    const boqCatIsGeneral = category === 'general' || ARABIC_GENERAL_CATEGORIES.has(category);
+    if (!candidateCatIsGeneral && !boqCatIsGeneral) {
+      const blockedCategories = INCOMPATIBLE_GROUPS[category];
+      if (blockedCategories && blockedCategories.includes(candidate.category)) {
+        continue; // ⛔ category-hard-gate: skip incompatible category
+      }
+      // Reverse check: candidate's category blocks the BoQ category
+      const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
+      if (reverseBlocked && reverseBlocked.includes(category)) {
+        continue; // ⛔ reverse category-hard-gate
+      }
     }
 
     if (isAccessHatchItem) {

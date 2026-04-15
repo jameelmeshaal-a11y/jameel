@@ -81,6 +81,13 @@ function detectItemCategory(name: string): DetectedCategory {
   return "general";
 }
 
+// ─── Arabic General Categories (treated as compatible with everything) ───────
+
+const ARABIC_GENERAL_CATEGORIES = new Set([
+  'تشطيبات', 'عام', 'أعمال معمارية', 'أعمال كهربائية',
+  'أعمال ميكانيكية', 'أعمال صحية', 'أعمال مدنية',
+]);
+
 // ─── Category Compatibility Gate ────────────────────────────────────────────
 
 const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
@@ -96,6 +103,11 @@ const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
 
 function areCategoriesCompatible(queryCategory: string, libraryCategory: string): boolean {
   if (queryCategory === "general" || libraryCategory === "general") return true;
+  // Arabic library categories are treated as general — always compatible
+  if (ARABIC_GENERAL_CATEGORIES.has(libraryCategory)) return true;
+  if (ARABIC_GENERAL_CATEGORIES.has(queryCategory)) return true;
+  // If category not in INCOMPATIBLE_GROUPS at all, treat as general
+  if (!(queryCategory in INCOMPATIBLE_GROUPS) && !(libraryCategory in INCOMPATIBLE_GROUPS)) return true;
   const blocked = INCOMPATIBLE_GROUPS[queryCategory];
   if (blocked && blocked.includes(libraryCategory)) return false;
   const reverseBlocked = INCOMPATIBLE_GROUPS[libraryCategory];
