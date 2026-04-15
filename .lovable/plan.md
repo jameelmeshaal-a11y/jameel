@@ -1,56 +1,69 @@
 
 
-# بوابة تحقق متعددة المراحل — 4 طبقات
+# خطة تحديث سياسة التسعير — حوكمة مشددة (نهائية)
 
-## ترتيب التنفيذ (حسب طلبك): الطبقة 1 ← 4 ← 3 ← 2
+## المشاكل الجذرية
 
----
-
-### الطبقة 1: تنظيف البيانات (Migration SQL)
-
-فك ارتباط 17 بنداً مرتبطة خطأً بسجل `8db5d710` (أحواض، مراحيض، مراوح، نوافذ). إعادتها لـ `pending` لإعادة تسعيرها بشكل صحيح.
+1. **فئات المكتبة العربية** (`تشطيبات`, `عام`, `أعمال معمارية`) غير موجودة في `INCOMPATIBLE_GROUPS` — لكنها أيضاً ليست `"general"` حرفياً → `areCategoriesCompatible` تمررها. المشكلة الحقيقية: `resetBoQPricing` يتخطى البنود ذات `override_type = 'manual'` فلا تُعاد مطابقتها أبداً بعد التنظيف.
+2. **Propagation 2** تنشر الحماية بعتبة `similarity > 0.25` — متساهلة جداً.
+3. **ترتيب أعمدة الجدول** لا يطابق الإكسل الأصلي.
 
 ---
 
-### الطبقة 4: INCOMPATIBLE_GROUPS في `matchingV3.ts`
+## التغييرات (5 محاور)
 
-إضافة hard gate قبل إضافة أي مرشح لـ `viableCandidates`:
+### 1. Migration SQL — تشديد Propagation 2 في `save_manual_price`
 
-```typescript
-const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
-  doors: ['windows','plumbing_fixtures','plumbing_pipes','hvac_equipment','hvac_ductwork'],
-  windows: ['doors','plumbing_fixtures','plumbing_pipes','hvac_equipment','steel_misc'],
-  plumbing_fixtures: ['doors','windows','hvac_equipment','steel_misc','electrical_fixtures'],
-  hvac_equipment: ['doors','windows','plumbing_fixtures','steel_misc'],
-};
-```
-
-**ملاحظتك مطبّقة**: `fire_fighting` غير موجودة في قائمة `doors` — أبواب الحريق لن تُحظر.
-
----
-
-### الطبقة 3: Category Gate في Edge Function
-
-**الملف**: `supabase/functions/match-price-item/index.ts`
-
-1. إضافة دالة `detectItemCategory(name)` (regex-based)
-2. إضافة `areCategoriesCompatible()` بنفس INCOMPATIBLE_GROUPS
-3. تخطي أي سجل مكتبة ذي فئة غير متوافقة قبل حساب النقاط
-
----
-
-### الطبقة 2: Propagation 2 بشرط similarity (Migration SQL — الأخيرة)
-
-**ملاحظتك مطبّقة**: `pg_trgm` غير مفعّل حالياً — سيُفعّل أولاً. `extract_sub_item` موجودة بالفعل ✓
+تحديث شروط Propagation 2 لتكون:
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+AND similarity(public.extract_sub_item(bi.description), v_sub_item_name) > 0.85
+AND bi.unit = v_item.unit
 ```
 
-ثم تحديث Propagation 2 في `save_manual_price` بإضافة:
-```sql
-AND similarity(public.extract_sub_item(bi.description), v_sub_item_name) > 0.25
-```
+**القواعد**: الحماية اليدوية لا تنتشر إلا عند:
+- تشابه الوصف ≥ **85%**
+- تطابق **الوحدة** تماماً
+- نفس **الملف** (`boq_file_id`)
+- البند ليس محمياً مسبقاً
+
+### 2. معالجة فئات المكتبة العربية
+
+**الملفات**: `supabase/functions/match-price-item/index.ts` + `src/lib/pricing/matchingV3.ts`
+
+إضافة قائمة `ARABIC_GENERAL_CATEGORIES` تحتوي الفئات العربية الشائعة في المكتبة (`تشطيبات`, `عام`, `أعمال معمارية`, `أعمال كهربائية`, `أعمال ميكانيكية`, `أعمال صحية`). أي فئة غير موجودة في `INCOMPATIBLE_GROUPS` وغير إنجليزية معروفة → تُعامل كـ `general` متوافقة.
+
+### 3. إصلاح إعادة التسعير الشاملة
+
+**الملف**: `src/lib/pricingEngine.ts`
+
+في `resetBoQPricing`: إزالة فلتر `manualItems` — إعادة التسعير الشاملة تصفر **كل البنود** بلا استثناء (بما فيها `override_type = 'manual'`). الكود الحالي يفصل `manualItems` عن `normalItems` ولا يمسها — سيُعدّل ليشمل الجميع.
+
+### 4. تحديث أعمدة جدول الكميات
+
+**الملف**: `src/components/BoQTable.tsx`
+
+إعادة ترتيب أعمدة `<thead>` و`<tbody>` لتطابق الإكسل:
+
+| # | العمود |
+|---|---|
+| 1 | # (ترقيم تسلسلي) |
+| 2 | رقم القسم (إذا توفر) |
+| 3 | رقم البند + شارة 🔒 |
+| 4 | وصف البند |
+| 5 | الوحدة |
+| 6 | الكمية |
+| 7 | سعر الوحدة |
+| 8 | السعر الإجمالي |
+| 9 | **الفئة** (يبقى ظاهراً للتأكد) |
+| 10 | المطابقة (شارات ✅🟡🔴🔒) |
+| 11 | الموثوقية + الحالة |
+
+**تغيير الترتيب الحالي**: نقل عمود "المطابقة" بعد "السعر الإجمالي" بدلاً من قبل "الوحدة". نقل عمود "الفئة" بعد "السعر الإجمالي" وقبل "المطابقة". **بدون** عمود "السعر الأفرادي كتابة".
+
+### 5. حفظ سياسة الحوكمة في الذاكرة
+
+تحديث ملفات الذاكرة بالقواعد الجديدة المشددة.
 
 ---
 
@@ -58,7 +71,17 @@ AND similarity(public.extract_sub_item(bi.description), v_sub_item_name) > 0.25
 
 | الملف | التغيير |
 |---|---|
-| Migration SQL | تنظيف بيانات + `pg_trgm` + تحديث `save_manual_price` |
-| `src/lib/pricing/matchingV3.ts` | INCOMPATIBLE_GROUPS hard gate |
-| `supabase/functions/match-price-item/index.ts` | detectItemCategory + areCategoriesCompatible |
+| Migration SQL | تشديد Propagation 2 (`similarity > 0.85` + `unit =`) |
+| `supabase/functions/match-price-item/index.ts` | `ARABIC_GENERAL_CATEGORIES` → compatible |
+| `src/lib/pricing/matchingV3.ts` | نفس `ARABIC_GENERAL_CATEGORIES` |
+| `src/lib/pricingEngine.ts` | `resetBoQPricing` يصفر كل شيء بلا استثناء |
+| `src/components/BoQTable.tsx` | إعادة ترتيب الأعمدة + إبقاء الفئة ظاهرة |
+
+## قواعد الحوكمة المشددة
+
+1. **لا ينتشر سعر يدوي** إلا إذا: تشابه وصف ≥ 85% **و** وحدة متطابقة **و** نفس الملف
+2. **لا تُربط فئات متعارضة** — بوابة صارمة في 3 طبقات (client + edge function + DB)
+3. **إعادة التسعير الشاملة** تصفر كل شيء بلا استثناء — تعيد المطابقة من الصفر
+4. **فئات المكتبة العربية** تُعامل كمتوافقة عامة — لا تُحظر
+5. **عمود الفئة يبقى ظاهراً** في الجدول للتحقق والمراجعة
 
