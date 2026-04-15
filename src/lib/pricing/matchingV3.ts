@@ -227,18 +227,8 @@ export function findRateLibraryMatchV3(
   ]);
 
   // ── INCOMPATIBLE_GROUPS Hard Gate ──────────────────────────────────────
-  // Prevents cross-category matches that are logically impossible.
-  // fire_fighting is NOT blocked for doors (fire-rated doors exist).
-  const INCOMPATIBLE_GROUPS: Record<string, string[]> = {
-    doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
-    windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
-    plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-    plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-    hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-    hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-    electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
-    electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
-  };
+  // Uses the module-level INCOMPATIBLE_CATEGORY_GROUPS (exported for pricingEngine)
+  const INCOMPATIBLE_GROUPS = INCOMPATIBLE_CATEGORY_GROUPS;
 
   // ── Pre-scan: item_no Hard Override ──────────────────────────────────
   // If item_no precisely matches a library name (≥95%) with unit match,
