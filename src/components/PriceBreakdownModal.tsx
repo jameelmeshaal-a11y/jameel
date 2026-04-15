@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import { formatNumber } from "@/lib/mockData";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -57,6 +62,8 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [correctionNote, setCorrectionNote] = useState("");
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [approvalNotes, setApprovalNotes] = useState("");
   const { user } = useAuth();
   const [autoRebalance, setAutoRebalance] = useState(true);
 
@@ -336,6 +343,26 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
         console.warn("[Save] Auto-sync stale items failed:", syncErr);
       }
 
+      // Audit log with approval notes
+      try {
+        await supabase.from("pricing_audit_log").insert({
+          item_id: item.id,
+          project_id: projectId,
+          action_type: "manual_approve",
+          edit_type: "manual_override",
+          change_scope: "item_and_linked",
+          reason: approvalNotes || correctionNote || null,
+          changed_by: user?.id || null,
+          old_values: { unit_rate: item.unit_rate, total_price: item.total_price },
+          new_values: { unit_rate: unitRate, total_price: totalPrice },
+          changed_fields: overridesObj,
+          affected_items_count: 1 + (result?.linked_items_count || 0),
+          master_rate_updated: true,
+        });
+      } catch (auditErr) {
+        console.warn("[Save] Audit log failed:", auditErr);
+      }
+
       const libMsg = result?.is_new
         ? "تم إنشاء بند جديد في المكتبة"
         : "تم تحديث المكتبة";
@@ -343,6 +370,8 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       toast.success(`✅ ${libMsg}${syncMsg} — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
 
       setEditing(false);
+      setShowConfirmDialog(false);
+      setApprovalNotes("");
       onUpdated?.();
       onClose();
     } catch (err: any) {
@@ -623,7 +652,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           <div className="flex flex-col gap-2 pt-2">
             {editing ? (
               <div className="flex gap-2">
-                <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
+                <Button className="flex-1 gap-2" onClick={() => setShowConfirmDialog(true)} disabled={saving || !hasChanges}>
                   <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ"}
                 </Button>
                 <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setTotalCostInput(""); setEditing(false); }}>
@@ -638,6 +667,38 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           </div>
         </div>
       </div>
+
+      {/* Approval Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent dir="rtl" onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>تأكيد اعتماد السعر</AlertDialogTitle>
+            <AlertDialogDescription>
+              البند: <strong>{item.item_no}</strong> — سعر الوحدة الجديد: <strong>{formatNumber(getUnitRate(values))} ريال</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium">ملاحظات أو شروط الاعتماد (اختياري)</label>
+            <Textarea
+              placeholder="مثال: تمت مراجعة السعر مع المقاول واعتماده بناءً على عرض رقم..."
+              value={approvalNotes}
+              onChange={(e) => setApprovalNotes(e.target.value)}
+              dir="rtl"
+              className="min-h-[100px]"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              هذه الملاحظات تُحفظ في سجل المراجعة ولا يمكن حذفها
+            </p>
+          </div>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <Button onClick={handleSave} disabled={saving} className="gap-2">
+              <CheckCircle className="w-4 h-4" />
+              {saving ? "جاري الحفظ..." : "تأكيد الاعتماد"}
+            </Button>
+            <AlertDialogCancel disabled={saving}>إلغاء</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
