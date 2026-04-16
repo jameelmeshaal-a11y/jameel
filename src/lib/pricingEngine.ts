@@ -492,7 +492,7 @@ export async function runPricingEngine(
   }
   // Also include library items with library-level approval metadata
   for (const libItem of rateLibrary) {
-    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+    if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
     }
   }
@@ -540,11 +540,11 @@ export async function runPricingEngine(
       continue;
     }
 
-    // 3. Manual override protection
-    if (hasManualOverride(block.primaryRow)) {
+    // 3. Manual override + approved_library protection
+    if (hasManualOverride(block.primaryRow) || (block.primaryRow as any).source === 'approved_library') {
       const overrideUpdate = {
-        status: "needs_review",
-        notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي محفوظ",
+        status: "approved",
+        notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي أو سعر معتمد من المكتبة 🔒",
       };
       await supabase.from("boq_items").update(overrideUpdate).eq("id", block.primaryRow.id);
       onItemPriced?.(block.primaryRow.id, overrideUpdate);
@@ -606,7 +606,7 @@ export async function runPricingEngine(
 
       // Check if this item is approved via sources OR library-level metadata
       const isApprovedRate = sourceResolution.method === "approved"
-        || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+        || matchedItem.source_type === 'Approved'
         || !!matchedItem.approved_at;
 
       if (isApprovedRate) {
@@ -746,7 +746,7 @@ export async function runPricingEngine(
       total_price: cost.totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: cost.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: (matchedItem?.is_locked && matchedItem?.source_type === 'Approved') ? "approved_library" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
       notes: cost.explanation,
@@ -884,40 +884,48 @@ export async function runPricingEngine(
 export async function resetBoQPricing(boqFileId: string): Promise<number> {
   const { data: items, error: fetchErr } = await supabase
     .from("boq_items")
-    .select("id, quantity, unit, item_no")
+    .select("id, quantity, unit, item_no, override_type, source")
     .eq("boq_file_id", boqFileId);
 
   if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
   if (!items || items.length === 0) return 0;
 
-  const { error: updateErr } = await supabase
-    .from("boq_items")
-    .update({
-      unit_rate: null,
-      total_price: null,
-      materials: null,
-      labor: null,
-      equipment: null,
-      logistics: null,
-      risk: null,
-      profit: null,
-      confidence: null,
-      source: null,
-      linked_rate_id: null,
-      location_factor: null,
-      notes: null,
-      status: "pending",
-      override_type: null,
-      override_reason: null,
-      override_by: null,
-      override_at: null,
-      manual_overrides: null,
-    })
-    .eq("boq_file_id", boqFileId);
+  // Separate manual/approved_library items from regular items
+  const manualItems = items.filter(i => i.override_type === 'manual' || i.source === 'approved_library');
+  const regularItems = items.filter(i => i.override_type !== 'manual' && i.source !== 'approved_library');
 
-  if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
+  if (regularItems.length > 0) {
+    const regularIds = regularItems.map(i => i.id);
+    const { error: updateErr } = await supabase
+      .from("boq_items")
+      .update({
+        unit_rate: null,
+        total_price: null,
+        materials: null,
+        labor: null,
+        equipment: null,
+        logistics: null,
+        risk: null,
+        profit: null,
+        confidence: null,
+        source: null,
+        linked_rate_id: null,
+        location_factor: null,
+        notes: null,
+        status: "pending",
+        override_type: null,
+        override_reason: null,
+        override_by: null,
+        override_at: null,
+        manual_overrides: null,
+      })
+      .in("id", regularIds);
 
-  return items.length;
+    if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
+  }
+
+  console.log(`🔄 Reset: ${regularItems.length} بند تم إعادة تعيينه، ${manualItems.length} تعديل يدوي/معتمد محمي 🔒`);
+  return regularItems.length;
 }
 
 // ─── Reprice Unpriced Items Only ────────────────────────────────────────────
@@ -961,7 +969,7 @@ export async function repriceUnpricedItems(
     if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
   }
   for (const libItem of rateLibrary) {
-    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+    if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
     }
   }
@@ -975,6 +983,9 @@ export async function repriceUnpricedItems(
   for (let i = 0; i < unpricedRows.length; i++) {
     const row = unpricedRows[i];
     onProgress?.(i + 1, unpricedRows.length);
+
+    // Guard: skip manual overrides and approved_library items
+    if ((row as any).override_type === 'manual' || (row as any).source === 'approved_library') continue;
 
     const description = row.description || "";
     const descriptionEn = row.description_en || "";
@@ -1014,7 +1025,7 @@ export async function repriceUnpricedItems(
     const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
 
     const isApprovedRate = sourceResolution.method === "approved"
-      || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+      || matchedItem.source_type === 'Approved'
       || !!matchedItem.approved_at;
 
     const effectiveRate = isApprovedRate
@@ -1045,7 +1056,7 @@ export async function repriceUnpricedItems(
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: matchConfidence >= 70 ? "library-high" : "library-medium",
+      source: (matchedItem.is_locked && matchedItem.source_type === 'Approved') ? "approved_library" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
       linked_rate_id: matchedItem.id,
       status: itemStatus,
       notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
@@ -1089,6 +1100,18 @@ export async function repriceSingleItem(
 
   if (itemErr || !item) throw new Error("لم يتم العثور على البند");
 
+  // Guard: skip manual overrides and approved_library items
+  if ((item as any).override_type === 'manual' || (item as any).source === 'approved_library') {
+    return {
+      success: false,
+      unitRate: item.unit_rate,
+      totalPrice: item.total_price,
+      confidence: item.confidence || 100,
+      source: "manual_protected",
+      matchedName: null,
+    };
+  }
+
   // 2. Fetch dependencies in parallel
   const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
     supabase.from("rate_library").select("*"),
@@ -1108,7 +1131,7 @@ export async function repriceSingleItem(
     if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
   }
   for (const libItem of rateLibrary) {
-    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
+    if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
     }
   }
@@ -1271,7 +1294,7 @@ export async function repriceSingleItem(
   const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
 
   const isApprovedRate = sourceResolution.method === "approved"
-    || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
+    || matchedItem.source_type === 'Approved'
     || !!matchedItem.approved_at;
 
   const effectiveRate = isApprovedRate
