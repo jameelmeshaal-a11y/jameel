@@ -1,7 +1,7 @@
 /**
  * Matching V3 — Comprehensive test suite.
- * Tests: dimension parsing, synonym detection, anti-confusion, scoring.
- * Regression: ensures V3 logic doesn't break expected behaviors.
+ * Tests: dimension parsing, synonym detection, anti-confusion, scoring,
+ * AND V3.1 stages A→E (item_no, category gate, extractCleanSegment, historical map).
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -13,7 +13,12 @@ import {
   buildEnrichedDescription,
   extractParentContext,
 } from "./synonyms";
-import { findRateLibraryMatchV3 } from "./matchingV3";
+import {
+  findRateLibraryMatchV3,
+  areCategoriesCompatible,
+  extractCleanSegment,
+  type HistoricalMappingV3,
+} from "./matchingV3";
 
 // ─── Dimension Parsing ──────────────────────────────────────────────────────
 
@@ -172,6 +177,54 @@ describe("Parent Context", () => {
     const longDesc = "توريد وتركيب أنابيب صرف صحي UPVC قطر 20 مم";
     const result = buildEnrichedDescription(longDesc, "[PARENT: header]", 4);
     expect(result).toBe(longDesc);
+  });
+});
+
+// ─── extractCleanSegment ────────────────────────────────────────────────────
+
+describe("extractCleanSegment", () => {
+  it("extracts last segment after —", () => {
+    expect(extractCleanSegment("أعمال معمارية — أبواب — باب خشب MD-05")).toBe("باب خشب MD-05");
+  });
+
+  it("extracts last segment after /", () => {
+    expect(extractCleanSegment("plumbing/pipes/UPVC 20mm")).toBe("UPVC 20mm");
+  });
+
+  it("returns original for no separator", () => {
+    expect(extractCleanSegment("باب خشب MD-05")).toBe("باب خشب MD-05");
+  });
+
+  it("skips very short segments", () => {
+    expect(extractCleanSegment("أعمال — أب")).toBe("أعمال");
+  });
+});
+
+// ─── areCategoriesCompatible ────────────────────────────────────────────────
+
+describe("areCategoriesCompatible", () => {
+  it("doors ≠ windows", () => {
+    expect(areCategoriesCompatible("doors", "windows")).toBe(false);
+  });
+
+  it("plumbing ≠ windows", () => {
+    expect(areCategoriesCompatible("plumbing", "windows")).toBe(false);
+  });
+
+  it("concrete ≠ earthworks", () => {
+    expect(areCategoriesCompatible("concrete", "earthworks")).toBe(false);
+  });
+
+  it("same category is compatible", () => {
+    expect(areCategoriesCompatible("doors", "doors")).toBe(true);
+  });
+
+  it("general is compatible with anything", () => {
+    expect(areCategoriesCompatible("general", "doors")).toBe(true);
+  });
+
+  it("sub-categories are compatible (doors_wood vs doors)", () => {
+    expect(areCategoriesCompatible("doors_wood", "doors")).toBe(true);
   });
 });
 
@@ -334,6 +387,60 @@ const mockLibrary = [
     item_code: "MD-14",
     item_description: null,
   },
+  // Window item for cross-category test
+  {
+    id: "lib-window-al",
+    category: "windows",
+    standard_name_ar: "نافذة ألمنيوم مقاس 1200*1200مم",
+    standard_name_en: "Aluminum Window 1200x1200mm",
+    unit: "عدد",
+    base_rate: 800,
+    base_city: "الرياض",
+    target_rate: 800,
+    min_rate: 500,
+    max_rate: 1100,
+    materials_pct: 60,
+    labor_pct: 20,
+    equipment_pct: 5,
+    logistics_pct: 5,
+    risk_pct: 5,
+    profit_pct: 5,
+    keywords: ["نافذة", "ألمنيوم", "window"],
+    is_locked: false,
+    weight_class: "medium",
+    complexity: "medium",
+    source_type: "Approved",
+    item_name_aliases: null,
+    item_code: null,
+    item_description: null,
+  },
+  // Concrete item for cross-category test
+  {
+    id: "lib-concrete-found",
+    category: "concrete",
+    standard_name_ar: "خرسانة مسلحة للقواعد",
+    standard_name_en: "Reinforced Concrete for Foundations",
+    unit: "م3",
+    base_rate: 2500,
+    base_city: "الرياض",
+    target_rate: 2500,
+    min_rate: 2000,
+    max_rate: 3000,
+    materials_pct: 55,
+    labor_pct: 25,
+    equipment_pct: 10,
+    logistics_pct: 5,
+    risk_pct: 3,
+    profit_pct: 2,
+    keywords: ["خرسانة", "قواعد", "concrete"],
+    is_locked: false,
+    weight_class: "heavy",
+    complexity: "medium",
+    source_type: "Approved",
+    item_name_aliases: null,
+    item_code: null,
+    item_description: null,
+  },
 ] as any[];
 
 describe("findRateLibraryMatchV3", () => {
@@ -444,10 +551,188 @@ describe("findRateLibraryMatchV3", () => {
       "قطر 20 مم", "", "م.ط", "plumbing",
       mockLibrary,
     );
-    // With context should match the correct item
     expect(withCtx).not.toBeNull();
     expect(withCtx?.item.id).toBe("lib-upvc-20");
-    // Both may hit the 99 cap, so just verify context produces a valid match
     expect(withCtx!.confidence).toBeGreaterThanOrEqual(noCtx?.confidence ?? 0);
+  });
+});
+
+// ─── V3.1 Stage A→E Tests ───────────────────────────────────────────────────
+
+describe("Stage A: item_no exact match", () => {
+  it("item_no exact match → 98% bypasses different category", () => {
+    // item_no = "MD-05" should match lib-door-md05 even if we pass wrong category
+    const result = findRateLibraryMatchV3(
+      "بند عام غير مرتبط", "", "عدد", "plumbing", // wrong category
+      mockLibrary, null, undefined, null,
+      "MD-05", // item_no
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-door-md05");
+    expect(result?.confidence).toBe(98);
+  });
+
+  it("item_no bypasses different description", () => {
+    const result = findRateLibraryMatchV3(
+      "وصف مختلف تماماً لا علاقة له بالأبواب", "", "عدد", "doors",
+      mockLibrary, null, undefined, null,
+      "MD-14",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-door-md14");
+    expect(result?.confidence).toBe(98);
+  });
+});
+
+describe("Stage B: INCOMPATIBLE_GROUPS category gate", () => {
+  it("doors ≠ windows — blocks cross-category match", () => {
+    // A door description should not match a window item even with similar text
+    const result = findRateLibraryMatchV3(
+      "نافذة ألمنيوم مقاس 1200*1200مم", "", "عدد", "doors",
+      mockLibrary,
+    );
+    // Should NOT match the window item when category is "doors"
+    if (result) {
+      expect(result.item.id).not.toBe("lib-window-al");
+    }
+  });
+
+  it("plumbing ≠ windows — blocks cross-category", () => {
+    const result = findRateLibraryMatchV3(
+      "نافذة ألمنيوم", "", "عدد", "plumbing",
+      mockLibrary,
+    );
+    if (result) {
+      expect(result.item.category).not.toBe("windows");
+    }
+  });
+
+  it("concrete ≠ earthworks — blocks cross-category", () => {
+    // Create a temporary earthworks item
+    const earthworksLib = [...mockLibrary, {
+      id: "lib-earthwork-1",
+      category: "earthworks",
+      standard_name_ar: "حفر أساسات",
+      standard_name_en: "Foundation Excavation",
+      unit: "م3",
+      base_rate: 50, base_city: "الرياض", target_rate: 50,
+      min_rate: 30, max_rate: 80,
+      materials_pct: 10, labor_pct: 40, equipment_pct: 40,
+      logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+      keywords: ["حفر", "أساسات"], is_locked: false,
+      weight_class: "heavy", complexity: "low",
+      source_type: "Approved",
+      item_name_aliases: null, item_code: null, item_description: null,
+    }] as any[];
+
+    const result = findRateLibraryMatchV3(
+      "خرسانة مسلحة للقواعد", "", "م3", "concrete",
+      earthworksLib,
+    );
+    // Should match concrete, not earthworks
+    if (result) {
+      expect(result.item.category).not.toBe("earthworks");
+    }
+  });
+});
+
+describe("Stage C: extractCleanSegment in scoring", () => {
+  it("hierarchical description → extractCleanSegment gets correct match", () => {
+    const result = findRateLibraryMatchV3(
+      "أعمال صحية — صمام بوابة نحاسي قطر 25 مم", "", "عدد", "plumbing",
+      mockLibrary,
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-gate-valve-25");
+  });
+});
+
+describe("Stage D: concept conflict in scoring", () => {
+  it("pump ≠ sprinkler concept conflict", () => {
+    // This tests anti-confusion: pendent vs sidewall sprinkler
+    const pendentLib = mockLibrary.concat([{
+      id: "lib-pendent-sprinkler",
+      category: "fire_protection",
+      standard_name_ar: "رشاش حريق متدلي قطر 15 مم",
+      standard_name_en: "Pendent Sprinkler 15mm",
+      unit: "عدد",
+      base_rate: 120, base_city: "الرياض", target_rate: 120,
+      min_rate: 80, max_rate: 160,
+      materials_pct: 70, labor_pct: 15, equipment_pct: 5,
+      logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+      keywords: ["رشاش", "متدلي", "حريق"], is_locked: false,
+      weight_class: "light", complexity: "low",
+      source_type: "Approved",
+      item_name_aliases: null, item_code: null, item_description: null,
+    }, {
+      id: "lib-sidewall-sprinkler",
+      category: "fire_protection",
+      standard_name_ar: "رشاش حريق جانبي قطر 15 مم",
+      standard_name_en: "Sidewall Sprinkler 15mm",
+      unit: "عدد",
+      base_rate: 140, base_city: "الرياض", target_rate: 140,
+      min_rate: 90, max_rate: 180,
+      materials_pct: 70, labor_pct: 15, equipment_pct: 5,
+      logistics_pct: 5, risk_pct: 3, profit_pct: 2,
+      keywords: ["رشاش", "جانبي", "حريق"], is_locked: false,
+      weight_class: "light", complexity: "low",
+      source_type: "Approved",
+      item_name_aliases: null, item_code: null, item_description: null,
+    }]) as any[];
+
+    const result = findRateLibraryMatchV3(
+      "رشاش حريق متدلي قطر 15 مم", "", "عدد", "fire_protection",
+      pendentLib,
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-pendent-sprinkler");
+    // Should NOT match sidewall
+    expect(result?.item.id).not.toBe("lib-sidewall-sprinkler");
+  });
+});
+
+describe("Stage E: historical map lookup", () => {
+  it("historical approved record → 95%", () => {
+    const historicalMap: HistoricalMappingV3[] = [{
+      normalizedDesc: "صمام بوابه نحاسي قطر 25 مم",
+      tokens: ["صمام", "بوابه", "نحاسي", "قطر", "25", "مم"],
+      linkedRateId: "lib-gate-valve-25",
+      unit: "عدد",
+    }];
+
+    const result = findRateLibraryMatchV3(
+      "صمام بوابة نحاسي قطر 25 مم", "", "عدد", "plumbing",
+      mockLibrary, null, undefined, null, null, historicalMap,
+    );
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-gate-valve-25");
+    // Historical match should give 95
+    expect(result?.confidence).toBeGreaterThanOrEqual(90);
+  });
+});
+
+describe("Dimension mismatch hard skip", () => {
+  it("WxH dimension mismatch → hard skip", () => {
+    // Door with 900x2100 should not match 1200x2100
+    const result = findRateLibraryMatchV3(
+      "باب خشب مقاس 900*2100مم", "", "عدد", "doors",
+      mockLibrary,
+    );
+    // Should match MD-05 (900x2100), not MD-14 (1200x2100)
+    if (result) {
+      expect(result.item.id).toBe("lib-door-md05");
+    }
+  });
+});
+
+describe("linkedRateId fallback", () => {
+  it("invalid linkedRateId is ignored gracefully", () => {
+    const result = findRateLibraryMatchV3(
+      "صمام بوابة نحاسي قطر 25 مم", "", "عدد", "plumbing",
+      mockLibrary, "non-existent-id",
+    );
+    // Should fall through to scoring and still find a match
+    expect(result).not.toBeNull();
+    expect(result?.item.id).toBe("lib-gate-valve-25");
   });
 });
