@@ -819,7 +819,23 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </span>
                   )}
                 </td>
-                <td className="text-center">{isPriced ? getStatusIcon(item.status) : <span className="text-[10px] text-muted-foreground">—</span>}</td>
+                <td className="text-center">
+                  {isPriced ? (
+                    <div className="flex items-center justify-center gap-1">
+                      {item.override_type === "manual" && (
+                        <span title={`معتمد بواسطة ${item.override_by || '—'} بتاريخ ${item.override_at ? new Date(item.override_at).toLocaleDateString('ar-SA') : '—'} — مقفل`}>
+                          <Lock className="w-3.5 h-3.5 text-warning" />
+                        </span>
+                      )}
+                      {item.source === "approved_library" && (
+                        <span title="سعر معتمد من مكتبة مقفلة — لن يتغير تلقائياً">
+                          <BadgeCheck className="w-3.5 h-3.5 text-success" />
+                        </span>
+                      )}
+                      {getStatusIcon(item.status)}
+                    </div>
+                  ) : <span className="text-[10px] text-muted-foreground">—</span>}
+                </td>
                 <td>
                   <div className="flex items-center gap-0.5">
                     {isPriced && !isArchived && (
