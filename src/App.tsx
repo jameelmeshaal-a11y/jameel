@@ -16,7 +16,6 @@ import QACenterPage from "./pages/QACenterPage";
 import SystemArchitecturePage from "./pages/SystemArchitecturePage";
 import QAHealthPage from "./pages/QAHealthPage";
 import LoginPage from "./pages/LoginPage";
-import ResetPasswordPage from "./pages/ResetPasswordPage";
 import AdminDashboard from "./pages/AdminDashboard";
 import ProjectReportPage from "./pages/ProjectReportPage";
 import NotFound from "./pages/NotFound";
@@ -34,7 +33,6 @@ const App = () => (
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
-              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/qa" element={<QAHealthPage />} />
               <Route path="/health" element={<QAHealthPage />} />
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

@@ -202,23 +202,6 @@ export function textSimilarity(a: string, b: string): number {
   return Math.max(jaccard, overlap);
 }
 
-/**
- * Strict Jaccard similarity — NO overlap coefficient.
- * Used exclusively for item_no Hard Override decisions to prevent
- * single-token matches (e.g., "كمرات" matching "حفر وخنادق للأساسات والكمرات").
- */
-export function strictJaccard(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const tokensA = tokenize(a);
-  const tokensB = tokenize(b);
-  if (tokensA.length === 0 || tokensB.length === 0) return 0;
-  const setA = new Set(tokensA);
-  const setB = new Set(tokensB);
-  const intersection = [...setA].filter(w => setB.has(w)).length;
-  const union = new Set([...setA, ...setB]).size;
-  return union > 0 ? intersection / union : 0;
-}
-
 // ─── Similar Item Search ────────────────────────────────────────────────────
 
 /**
