@@ -111,8 +111,8 @@ export function areCategoriesCompatible(catA: string, catB: string): boolean {
  */
 export function extractCleanSegment(desc: string): string {
   if (!desc) return desc;
-  // Split by common Arabic hierarchy separators
-  const separators = /[—\/\-–]/;
+  // Split by common Arabic hierarchy separators (— and –) but NOT single hyphen (used in codes like MD-05)
+  const separators = /[—–\/]/;
   const parts = desc.split(separators).map(p => p.trim()).filter(p => p.length >= 3);
   if (parts.length === 0) return desc;
   return parts[parts.length - 1];
