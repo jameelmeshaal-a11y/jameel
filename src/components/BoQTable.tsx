@@ -544,7 +544,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
           {bmsView === 'expanded' && <BMSAnalysisPanel bmsResult={bmsResult} />}
           {bmsView === 'collapsed' && (
             <div className="rounded-lg border bg-muted/30 p-2 text-xs text-muted-foreground">
-              BMS: {bmsResult.totalPoints} نقطة · {bmsResult.items.length} بند · {formatCurrency(bmsResult.totalCost)}
+              BMS: {bmsResult.totalPoints} نقطة · {bmsResult.matches.length} بند · {formatCurrency(bmsResult.totalCost)}
             </div>
           )}
         </div>
