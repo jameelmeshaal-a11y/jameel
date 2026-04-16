@@ -17,6 +17,7 @@
 
 import {
   textSimilarity,
+  strictJaccard,
   normalizeUnit,
   tokenize,
   charNgramSimilarity,
@@ -249,16 +250,27 @@ export function findRateLibraryMatchV3(
         if (reverseBlocked && reverseBlocked.includes(category)) continue;
       }
 
+      // Collect all candidate texts for comparison
+      const candidateTexts = [
+        candidate.standard_name_ar || "",
+        candidate.standard_name_en || "",
+        extractCleanSegment(candidate.standard_name_ar || ""),
+        extractCleanSegment(candidate.standard_name_en || ""),
+        ...(candidate.item_name_aliases || []).filter(Boolean),
+      ];
+
       const itemNoSim = Math.max(
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_ar || ""),
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_en || ""),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_ar || "")),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_en || "")),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNoForOverride, a) : 0),
+        ...candidateTexts.map(t => t ? strictJaccard(cleanItemNoForOverride, t) : 0),
       );
 
-      if (itemNoSim >= 0.95) {
-        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}%`);
+      // GOVERNANCE: minTokens >= 3 for BOTH sides to prevent single-token overrides
+      const itemNoTokenCount = tokenize(cleanItemNoForOverride).length;
+      const bestCandidateTokenCount = Math.max(
+        ...candidateTexts.map(t => t ? tokenize(t).length : 0),
+      );
+
+      if (itemNoSim >= 0.95 && itemNoTokenCount >= 3 && bestCandidateTokenCount >= 3) {
+        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}% (Jaccard strict)`);
         return {
           item: candidate,
           confidence: 99,
@@ -311,17 +323,29 @@ export function findRateLibraryMatchV3(
     let itemNoBonus = 0;
     const cleanItemNo = itemNo?.trim();
     if (cleanItemNo && cleanItemNo.length >= 4) {
+      // Collect all candidate texts for comparison
+      const loopCandidateTexts = [
+        candidate.standard_name_ar || "",
+        candidate.standard_name_en || "",
+        extractCleanSegment(candidate.standard_name_ar || ""),
+        extractCleanSegment(candidate.standard_name_en || ""),
+        ...(candidate.item_name_aliases || []).filter(Boolean),
+        ...(candidate.item_name_aliases || []).filter(Boolean).map(a => extractCleanSegment(a)),
+      ];
+
       const itemNoSim = Math.max(
-        textSimilarity(cleanItemNo, candidate.standard_name_ar || ""),
-        textSimilarity(cleanItemNo, candidate.standard_name_en || ""),
-        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_ar || "")),
-        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_en || "")),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, a) : 0),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, extractCleanSegment(a)) : 0),
+        ...loopCandidateTexts.map(t => t ? strictJaccard(cleanItemNo, t) : 0),
       );
-      if (itemNoSim >= 0.95) {
+
+      // GOVERNANCE: minTokens >= 3 for BOTH sides
+      const loopItemNoTokens = tokenize(cleanItemNo).length;
+      const loopCandTokens = Math.max(
+        ...loopCandidateTexts.map(t => t ? tokenize(t).length : 0),
+      );
+
+      if (itemNoSim >= 0.95 && loopItemNoTokens >= 3 && loopCandTokens >= 3) {
         // GOVERNANCE: item_no exact match = HARD OVERRIDE — return immediately
-        console.log(`[V3] ⭐ itemNo loop override: "${cleanItemNo}" → "${candidate.standard_name_ar}" (${(itemNoSim * 100).toFixed(0)}%)`);
+        console.log(`[V3] ⭐ itemNo loop override: "${cleanItemNo}" → "${candidate.standard_name_ar}" (${(itemNoSim * 100).toFixed(0)}% Jaccard strict)`);
         return {
           item: candidate,
           confidence: 99,
@@ -819,14 +843,17 @@ function scoreCandidate(
 
 // ── Exported Category Compatibility (used by pricingEngine for historical matches) ──
 export const INCOMPATIBLE_CATEGORY_GROUPS: Record<string, string[]> = {
-  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
-  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
-  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
-  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
+  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork', 'earthwork'],
+  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc', 'earthwork'],
+  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures', 'earthwork'],
+  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures', 'earthwork'],
+  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc', 'earthwork'],
+  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc', 'earthwork'],
+  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'earthwork'],
+  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows', 'earthwork'],
+  earthwork: ['concrete', 'slab_concrete', 'doors', 'windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork', 'electrical_fixtures', 'electrical_panels', 'steel_misc'],
+  concrete: ['earthwork'],
+  slab_concrete: ['earthwork'],
 };
 
 export function areCategoriesCompatible(catA: string, catB: string): boolean {
