@@ -745,6 +745,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      categories_compatible: {
+        Args: { cat_a: string; cat_b: string }
+        Returns: boolean
+      }
+      detect_category_from_description: {
+        Args: { desc_text: string }
+        Returns: string
+      }
       extract_sub_item: { Args: { full_desc: string }; Returns: string }
       has_role: {
         Args: {
