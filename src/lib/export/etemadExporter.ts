@@ -126,11 +126,11 @@ function colNumToLetter(col: number): string {
  */
 async function fallbackInjectViaJSZip(
   zip: JSZip,
-  injections: Array<{ row: number; col: number; value: number }>
+  injections: Array<{ row: number; col: number; value: number }>,
+  sheetPath: string = "xl/worksheets/sheet1.xml"
 ): Promise<ArrayBuffer> {
-  const sheetPath = "xl/worksheets/sheet1.xml";
   const sheetFile = zip.file(sheetPath);
-  if (!sheetFile) throw new Error("لا توجد ورقة sheet1.xml في الملف الأصلي");
+  if (!sheetFile) throw new Error("لا توجد ورقة عمل في الملف الأصلي");
 
   let xml = await sheetFile.async("string");
 
@@ -166,22 +166,39 @@ async function discoverColumnsViaJSZip(zip: JSZip): Promise<{
   unitRateCol: number | null;
   totalCol: number | null;
   itemNoCol: number | null;
+  sheetPath: string;
 }> {
-  const sheetXml = await zip.file("xl/worksheets/sheet1.xml")!.async("string");
+  // Find the first sheet that contains header markers
+  const sheetFiles = Object.keys(zip.files).filter(f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"));
+  let sheetXml = "";
+  let sheetPath = "xl/worksheets/sheet1.xml";
+  for (const sf of sheetFiles) {
+    const xml = await zip.file(sf)!.async("string");
+    if (/الكمية|الكميه|Qty|Quantity/i.test(xml)) {
+      sheetXml = xml;
+      sheetPath = sf;
+      break;
+    }
+  }
+  if (!sheetXml && sheetFiles.length > 0) {
+    sheetPath = sheetFiles[0];
+    sheetXml = await zip.file(sheetPath)!.async("string");
+  }
+  if (!sheetXml) throw new Error("لا توجد أوراق عمل في الملف");
+
   let sharedStrings: string[] = [];
   const sstFile = zip.file("xl/sharedStrings.xml");
   if (sstFile) {
     const sstXml = await sstFile.async("string");
     const matches = sstXml.match(/<si>[\s\S]*?<\/si>/g) || [];
     sharedStrings = matches.map(si => {
-      // Strip XML, concatenate all <t> contents
       const tParts = si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
       return tParts.map(t => t.replace(/<t[^>]*>/, "").replace(/<\/t>/, "")).join("");
     });
   }
 
   const qtyMarkers = ["الكمية", "الكميه", "Qty", "Quantity"];
-  const itemMarkers = ["البند", "الوصف", "Description", "Item"];
+  const itemMarkers = ["البند", "الوصف", "Description", "Item", "الوحدة"];
   const unitRateNames = ["سعر الوحدة", "سعر الوحده", "Unit Rate", "Unit Price", "السعر"];
   const totalNames = ["الإجمالي", "المبلغ", "Total", "Amount", "إجمالي"];
   const itemNoNames = ["رقم البند", "م", "No", "Item No", "#"];
@@ -204,7 +221,7 @@ async function discoverColumnsViaJSZip(zip: JSZip): Promise<{
     const rowNum = parseInt(m[1]);
     if (rowNum > 20 && headerRow === 1) continue;
     const rowContent = m[2];
-    const cellRegex = /<c\s+r="([A-Z]+)\d+"(?:\s+t="([^"]+)")?[^>]*>([\s\S]*?)<\/c>/g;
+    const cellRegex = /<c\b[^>]*\br="([A-Z]+)\d+"[^>]*(?:\bt="([^"]+)")?[^>]*(?:\/>|>([\s\S]*?)<\/c>)/g;
     const cellTexts: Array<{ col: number; text: string }> = [];
     let cm: RegExpExecArray | null;
     while ((cm = cellRegex.exec(rowContent)) !== null) {
@@ -245,7 +262,7 @@ async function discoverColumnsViaJSZip(zip: JSZip): Promise<{
     }
   }
 
-  return { headerRow, unitRateCol, totalCol, itemNoCol };
+  return { headerRow, unitRateCol, totalCol, itemNoCol, sheetPath };
 }
 
 /**
@@ -327,7 +344,7 @@ export async function exportEtemad(
     // 4. Fallback path: use JSZip directly to inject values into sheet1.xml
     console.warn("[etemadExporter] ExcelJS failed, using JSZip fallback:", excelJsErr);
 
-    const { headerRow, unitRateCol, totalCol, itemNoCol } = await discoverColumnsViaJSZip(zip);
+    const { headerRow, unitRateCol, totalCol, itemNoCol, sheetPath } = await discoverColumnsViaJSZip(zip);
 
     if (!unitRateCol && !totalCol) {
       throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي (fallback)");
@@ -346,7 +363,7 @@ export async function exportEtemad(
       }
     }
 
-    outBuffer = await fallbackInjectViaJSZip(zip, injections);
+    outBuffer = await fallbackInjectViaJSZip(zip, injections, sheetPath);
   }
 
   // 5. Download

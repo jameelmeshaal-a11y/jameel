@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { buildBoQExportSummary, classifyBoQRow } from "@/lib/boqRowClassification";
 import BoQBlockingRowsDialog from "./BoQBlockingRowsDialog";
 import { fixConsistency, useProjectConsistency } from "@/hooks/useConsistencyCheck";
-import BudgetDistributionPanel from "./BudgetDistributionPanel";
+
 import { supabase } from "@/integrations/supabase/client";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import PricingIntegrityReport from "./PricingIntegrityReport";
@@ -488,7 +488,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
   return (
     <div>
-      <BudgetDistributionPanel projectId={projectId} />
+      
 
       {/* Pricing progress bar */}
       {priceableCount > 0 && (
@@ -576,10 +576,32 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                 </Button>
               )}
               {pricedCount > 0 && (
-                <Button variant="outline" size="sm" className="gap-1" onClick={handleIntegrityCheck} disabled={checkingIntegrity || pricing}>
-                  {checkingIntegrity ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
-                  🛡️ فحص السلامة
-                </Button>
+                <>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" size="sm" className="gap-1" disabled={pricing}>
+                        <RotateCcw className="w-3 h-3" /> إعادة تسعير شاملة
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent dir="rtl">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
+                          سيتم تسجيل جميع التغييرات في سجل المراجعة.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  <Button variant="outline" size="sm" className="gap-1" onClick={handleIntegrityCheck} disabled={checkingIntegrity || pricing}>
+                    {checkingIntegrity ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                    🛡️ فحص السلامة
+                  </Button>
+                </>
               )}
             </>
           )}
@@ -804,28 +826,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                       <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)} title="عرض التفاصيل">
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
-                      {!isArchived && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground hover:text-foreground" disabled={pricing} title="إعادة تسعير شاملة">
-                              <RotateCcw className="w-3.5 h-3.5" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent dir="rtl">
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
-                                سيتم تسجيل جميع التغييرات في سجل المراجعة.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                              <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      )}
                     </div>
                   )}
                 </td>
