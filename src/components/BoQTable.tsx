@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X, Lock, BadgeCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -385,6 +385,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       if (activeFilters.has("low_confidence") && !(item.confidence !== null && item.confidence < 70)) return false;
       if (activeFilters.has("unapproved") && !(item.status !== "approved" && item.status !== "descriptive" && isPriceableItem(item))) return false;
       if (activeFilters.has("unpriced") && !(!item.unit_rate || item.unit_rate === 0)) return false;
+      if (activeFilters.has("manual_override") && item.override_type !== "manual") return false;
+      if (activeFilters.has("approved_library") && item.source !== "approved_library") return false;
+      if (activeFilters.has("pending") && item.status !== "pending") return false;
       return true;
     });
 
@@ -653,6 +656,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             { key: "low_confidence", label: "موثوقية منخفضة", color: "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700" },
             { key: "unapproved", label: "غير معتمد", color: "bg-orange-50 text-orange-700 border-orange-300 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700" },
             { key: "unpriced", label: "غير مسعّر", color: "bg-destructive/10 text-destructive border-destructive/30" },
+            { key: "manual_override", label: "🔒 يدوي معتمد", color: "bg-warning/10 text-warning border-warning/30" },
+            { key: "approved_library", label: "✅ مكتبة معتمدة", color: "bg-success/10 text-success border-success/30" },
+            { key: "pending", label: "⏳ pending", color: "bg-muted text-muted-foreground border-border" },
           ].map(f => (
             <button
               key={f.key}
@@ -682,12 +688,14 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
         <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
         <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
         <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+        <span className="flex items-center gap-1"><Lock className="w-3 h-3 text-warning" /> يدوي مقفل</span>
+        <span className="flex items-center gap-1"><BadgeCheck className="w-3 h-3 text-success" /> مكتبة معتمدة</span>
       </div>
 
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
@@ -813,7 +821,23 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </span>
                   )}
                 </td>
-                <td className="text-center">{isPriced ? getStatusIcon(item.status) : <span className="text-[10px] text-muted-foreground">—</span>}</td>
+                <td className="text-center">
+                  {isPriced ? (
+                    <div className="flex items-center justify-center gap-1">
+                      {item.override_type === "manual" && (
+                        <span title={`معتمد بواسطة ${item.override_by || '—'} بتاريخ ${item.override_at ? new Date(item.override_at).toLocaleDateString('ar-SA') : '—'} — مقفل`}>
+                          <Lock className="w-3.5 h-3.5 text-warning" />
+                        </span>
+                      )}
+                      {item.source === "approved_library" && (
+                        <span title="سعر معتمد من مكتبة مقفلة — لن يتغير تلقائياً">
+                          <BadgeCheck className="w-3.5 h-3.5 text-success" />
+                        </span>
+                      )}
+                      {getStatusIcon(item.status)}
+                    </div>
+                  ) : <span className="text-[10px] text-muted-foreground">—</span>}
+                </td>
                 <td>
                   <div className="flex items-center gap-0.5">
                     {isPriced && !isArchived && (
