@@ -17,6 +17,7 @@
 
 import {
   textSimilarity,
+  strictJaccard,
   normalizeUnit,
   tokenize,
   charNgramSimilarity,
