@@ -597,6 +597,39 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           </div>
         </div>
       </div>
+
+      {/* Confirmation AlertDialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>تأكيد اعتماد السعر</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <div className="text-sm font-medium">{item.description?.slice(0, 80)}</div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="p-2 rounded bg-destructive/10 text-center">
+                    <div className="text-xs text-muted-foreground">السعر القديم</div>
+                    <div className="font-mono font-bold">{formatNumber(item.unit_rate || 0)} ريال</div>
+                  </div>
+                  <div className="p-2 rounded bg-success/10 text-center">
+                    <div className="text-xs text-muted-foreground">السعر الجديد</div>
+                    <div className="font-mono font-bold">{formatNumber(getUnitRate(values))} ريال</div>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  سبب التعديل: {correctionNote || "—"}
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogAction onClick={handleConfirmedSave} disabled={saving}>
+              {saving ? "جاري الحفظ..." : "تأكيد الاعتماد"}
+            </AlertDialogAction>
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
