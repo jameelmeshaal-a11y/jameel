@@ -199,8 +199,6 @@ async function discoverColumnsViaJSZip(zip: JSZip): Promise<{
 
   const qtyMarkers = ["الكمية", "الكميه", "Qty", "Quantity"];
   const itemMarkers = ["البند", "الوصف", "Description", "Item", "الوحدة"];
-  const qtyMarkers = ["الكمية", "الكميه", "Qty", "Quantity"];
-  const itemMarkers = ["البند", "الوصف", "Description", "Item"];
   const unitRateNames = ["سعر الوحدة", "سعر الوحده", "Unit Rate", "Unit Price", "السعر"];
   const totalNames = ["الإجمالي", "المبلغ", "Total", "Amount", "إجمالي"];
   const itemNoNames = ["رقم البند", "م", "No", "Item No", "#"];
