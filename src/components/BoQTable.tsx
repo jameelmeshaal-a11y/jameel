@@ -688,12 +688,14 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
         <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
         <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
         <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
+        <span className="flex items-center gap-1"><Lock className="w-3 h-3 text-warning" /> يدوي مقفل</span>
+        <span className="flex items-center gap-1"><BadgeCheck className="w-3 h-3 text-success" /> مكتبة معتمدة</span>
       </div>
 
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
