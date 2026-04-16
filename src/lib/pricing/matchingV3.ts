@@ -250,16 +250,27 @@ export function findRateLibraryMatchV3(
         if (reverseBlocked && reverseBlocked.includes(category)) continue;
       }
 
+      // Collect all candidate texts for comparison
+      const candidateTexts = [
+        candidate.standard_name_ar || "",
+        candidate.standard_name_en || "",
+        extractCleanSegment(candidate.standard_name_ar || ""),
+        extractCleanSegment(candidate.standard_name_en || ""),
+        ...(candidate.item_name_aliases || []).filter(Boolean),
+      ];
+
       const itemNoSim = Math.max(
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_ar || ""),
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_en || ""),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_ar || "")),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_en || "")),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNoForOverride, a) : 0),
+        ...candidateTexts.map(t => t ? strictJaccard(cleanItemNoForOverride, t) : 0),
       );
 
-      if (itemNoSim >= 0.95) {
-        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}%`);
+      // GOVERNANCE: minTokens >= 3 for BOTH sides to prevent single-token overrides
+      const itemNoTokenCount = tokenize(cleanItemNoForOverride).length;
+      const bestCandidateTokenCount = Math.max(
+        ...candidateTexts.map(t => t ? tokenize(t).length : 0),
+      );
+
+      if (itemNoSim >= 0.95 && itemNoTokenCount >= 3 && bestCandidateTokenCount >= 3) {
+        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}% (Jaccard strict)`);
         return {
           item: candidate,
           confidence: 99,
