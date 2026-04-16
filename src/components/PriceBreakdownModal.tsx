@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatNumber } from "@/lib/mockData";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -13,7 +17,6 @@ import {
   type BreakdownValues, type BreakdownField, type RatioSource, type RatioResolution,
 } from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
-import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
 
 interface BoQItemRow {
   id: string;
@@ -55,6 +58,7 @@ const ALL_FIELDS: BreakdownField[] = ["materials", "labor", "equipment", "logist
 export default function PriceBreakdownModal({ item, projectId, ownerMaterials = false, onClose, onUpdated }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [correctionNote, setCorrectionNote] = useState("");
   const [autoRebalance, setAutoRebalance] = useState(true);
 
@@ -248,8 +252,13 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
     ? allBreakdownItems.filter(b => b.key !== "materials")
     : allBreakdownItems;
 
-  const handleSave = async () => {
+  const handleSaveClick = () => {
     if (!hasChanges) return;
+    setShowConfirmDialog(true);
+  };
+
+  const handleConfirmedSave = async () => {
+    setShowConfirmDialog(false);
     setSaving(true);
     try {
       const unitRate = getUnitRate(values);
@@ -258,48 +267,40 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       const overridesObj: Record<string, boolean> = {};
       manualFields.forEach(f => { overridesObj[f] = true; });
 
-      const { error } = await supabase
-        .from("boq_items")
-        .update({
-          materials: values.materials,
-          labor: values.labor,
-          equipment: values.equipment,
-          logistics: values.logistics,
-          risk: values.risk,
-          profit: values.profit,
-          unit_rate: unitRate,
-          total_price: totalPrice,
-          status: "approved",
-          notes: item.notes || "Manual pricing adjustment",
-          manual_overrides: overridesObj,
-          override_at: new Date().toISOString(),
-          override_reason: correctionNote || null,
-          override_type: "manual",
-        })
-        .eq("id", item.id);
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const { data: rpcResult, error } = await supabase.rpc("save_manual_price", {
+        p_item_id: item.id,
+        p_boq_file_id: item.boq_file_id,
+        p_materials: values.materials,
+        p_labor: values.labor,
+        p_equipment: values.equipment,
+        p_logistics: values.logistics,
+        p_risk: values.risk,
+        p_profit: values.profit,
+        p_unit_rate: unitRate,
+        p_total_price: totalPrice,
+        p_manual_overrides: overridesObj,
+        p_correction_note: correctionNote || null,
+        p_user_id: user?.id || null,
+      });
 
       if (error) {
-        console.error("[Save] Error:", error);
+        console.error("[Save RPC] Error:", error);
         toast.error("فشل حفظ التعديل: " + error.message);
         return;
       }
 
-      const syncResult = await syncToRateLibrary({
-        itemId: item.id,
-        boqFileId: item.boq_file_id,
-        values,
-        unitRate,
-        correctionNote: correctionNote || undefined,
-      });
+      const result = typeof rpcResult === 'object' ? rpcResult as any : {};
+      const protectedCount = result?.protected_count || 0;
 
-      if (!syncResult) {
-        await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).then(() => {}, () => {});
-        toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
-        return;
+      if (protectedCount > 0) {
+        toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال | تم تحديث ${protectedCount} بند مشابه 🔒`, { duration: 5000 });
+      } else {
+        toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
       }
 
-      await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
-      toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
       setEditing(false);
       onUpdated?.();
       onClose();
