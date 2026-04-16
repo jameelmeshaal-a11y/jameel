@@ -1317,7 +1317,7 @@ export async function repriceSingleItem(
   }
 
   const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
-  const sourceLabel = matchConfidence >= 70 ? "library-high" : "library-medium";
+  const sourceLabel = (matchedItem.is_locked && matchedItem.source_type === 'Approved') ? "approved_library" : (matchConfidence >= 70 ? "library-high" : "library-medium");
 
   const pricedUpdate = {
     materials, labor, equipment, logistics, risk, profit,
