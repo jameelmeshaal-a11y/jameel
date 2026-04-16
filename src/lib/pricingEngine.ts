@@ -17,8 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { findRateLibraryMatchV3, areCategoriesCompatible } from "./pricing/matchingV3";
-import { parseDimensions, compareDimensions } from "./pricing/synonyms";
+import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
 // Set to false to instantly revert to legacy matching.
@@ -101,7 +100,6 @@ interface HistoricalMapping {
   tokens: string[];
   linkedRateId: string;
   unit: string;
-  overrideType: string | null;
 }
 
 // ─── Rate Library Matching ──────────────────────────────────────────────────
@@ -115,13 +113,12 @@ function findRateLibraryMatch(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
-  itemNo?: string | null,
-): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
+): { item: RateLibraryItem; confidence: number } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
-      rateLibrary, linkedRateId, approvedRateIds, notes, itemNo,
+      rateLibrary, linkedRateId, approvedRateIds, notes,
     );
   }
 
@@ -375,7 +372,7 @@ function libraryItem_risk(item: RateLibraryItem): number {
 async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
   const { data } = await supabase
     .from("boq_items")
-    .select("description, description_en, unit, linked_rate_id, source, override_type")
+    .select("description, description_en, unit, linked_rate_id, source")
     .not("linked_rate_id", "is", null)
     .in("source", ["library-high", "manual", "project_override", "master_update"])
     .limit(2000);
@@ -394,7 +391,6 @@ async function buildHistoricalMap(): Promise<HistoricalMapping[]> {
       tokens: tokenize(d.description + " " + (d.description_en || "")),
       linkedRateId: d.linked_rate_id!,
       unit: d.unit,
-      overrideType: d.override_type ?? null,
     }));
 }
 
@@ -413,39 +409,12 @@ function findHistoricalMatch(
   const itemTokens = tokenize(description + " " + (descriptionEn || ""));
   const normalizedItemUnit = normalizeUnit(unit);
 
-  // Category of the incoming BoQ item
-  const boqCategory = detectCategory(description + " " + (descriptionEn || "")).category;
-
-  // Dimension check helper — returns true if dimensions conflict
-  const hasDimensionConflict = (linked: RateLibraryItem): boolean => {
-    const boqDims = parseDimensions(description + " " + (descriptionEn || ""));
-    const linkedDims = parseDimensions(
-      (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "")
-    );
-    const boqHasWxH = boqDims.some(d => d.type === "dimensions" && d.values.length >= 2);
-    const linkedHasWxH = linkedDims.some(d => d.type === "dimensions" && d.values.length >= 2);
-    if (boqHasWxH && linkedHasWxH && compareDimensions(boqDims, linkedDims) === -1) {
-      console.log(`[A.5] Dimension mismatch: "${description}" vs "${linked.standard_name_ar}" — skipping`);
-      return true;
-    }
-    return false;
-  };
-
   // Pass 1: exact normalized text match
   for (const hist of historicalMap) {
     if (normalizeUnit(hist.unit) !== normalizedItemUnit) continue;
     if (hist.normalizedDesc === itemText) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (!linked) continue;
-      // GOVERNANCE: Category hard gate for historical matches
-      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
-        console.log(`[A.5] Category conflict in historical: "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
-        continue;
-      }
-      // GOVERNANCE DECISION: Historical matches provide PRICES ONLY.
-      // They do NOT inherit manual override protection (overrideType removed).
-      // Reason: Prevents stale manual overrides from propagating to new items.
-      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 93 };
+      if (linked) return { item: linked, confidence: 93 };
     }
   }
 
@@ -460,13 +429,7 @@ function findHistoricalMatch(
 
     if (jaccard >= 0.85) {
       const linked = rateLibrary.find(r => r.id === hist.linkedRateId);
-      if (!linked) continue;
-      // GOVERNANCE: Category hard gate
-      if (!areCategoriesCompatible(boqCategory, linked.category || 'general')) {
-        console.log(`[A.5] Category conflict in historical (Jaccard): "${description}" (${boqCategory}) vs "${linked.standard_name_ar}" (${linked.category}) — skipping`);
-        continue;
-      }
-      if (!hasDimensionConflict(linked)) return { item: linked, confidence: 90 };
+      if (linked) return { item: linked, confidence: 90 };
     }
   }
 
@@ -587,13 +550,6 @@ export async function runPricingEngine(
       continue;
     }
 
-    // 3b. Skip BMS umbrella items — priced in post-processing pass via points engine
-    if (isBMSItem(block.mergedDescription)) {
-      processedCount++;
-      onProgress?.(processedCount, items.length);
-      continue;
-    }
-
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
@@ -607,7 +563,6 @@ export async function runPricingEngine(
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
       (block.primaryRow as any).notes,
-      block.itemNo || (block.primaryRow as any).item_no || null,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
@@ -746,24 +701,14 @@ export async function runPricingEngine(
       continue;
     }
 
-    // 6. Deterministic status assignment — GOVERNANCE: confidence < 70 = Pending
+    // 6. Deterministic status assignment — no AI confidence checks
     let itemStatus: string;
     if (matchConfidence >= 70) {
       itemStatus = "approved";
     } else {
-      // GOVERNANCE: confidence < 70 = Pending — no price written
-      console.warn(`[DRY-RUN] Marking as pending: "${block.mergedDescription.slice(0, 60)}" conf=${matchConfidence}`);
-      const pendingUpdate: Record<string, any> = {
-        ...NULL_PRICING_FIELDS,
-        confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
-        status: "pending",
-        notes: `⏳ تطابق منخفض (${Math.round(matchConfidence)}%) — يحتاج مراجعة يدوية`,
-      };
-      await supabase.from("boq_items").update(pendingUpdate as any).eq("id", block.primaryRow.id);
-      onItemPriced?.(block.primaryRow.id, pendingUpdate);
-      processedCount++;
-      onProgress?.(processedCount, items.length);
-      continue; // ← prevents reaching the general update at line 778
+      // 50-69 range (guaranteed since unmatched items already continued above)
+      itemStatus = "needs_review";
+      cost.explanation += " | ⚠️ تطابق متوسط — يحتاج مراجعة";
     }
 
     // 7. Owner-supplied materials: zero out materials and recalculate
@@ -778,9 +723,7 @@ export async function runPricingEngine(
     }
 
     // 8. Write to primary row in DB
-    // GOVERNANCE DECISION: Historical matches provide PRICES ONLY.
-    // overrideType/"manual" is NOT inherited — prevents stale protection propagation.
-    const pricedUpdate: Record<string, any> = {
+    const pricedUpdate = {
       materials: cost.materials,
       labor: cost.labor,
       equipment: cost.equipment,
@@ -794,35 +737,14 @@ export async function runPricingEngine(
       source: matchConfidence >= 70 ? "library-high" : "library-medium",
       linked_rate_id: matchedItem?.id ?? null,
       status: itemStatus,
-      notes: [
-        (block.primaryRow as any).notes,
-        cost.explanation,
-        libraryMatchResult?.conflictNotes,
-      ].filter(Boolean).join(" | "),
+      notes: cost.explanation,
     };
     const { error: updateError } = await supabase
       .from("boq_items")
-      .update(pricedUpdate as any)
+      .update(pricedUpdate)
       .eq("id", block.primaryRow.id);
 
     if (updateError) throw new Error(`Failed to update item: ${updateError.message}`);
-
-    // ── LAYER 1: Post-Write Integrity Guard ─────────────────────────────────
-    // Verify written rate matches library exactly — force-correct if mismatch
-    if (matchedItem && cost.unitRate !== matchedItem.target_rate) {
-      console.error(`🛑 RATE MISMATCH: wrote ${cost.unitRate} but library has ${matchedItem.target_rate} for "${block.mergedDescription.slice(0, 40)}"`);
-      const correctedRate = matchedItem.target_rate;
-      const correctedTotal = +(correctedRate * block.quantity).toFixed(2);
-      await supabase.from("boq_items").update({
-        unit_rate: correctedRate,
-        total_price: correctedTotal,
-      }).eq("id", block.primaryRow.id);
-      pricedUpdate.unit_rate = correctedRate;
-      pricedUpdate.total_price = correctedTotal;
-      cost.unitRate = correctedRate;
-      cost.totalPrice = correctedTotal;
-    }
-
     onItemPriced?.(block.primaryRow.id, pricedUpdate);
 
     totalValue += cost.totalPrice;
@@ -929,23 +851,6 @@ export async function runPricingEngine(
     await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
   }
 
-  // ── LAYER 2: Auto Integrity Check & Fix after bulk pricing ──────────────
-  try {
-    const { runIntegrityCheck, fixIntegrityIssues } = await import("@/lib/pricing/integrityChecker");
-    const report = await runIntegrityCheck(boqFileId);
-    if (report.summary.byType.rate_deviation > 0) {
-      const deviations = report.issues.filter(i => i.issueType === "rate_deviation");
-      console.log(`🔧 Auto-fixing ${deviations.length} rate deviations after bulk pricing`);
-      await fixIntegrityIssues(deviations, boqFileId);
-      // Recalculate total after fixes
-      if (boqFile) {
-        await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
-      }
-    }
-  } catch (integrityErr) {
-    console.warn("⚠️ Post-pricing integrity check failed (non-blocking):", integrityErr);
-  }
-
   const summary = calculateProjectOverhead(totalValue, projectType);
 
   return {
@@ -964,50 +869,43 @@ export async function runPricingEngine(
  * Completely zeros out all pricing data for a BoQ file.
  * Called before re-pricing to ensure a clean slate — no cached/stale data.
  */
-export async function resetBoQPricing(boqFileId: string): Promise<{ reset: number; protected: number }> {
+export async function resetBoQPricing(boqFileId: string): Promise<number> {
   const { data: items, error: fetchErr } = await supabase
     .from("boq_items")
-    .select("id, quantity, unit, item_no, override_type")
+    .select("id, quantity, unit, item_no")
     .eq("boq_file_id", boqFileId);
 
   if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
-  if (!items || items.length === 0) return { reset: 0, protected: 0 };
+  if (!items || items.length === 0) return 0;
 
-  // GOVERNANCE: Full reset — clear ALL items including manual overrides
-  // User explicitly confirmed via AlertDialog — no exceptions
-  const allItems = items;
+  const { error: updateErr } = await supabase
+    .from("boq_items")
+    .update({
+      unit_rate: null,
+      total_price: null,
+      materials: null,
+      labor: null,
+      equipment: null,
+      logistics: null,
+      risk: null,
+      profit: null,
+      confidence: null,
+      source: null,
+      linked_rate_id: null,
+      location_factor: null,
+      notes: null,
+      status: "pending",
+      override_type: null,
+      override_reason: null,
+      override_by: null,
+      override_at: null,
+      manual_overrides: null,
+    })
+    .eq("boq_file_id", boqFileId);
 
-  for (let i = 0; i < allItems.length; i += 100) {
-    const batch = allItems.slice(i, i + 100).map(item => item.id);
-    const { error: updateErr } = await supabase
-      .from("boq_items")
-      .update({
-        unit_rate: null,
-        total_price: null,
-        materials: null,
-        labor: null,
-        equipment: null,
-        logistics: null,
-        risk: null,
-        profit: null,
-        confidence: null,
-        source: null,
-        linked_rate_id: null,
-        location_factor: null,
-        notes: null,
-        status: "pending",
-        override_type: null,
-        override_reason: null,
-        override_by: null,
-        override_at: null,
-        manual_overrides: null,
-      })
-      .in("id", batch);
+  if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
 
-    if (updateErr) throw new Error(`Failed to reset pricing batch: ${updateErr.message}`);
-  }
-
-  return { reset: allItems.length, protected: 0 };
+  return items.length;
 }
 
 // ─── Reprice Unpriced Items Only ────────────────────────────────────────────
@@ -1066,12 +964,6 @@ export async function repriceUnpricedItems(
     const row = unpricedRows[i];
     onProgress?.(i + 1, unpricedRows.length);
 
-    // Guard: skip manual override items
-    if (row.override_type === 'manual') {
-      console.log(`[RepriceUnpriced] Skipping manual override item ${row.id}`);
-      continue;
-    }
-
     const description = row.description || "";
     const descriptionEn = row.description_en || "";
     const detection = detectCategory(description, descriptionEn);
@@ -1081,7 +973,6 @@ export async function repriceUnpricedItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       row.linked_rate_id, approvedRateIds,
-      undefined, row.item_no || null,
     );
 
     // Historical fallback
@@ -1128,20 +1019,18 @@ export async function repriceUnpricedItems(
 
     const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
 
-    const isInheritedManual2 = (libraryMatchResult as any)?.overrideType === "manual";
-    const repricedUpdate: Record<string, any> = {
+    const repricedUpdate = {
       materials, labor, equipment, logistics, risk, profit,
       unit_rate: unitRate,
       total_price: totalPrice,
       confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
       location_factor: result.locationFactor,
-      source: isInheritedManual2 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
+      source: matchConfidence >= 70 ? "library-high" : "library-medium",
       linked_rate_id: matchedItem.id,
       status: itemStatus,
-      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual2 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
-      ...(isInheritedManual2 ? { override_type: "manual" } : {}),
+      notes: `📚 Repriced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
     };
-    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
+    await supabase.from("boq_items").update(repricedUpdate).eq("id", row.id);
     onItemPriced?.(row.id, repricedUpdate);
 
     newlyPriced++;
@@ -1156,337 +1045,7 @@ export async function repriceUnpricedItems(
   return { pricedCount: newlyPriced, stillUnpricedCount: stillUnpriced };
 }
 
-// ─── Reprice Pending Items (status=pending, including those with existing rates) ──
-
-export async function repricePendingItems(
-  boqFileId: string,
-  cities: string[],
-  onProgress?: (current: number, total: number) => void,
-  onItemPriced?: OnItemPricedCallback,
-): Promise<{ pricedCount: number; stillPendingCount: number; skippedManual: number }> {
-  // 1. Fetch ALL pending rows (includes those with existing rates but no link)
-  const { data: pendingRows, error: fetchErr } = await supabase
-    .from("boq_items")
-    .select("*")
-    .eq("boq_file_id", boqFileId)
-    .eq("status", "pending")
-    .gt("quantity", 0)
-    .order("row_index", { ascending: true });
-
-  if (fetchErr) throw new Error(`Failed to fetch pending items: ${fetchErr.message}`);
-  if (!pendingRows || pendingRows.length === 0) {
-    return { pricedCount: 0, stillPendingCount: 0, skippedManual: 0 };
-  }
-
-  // 2. Fetch library, location factors, sources, historical map in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
-    supabase.from("rate_library").select("*"),
-    fetchLocationFactors(),
-    fetchAllSources(),
-    supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
-    buildHistoricalMap(),
-  ]);
-
-  const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
-  const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
-  const projectCity = cities[0] || "";
-
-  // Build approved rate IDs
-  const approvedRateIds = new Set<string>();
-  for (const [rateId, sources] of sourcesMap.entries()) {
-    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
-  }
-  for (const libItem of rateLibrary) {
-    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
-      approvedRateIds.add(libItem.id);
-    }
-  }
-
-  const locationMatch = resolveLocationFactor(cities, locationFactors);
-  const locFactor = locationMatch.location_factor;
-
-  let newlyPriced = 0;
-  let stillPending = 0;
-  let skippedManual = 0;
-
-  for (let i = 0; i < pendingRows.length; i++) {
-    const row = pendingRows[i];
-    onProgress?.(i + 1, pendingRows.length);
-
-    // Guard: skip manual override items
-    if (row.override_type === 'manual') {
-      skippedManual++;
-      console.log(`[RepricePending] Skipping manual override item ${row.id}`);
-      continue;
-    }
-
-    const description = row.description || "";
-    const descriptionEn = row.description_en || "";
-    const detection = detectCategory(description, descriptionEn);
-
-    // Try library match (V3 with extractCleanSegment)
-    let libraryMatchResult = findRateLibraryMatch(
-      description, descriptionEn, row.unit,
-      detection.category, rateLibrary,
-      row.linked_rate_id, approvedRateIds,
-      undefined, row.item_no || null,
-    );
-
-    // Historical fallback
-    if (!libraryMatchResult) {
-      libraryMatchResult = findHistoricalMatch(
-        description, descriptionEn, row.unit, historicalMap, rateLibrary,
-      );
-    }
-
-    if (!libraryMatchResult) {
-      stillPending++;
-      continue; // Leave row as pending
-    }
-
-    const matchedItem = libraryMatchResult.item;
-    const matchConfidence = libraryMatchResult.confidence;
-
-    // Zero-Rate Guard: skip library matches with rate = 0
-    if (matchedItem.target_rate <= 0) {
-      stillPending++;
-      continue;
-    }
-
-    const itemSources = sourcesMap.get(matchedItem.id) || [];
-    const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
-
-    const isApprovedRate = sourceResolution.method === "approved"
-      || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
-      || !!matchedItem.approved_at;
-
-    const effectiveRate = isApprovedRate
-      ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
-      : (sourceResolution.resolvedRate || matchedItem.target_rate);
-
-    let result = priceFromApprovedRate(
-      effectiveRate, matchedItem, row.quantity, locFactor,
-      matchedItem.base_city || "", projectCity,
-      detection.category,
-    );
-
-    let unitRate = result.unitRate;
-    let totalPrice = result.totalPrice;
-    let { materials, labor, equipment, logistics, risk, profit } = result;
-
-    if (ownerMaterials) {
-      materials = 0;
-      unitRate = +(labor + equipment + logistics + risk + profit).toFixed(2);
-      totalPrice = +(unitRate * row.quantity).toFixed(2);
-    }
-
-    const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
-    const conflictNotes = libraryMatchResult.conflictNotes || "";
-
-    const isInheritedManual3 = (libraryMatchResult as any)?.overrideType === "manual";
-    const repricedUpdate: Record<string, any> = {
-      materials, labor, equipment, logistics, risk, profit,
-      unit_rate: unitRate,
-      total_price: totalPrice,
-      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
-      location_factor: result.locationFactor,
-      source: isInheritedManual3 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
-      linked_rate_id: matchedItem.id,
-      status: itemStatus,
-      notes: `📚 Pending→Priced: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${conflictNotes ? " | " + conflictNotes : ""}${isInheritedManual3 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
-      ...(isInheritedManual3 ? { override_type: "manual" } : {}),
-    };
-    await supabase.from("boq_items").update(repricedUpdate as any).eq("id", row.id);
-    onItemPriced?.(row.id, repricedUpdate);
-
-    newlyPriced++;
-  }
-
-  // Recalculate project total
-  const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
-  if (boqFile) {
-    await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
-  }
-
-  return { pricedCount: newlyPriced, stillPendingCount: stillPending, skippedManual };
-}
-
-// ─── Fix Mislinked Items — unlink items wrongly matched to a library record ──
-
-export async function fixMislinkedItems(
-  libraryId: string,
-  correctItemPattern: RegExp,
-  boqFileId: string,
-  cities: string[],
-  onProgress?: (current: number, total: number) => void,
-  onItemPriced?: OnItemPricedCallback,
-): Promise<{ unlinked: number; repriced: number; stillPending: number; details: { id: string; item_no: string; action: string }[] }> {
-  // 1. Fetch all items linked to this library record
-  const { data: linkedItems, error } = await supabase
-    .from("boq_items")
-    .select("*")
-    .eq("linked_rate_id", libraryId)
-    .eq("boq_file_id", boqFileId)
-    .order("row_index", { ascending: true });
-
-  if (error) throw new Error(`Failed to fetch linked items: ${error.message}`);
-  if (!linkedItems || linkedItems.length === 0) {
-    return { unlinked: 0, repriced: 0, stillPending: 0, details: [] };
-  }
-
-  const details: { id: string; item_no: string; action: string }[] = [];
-  const itemsToReprice: typeof linkedItems = [];
-
-  for (const item of linkedItems) {
-    // Skip manual overrides
-    if (item.override_type === 'manual') {
-      details.push({ id: item.id, item_no: item.item_no, action: "skipped_manual" });
-      continue;
-    }
-
-    // Check if item_no matches the correct pattern (keep these linked)
-    const itemName = item.item_no || "";
-    if (correctItemPattern.test(itemName)) {
-      details.push({ id: item.id, item_no: item.item_no, action: "kept_correct" });
-      continue;
-    }
-
-    // This item is mislinked — unlink and queue for repricing
-    await supabase.from("boq_items").update({
-      linked_rate_id: null,
-      status: "pending",
-      source: null,
-      confidence: 0,
-      unit_rate: null,
-      total_price: null,
-      materials: null, labor: null, equipment: null,
-      logistics: null, risk: null, profit: null,
-      notes: `🔧 [تصحيح مطابقة] فُك الربط عن سجل "${libraryId}" — البند "${itemName}" لا ينتمي لهذا السجل`,
-    }).eq("id", item.id);
-
-    details.push({ id: item.id, item_no: item.item_no, action: "unlinked" });
-    itemsToReprice.push(item);
-  }
-
-  // 2. Reprice unlinked items using V3 engine
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
-    supabase.from("rate_library").select("*"),
-    fetchLocationFactors(),
-    fetchAllSources(),
-    supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
-    buildHistoricalMap(),
-  ]);
-
-  const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
-  const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
-  const projectCity = cities[0] || "";
-
-  const approvedRateIds = new Set<string>();
-  for (const [rateId, sources] of sourcesMap.entries()) {
-    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
-  }
-  for (const libItem of rateLibrary) {
-    if (libItem.approved_at || ['Approved', 'Field-Approved', 'Revised'].includes(libItem.source_type)) {
-      approvedRateIds.add(libItem.id);
-    }
-  }
-
-  const locationMatch = resolveLocationFactor(cities, locationFactors);
-  const locFactor = locationMatch.location_factor;
-
-  let repriced = 0;
-  let stillPending = 0;
-
-  for (let i = 0; i < itemsToReprice.length; i++) {
-    const row = itemsToReprice[i];
-    onProgress?.(i + 1, itemsToReprice.length);
-
-    const description = row.description || "";
-    const descriptionEn = row.description_en || "";
-    const detection = detectCategory(description, descriptionEn);
-
-    let matchResult = findRateLibraryMatch(
-      description, descriptionEn, row.unit,
-      detection.category, rateLibrary,
-      null, approvedRateIds, row.notes,
-      row.item_no || null,
-    );
-
-    if (!matchResult) {
-      matchResult = findHistoricalMatch(description, descriptionEn, row.unit, historicalMap, rateLibrary);
-    }
-
-    if (!matchResult || matchResult.item.target_rate <= 0) {
-      stillPending++;
-      const detail = details.find(d => d.id === row.id);
-      if (detail) detail.action = "unlinked→pending";
-      continue;
-    }
-
-    const matchedItem = matchResult.item;
-    const matchConfidence = matchResult.confidence;
-
-    const itemSources = sourcesMap.get(matchedItem.id) || [];
-    const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
-
-    const isApprovedRate = sourceResolution.method === "approved"
-      || ['Approved', 'Field-Approved', 'Revised'].includes(matchedItem.source_type)
-      || !!matchedItem.approved_at;
-
-    const effectiveRate = isApprovedRate
-      ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
-      : (sourceResolution.resolvedRate || matchedItem.target_rate);
-
-    let result = priceFromApprovedRate(
-      effectiveRate, matchedItem, row.quantity, locFactor,
-      matchedItem.base_city || "", projectCity, detection.category,
-    );
-
-    let { materials, labor, equipment, logistics, risk, profit } = result;
-    let unitRate = result.unitRate;
-    let totalPrice = result.totalPrice;
-
-    if (ownerMaterials) {
-      materials = 0;
-      unitRate = +(labor + equipment + logistics + risk + profit).toFixed(2);
-      totalPrice = +(unitRate * row.quantity).toFixed(2);
-    }
-
-    const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
-
-    const isInheritedManual4 = (matchResult as any)?.overrideType === "manual";
-    const update: Record<string, any> = {
-      materials, labor, equipment, logistics, risk, profit,
-      unit_rate: unitRate,
-      total_price: totalPrice,
-      confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
-      location_factor: result.locationFactor,
-      source: isInheritedManual4 ? "manual" : (matchConfidence >= 70 ? "library-high" : "library-medium"),
-      linked_rate_id: matchedItem.id,
-      status: itemStatus,
-      notes: `🔧 [تصحيح] أُعيد الربط: "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual4 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
-      ...(isInheritedManual4 ? { override_type: "manual" } : {}),
-    };
-
-    await supabase.from("boq_items").update(update as any).eq("id", row.id);
-    onItemPriced?.(row.id, update);
-
-    const detail = details.find(d => d.id === row.id);
-    if (detail) detail.action = `repriced→${matchedItem.standard_name_ar} (${unitRate} ر.س)`;
-    repriced++;
-  }
-
-  // Recalculate project total
-  const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();
-  if (boqFile) {
-    await supabase.rpc("recalculate_project_total", { p_project_id: boqFile.project_id });
-  }
-
-  return { unlinked: itemsToReprice.length, repriced, stillPending, details };
-}
-
 // ─── Reprice Single Item ────────────────────────────────────────────────────
-
 
 export async function repriceSingleItem(
   boqFileId: string,
@@ -1509,19 +1068,6 @@ export async function repriceSingleItem(
     .single();
 
   if (itemErr || !item) throw new Error("لم يتم العثور على البند");
-
-  // Guard: skip manual override items
-  if (item.override_type === 'manual') {
-    console.log(`[RepriceSingle] Skipping manual override item ${itemId}`);
-    return {
-      success: false,
-      unitRate: item.unit_rate,
-      totalPrice: item.total_price,
-      confidence: item.confidence || 0,
-      source: "manual",
-      matchedName: null,
-    };
-  }
 
   // 2. Fetch dependencies in parallel
   const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
@@ -1564,7 +1110,6 @@ export async function repriceSingleItem(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
-    item.item_no || null,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
@@ -1723,21 +1268,19 @@ export async function repriceSingleItem(
   const itemStatus = matchConfidence >= 70 ? "approved" : "needs_review";
   const sourceLabel = matchConfidence >= 70 ? "library-high" : "library-medium";
 
-    const isInheritedManual5 = (libraryMatchResult as any)?.overrideType === "manual";
-    const pricedUpdate: Record<string, any> = {
+  const pricedUpdate = {
     materials, labor, equipment, logistics, risk, profit,
     unit_rate: unitRate,
     total_price: totalPrice,
     confidence: Math.max(0, Math.min(100, Math.round(matchConfidence))),
     location_factor: result.locationFactor,
-    source: isInheritedManual5 ? "manual" : sourceLabel,
+    source: sourceLabel,
     linked_rate_id: matchedItem.id,
     status: itemStatus,
-    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%${isInheritedManual5 ? " | ⭐ تسعير يدوي موروث من مشروع سابق" : ""}`,
-    ...(isInheritedManual5 ? { override_type: "manual" } : {}),
+    notes: `📚 Repriced (single): "${matchedItem.standard_name_ar}" | 🎯 ${matchConfidence}%`,
   };
 
-  await supabase.from("boq_items").update(pricedUpdate as any).eq("id", itemId);
+  await supabase.from("boq_items").update(pricedUpdate).eq("id", itemId);
 
   // Recalculate project total
   const { data: boqFile } = await supabase.from("boq_files").select("project_id").eq("id", boqFileId).single();

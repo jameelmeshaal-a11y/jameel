@@ -33,20 +33,6 @@ import {
   buildEnrichedDescription,
 } from "./synonyms";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Extract the meaningful item segment from a hierarchical description.
- * Mirrors the DB function `extract_sub_item`.
- * Priority: `—` → ` - ` → `|`
- */
-export function extractCleanSegment(desc: string): string {
-  if (desc.includes("—")) return desc.split("—").pop()!.trim();
-  if (desc.includes(" - ")) return desc.split(" - ").pop()!.trim();
-  if (desc.includes("|")) return desc.split("|").pop()!.trim();
-  return desc;
-}
-
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface RateLibraryItem {
@@ -100,8 +86,6 @@ const WEIGHTS = {
   LIBRARY_KEYWORDS: 15,     // hits against library keywords field
   PARENT_CONTEXT_BOOST: 10, // enriched description improved the score
   CORRECTION_NOTES_BOOST: 12, // correction notes keyword match
-  PARENT_AUTHORITY_BOOST: 15, // parent segment concept matches candidate
-  PARENT_CONFLICT_PENALTY: -10, // parent segment concept conflicts with candidate
 } as const;
 
 // ─── Main V3 Matcher ────────────────────────────────────────────────────────
@@ -119,185 +103,32 @@ export function findRateLibraryMatchV3(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
-  itemNo?: string | null,
-): { item: RateLibraryItem; confidence: number; conflictNotes?: string } | null {
-  const fullIncomingText = description + " " + (descriptionEn || "");
-  const isAccessHatchItem = ACCESS_HATCH_PATTERN.test(fullIncomingText);
-
-  // Path A — Direct lookup with dimension validation
-  // Treat linked_rate_id as a HINT, not absolute trust.
-  // Always run full scoring in parallel, and only use linked if it's truly the best.
-  let linkedCandidate: RateLibraryItem | null = null;
-  let linkedConflictNote: string | undefined;
-  
+): { item: RateLibraryItem; confidence: number } | null {
+  // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
-    if (linked) {
-      // Validate dimensions match before trusting the link
-      const boqDimsCheck = parseDimensions(description + " " + (descriptionEn || ""));
-      const linkedDimsCheck = parseDimensions(
-        (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "")
-      );
-      const boqHasWxH = boqDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
-      const linkedHasWxH = linkedDimsCheck.some(d => d.type === "dimensions" && d.values.length >= 2);
-      const boqHasThick = boqDimsCheck.some(d => d.type === "thickness");
-      const linkedHasThick = linkedDimsCheck.some(d => d.type === "thickness");
-      const wxhConflict = boqHasWxH && linkedHasWxH && compareDimensions(boqDimsCheck, linkedDimsCheck) === -1;
-      const thickConflict = boqHasThick && linkedHasThick && 
-        boqDimsCheck.filter(d => d.type === "thickness").some(bT =>
-          linkedDimsCheck.filter(d => d.type === "thickness").some(cT => Math.abs(bT.values[0] - cT.values[0]) >= 1)
-        );
-      
-      // Concept conflict check — prevent cross-category trust
-      const boqConceptsCheck = detectConcepts(
-        description + " " + (descriptionEn || "")
-      );
-      const linkedText = (linked.standard_name_ar || "") + " " + (linked.standard_name_en || "");
-      const linkedPrimaryText = linkedText;
-      const linkedConceptsCheck = detectConcepts(linkedText);
-      const conceptConflict = hasConceptConflict(boqConceptsCheck, linkedConceptsCheck);
-
-      // Cross-category regex check — hard pairs that must never link
-      const CROSS_CATEGORY_PAIRS: [RegExp, RegExp][] = [
-        [/أبواب|باب|door/i, /نافذ|نوافذ|window|شباك/i],
-        [/أمني|أمنية|security\s*door/i, /نافذ|نوافذ|window/i],
-        [/حوض|مرحاض|مغسل|sanitary|lavatory|WC/i, /نافذ|نوافذ|window|شباك/i],
-        [/خزائن|كاونتر|cabinet|kitchen/i, /نافذ|نوافذ|window|شباك/i],
-        [/مروح|fan|exhaust/i, /نافذ|نوافذ|window|شباك/i],
-        [/فتحة وصول|roof hatch|access hatch/i, /نافذ|نوافذ|window|شباك/i],
-        [/كمرات|كمره|beam/i, /حفر|حفريات|خنادق|excavation|earthwork/i],
-        [/مضخ|pump/i, /رشاش|sprinkler/i],
-        [/ايبوكسي|إيبوكسي|epoxy/i, /بلاط|سيراميك|ceramic|tile/i],
-        [/دروه|دروة|parapet/i, /جدار.*100|wall.*100/i],
-      ];
-      const categoryConflict = CROSS_CATEGORY_PAIRS.some(([patA, patB]) =>
-        (patA.test(description) && patB.test(linkedText)) ||
-        (patB.test(description) && patA.test(linkedText))
-      );
-
-      const accessHatchConflict = isAccessHatchItem
-        && !ACCESS_HATCH_PATTERN.test(linkedPrimaryText)
-        && ROOF_SYSTEM_PATTERN.test(linkedPrimaryText + " " + (linked.item_description || ""));
-
-      if (wxhConflict || thickConflict || conceptConflict || categoryConflict || accessHatchConflict) {
-        const conflictTypes = [
-          wxhConflict && "أبعاد",
-          thickConflict && "سُمك",
-          conceptConflict && "مفهومي",
-          categoryConflict && "فئوي",
-          accessHatchConflict && "فتحة-وصول",
-        ].filter(Boolean).join("+");
-        linkedConflictNote = `[تعارض ${conflictTypes}] ${description.slice(0, 30)} ≠ ${linkedText.slice(0, 30)}`;
-        console.log(`[V3] linked_rate_id ${linkedRateId} conflict detected (${conflictTypes}), re-scoring`);
-        // Don't use linked at all — fall through to full scoring
-      } else {
-        // Keep linked as a candidate but still score all others
-        linkedCandidate = linked;
-      }
-    }
+    if (linked) return { item: linked, confidence: 95 };
   }
 
   // Enrich description with parent context if short
   const enrichedDesc = buildEnrichedDescription(description, notes);
   const useEnriched = enrichedDesc !== description;
 
-  // Pre-compute BoQ item features — use clean segment for tokens/concepts/dims
+  // Pre-compute BoQ item features
   const fullText = enrichedDesc + " " + (descriptionEn || "");
-  const cleanDesc = extractCleanSegment(enrichedDesc);
-  const cleanEn = extractCleanSegment(descriptionEn || "");
-  const featureText = cleanDesc + " " + (cleanEn || "");
-  const boqCodes = extractModelCodes(fullText); // keep full for model codes
-  const boqTokens = tokenize(featureText);
-  const boqDimensions = parseDimensions(featureText);
-  const boqConcepts = detectConcepts(featureText);
+  const boqCodes = extractModelCodes(fullText);
+  const boqTokens = tokenize(fullText);
+  const boqDimensions = parseDimensions(fullText);
+  const boqConcepts = detectConcepts(fullText);
 
-  // Collect all viable candidates for magnitude guard
-  interface ScoredCandidate {
-    candidate: RateLibraryItem;
-    score: number;
-    textScore: number;
-    notes: string;
-  }
-  const viableCandidates: ScoredCandidate[] = [];
-
-  // ── Arabic General Categories (always compatible) ──────────────────────
-  const ARABIC_GENERAL_CATEGORIES = new Set([
-    'تشطيبات', 'عام', 'أعمال معمارية', 'أعمال كهربائية',
-    'أعمال ميكانيكية', 'أعمال صحية', 'أعمال مدنية',
-  ]);
-
-  // ── INCOMPATIBLE_GROUPS Hard Gate ──────────────────────────────────────
-  // Uses the module-level INCOMPATIBLE_CATEGORY_GROUPS (exported for pricingEngine)
-  const INCOMPATIBLE_GROUPS = INCOMPATIBLE_CATEGORY_GROUPS;
-
-  // ── Pre-scan: item_no Hard Override ──────────────────────────────────
-  // If item_no precisely matches a library name (≥95%) with unit match,
-  // return immediately at confidence 99. This prevents long descriptions
-  // from overriding the precise item name.
-  const cleanItemNoForOverride = itemNo?.trim();
-  if (cleanItemNoForOverride && cleanItemNoForOverride.length >= 4) {
-    for (const candidate of rateLibrary) {
-      if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
-      
-      // Category hard gate still applies
-      const candidateCatIsGen = candidate.category === 'general' || ARABIC_GENERAL_CATEGORIES.has(candidate.category);
-      const boqCatIsGen = category === 'general' || ARABIC_GENERAL_CATEGORIES.has(category);
-      if (!candidateCatIsGen && !boqCatIsGen) {
-        const blocked = INCOMPATIBLE_GROUPS[category];
-        if (blocked && blocked.includes(candidate.category)) continue;
-        const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
-        if (reverseBlocked && reverseBlocked.includes(category)) continue;
-      }
-
-      const itemNoSim = Math.max(
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_ar || ""),
-        textSimilarity(cleanItemNoForOverride, candidate.standard_name_en || ""),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_ar || "")),
-        textSimilarity(cleanItemNoForOverride, extractCleanSegment(candidate.standard_name_en || "")),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNoForOverride, a) : 0),
-      );
-
-      if (itemNoSim >= 0.95) {
-        console.log(`[V3] ⭐ item_no Hard Override: "${cleanItemNoForOverride}" matched "${candidate.standard_name_ar}" at ${(itemNoSim * 100).toFixed(0)}%`);
-        return {
-          item: candidate,
-          confidence: 99,
-          conflictNotes: linkedConflictNote,
-        };
-      }
-    }
-  }
+  let bestMatch: RateLibraryItem | null = null;
+  let bestScore = 0;
+  let bestNotes = "";
 
   for (const candidate of rateLibrary) {
-    // Unit gate — hard gate for units
+    // Unit gate — soft penalty instead of hard skip for V3
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
-    if (!unitMatch) continue;
-
-    // Category incompatibility hard gate
-    // Arabic library categories are always compatible (treated as general)
-    const candidateCatIsGeneral = candidate.category === 'general' || ARABIC_GENERAL_CATEGORIES.has(candidate.category);
-    const boqCatIsGeneral = category === 'general' || ARABIC_GENERAL_CATEGORIES.has(category);
-    if (!candidateCatIsGeneral && !boqCatIsGeneral) {
-      const blockedCategories = INCOMPATIBLE_GROUPS[category];
-      if (blockedCategories && blockedCategories.includes(candidate.category)) {
-        continue; // ⛔ category-hard-gate: skip incompatible category
-      }
-      // Reverse check: candidate's category blocks the BoQ category
-      const reverseBlocked = INCOMPATIBLE_GROUPS[candidate.category];
-      if (reverseBlocked && reverseBlocked.includes(category)) {
-        continue; // ⛔ reverse category-hard-gate
-      }
-    }
-
-    if (isAccessHatchItem) {
-      const candidatePrimaryText = [candidate.standard_name_ar || "", candidate.standard_name_en || ""].join(" ");
-      const candidateExtendedText = candidatePrimaryText + " " + (candidate.item_description || "");
-      const candidateLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candidatePrimaryText);
-      const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candidateExtendedText);
-      if (!candidateLooksLikeHatch && candidateLooksLikeRoofSystem) {
-        continue;
-      }
-    }
+    if (!unitMatch) continue; // keep hard gate for units
 
     const result = scoreCandidate(
       enrichedDesc, descriptionEn, category,
@@ -305,164 +136,15 @@ export function findRateLibraryMatchV3(
       candidate, useEnriched,
     );
 
-    // ── item_no Priority Bonus ──────────────────────────────────────────
-    // If item_no is provided and meaningful, compare it directly to library names.
-    // This is the STRONGEST signal — item_no contains the precise item name.
-    let itemNoBonus = 0;
-    const cleanItemNo = itemNo?.trim();
-    if (cleanItemNo && cleanItemNo.length >= 4) {
-      const itemNoSim = Math.max(
-        textSimilarity(cleanItemNo, candidate.standard_name_ar || ""),
-        textSimilarity(cleanItemNo, candidate.standard_name_en || ""),
-        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_ar || "")),
-        textSimilarity(cleanItemNo, extractCleanSegment(candidate.standard_name_en || "")),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, a) : 0),
-        ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanItemNo, extractCleanSegment(a)) : 0),
-      );
-      if (itemNoSim >= 0.95) {
-        // GOVERNANCE: item_no exact match = HARD OVERRIDE — return immediately
-        console.log(`[V3] ⭐ itemNo loop override: "${cleanItemNo}" → "${candidate.standard_name_ar}" (${(itemNoSim * 100).toFixed(0)}%)`);
-        return {
-          item: candidate,
-          confidence: 99,
-          conflictNotes: linkedConflictNote,
-        };
-      } else if (itemNoSim >= 0.85) {
-        itemNoBonus = 40;
-        result.notes += ` | ⭐ itemNo-high:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
-      } else if (itemNoSim >= 0.70) {
-        itemNoBonus = 20;
-        result.notes += ` | itemNo-medium:+${itemNoBonus} (${(itemNoSim * 100).toFixed(0)}%)`;
-      }
-    }
-
-    const finalScore = Math.min(99, result.score + itemNoBonus);
-
-    if (finalScore >= 50) {
-      viableCandidates.push({
-        candidate,
-        score: finalScore,
-        textScore: result.textScore,
-        notes: result.notes,
-      });
+    if (result.score > bestScore && result.score >= 50) {
+      bestScore = result.score;
+      bestMatch = candidate;
+      bestNotes = result.notes;
     }
   }
 
-  // If linked candidate passed validation, add it with a small bonus
-  if (linkedCandidate) {
-    const alreadyScored = viableCandidates.find(vc => vc.candidate.id === linkedCandidate!.id);
-    if (alreadyScored) {
-      // Give a small bonus (5pts) for being the existing link, but not 95
-      alreadyScored.score = Math.min(99, alreadyScored.score + 5);
-      alreadyScored.notes += " | linked-bonus:+5";
-    } else {
-      // Linked item didn't pass unit gate or scored < 50 — score it now with bonus
-      const result = scoreCandidate(
-        enrichedDesc, descriptionEn, category,
-        boqCodes, boqTokens, boqDimensions, boqConcepts,
-        linkedCandidate, useEnriched,
-      );
-      if (result.score >= 30) { // Lower threshold for linked items
-        viableCandidates.push({
-          candidate: linkedCandidate,
-          score: Math.min(99, Math.max(result.score + 10, 50)),
-          textScore: result.textScore,
-          notes: result.notes + " | linked-rescue:+10",
-        });
-      }
-    }
-  }
-
-  if (viableCandidates.length > 0) {
-    // Sort by total score descending
-    viableCandidates.sort((a, b) => b.score - a.score);
-    let best = viableCandidates[0];
-
-    // ── Sub-item vs System Guard ───────────────────────────────────────
-    // When description contains "—" (enriched with parent), the full text
-    // may match a system-level library entry perfectly. Extract the last
-    // segment (actual item) and re-score — prefer cheaper items that match
-    // the last segment better.
-    if (enrichedDesc.includes("—") && viableCandidates.length >= 1) {
-      const lastSegment = enrichedDesc.split("—").pop()?.trim();
-      if (lastSegment && lastSegment.length > 3) {
-        const bestPrice = best.candidate.target_rate || best.candidate.base_rate;
-        
-        // Re-score all candidates using ONLY the last segment
-        let segmentBest: typeof best | null = null;
-        for (const vc of viableCandidates) {
-          const vcPrice = vc.candidate.target_rate || vc.candidate.base_rate;
-          // Only consider if significantly cheaper (>5x difference)
-          if (bestPrice > 0 && vcPrice > 0 && bestPrice / vcPrice > 5) {
-            const candTexts = [
-              vc.candidate.standard_name_ar || "",
-              vc.candidate.standard_name_en || "",
-              ...(vc.candidate.item_name_aliases || []),
-            ];
-            const segSim = Math.max(...candTexts.map(t => t ? textSimilarity(lastSegment, t) : 0));
-            if (segSim > 0.3 && (!segmentBest || segSim > (segmentBest as any)._segSim)) {
-              segmentBest = { ...vc, score: Math.max(vc.score - 10, 50) } as any;
-              (segmentBest as any)._segSim = segSim;
-            }
-          }
-        }
-        
-        if (segmentBest && segmentBest.candidate.id !== best.candidate.id) {
-          const segPrice = segmentBest.candidate.target_rate || segmentBest.candidate.base_rate;
-          console.log(
-            `[V3] ⚠️ Sub-item Guard: "${lastSegment}" — system price ${bestPrice} → item price ${segPrice}`
-          );
-          best = segmentBest;
-          best.notes += ` | ⚠️ sub-item-guard: last-segment match, price ${bestPrice}→${segPrice}`;
-        }
-      }
-    }
-
-    // ── Price Magnitude Guard ──────────────────────────────────────────
-    // If multiple candidates exist with extreme price variance (>10x),
-    // prefer the one with highest text similarity to avoid catastrophic mismatch.
-    if (viableCandidates.length >= 2) {
-      const prices = viableCandidates
-        .map(c => c.candidate.target_rate || c.candidate.base_rate)
-        .filter(p => p > 0);
-      
-      if (prices.length >= 2) {
-        const maxPrice = Math.max(...prices);
-        const minPrice = Math.min(...prices);
-        
-        if (minPrice > 0 && maxPrice / minPrice > 10) {
-          // Extreme variance detected — pick highest text score instead
-          const textBest = viableCandidates.reduce((prev, curr) =>
-            curr.textScore > prev.textScore ? curr : prev
-          );
-          
-          if (textBest.candidate.id !== best.candidate.id) {
-            const bestPrice = best.candidate.target_rate || best.candidate.base_rate;
-            const textBestPrice = textBest.candidate.target_rate || textBest.candidate.base_rate;
-            console.log(
-              `[V3] ⚠️ Price Magnitude Guard: ${maxPrice}/${minPrice} = ${(maxPrice/minPrice).toFixed(0)}x. ` +
-              `Switching from ${bestPrice} to ${textBestPrice} (higher text score)`
-            );
-            best = textBest;
-          }
-          // Reduce confidence by 15 to flag for review
-          best = { ...best, score: Math.max(best.score - 15, 50) };
-          best.notes += ` | ⚠️ magnitude-guard: ${(maxPrice/minPrice).toFixed(0)}x variance, confidence -15`;
-        }
-      }
-    }
-
-    // ── Absolute Price Cap Guard ───────────────────────────────────────
-    // For common unit items (عدد/Each), if price > 20,000 and there's only
-    // one candidate, cap confidence at 70 to force review
-    const finalPrice = best.candidate.target_rate || best.candidate.base_rate;
-    if (finalPrice > 20000 && viableCandidates.length === 1 && best.score > 70) {
-      best = { ...best, score: 70 };
-      best.notes += ` | ⚠️ high-price-cap: single match at ${finalPrice}, confidence capped at 70`;
-      console.log(`[V3] ⚠️ High Price Cap: single match at ${finalPrice}, confidence capped at 70`);
-    }
-
-    return { item: best.candidate, confidence: best.score, conflictNotes: linkedConflictNote };
+  if (bestMatch) {
+    return { item: bestMatch, confidence: bestScore };
   }
 
   // Path C — Approved-rate fallback (threshold 50, capped at 55)
@@ -489,7 +171,7 @@ export function findRateLibraryMatchV3(
     }
 
     if (fallbackMatch) {
-      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55), conflictNotes: linkedConflictNote };
+      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55) };
     }
   }
 
@@ -500,12 +182,8 @@ export function findRateLibraryMatchV3(
 
 interface ScoringResult {
   score: number;
-  textScore: number;
   notes: string;
 }
-
-const ACCESS_HATCH_PATTERN = /(فتحة\s*وصول|access\s*hatch|roof\s*hatch)/i;
-const ROOF_SYSTEM_PATTERN = /(سقف|أسقف|بلاطة|بلاطات|slab|roofing|waterproof|membrane|عزل)/i;
 
 function scoreCandidate(
   description: string,
@@ -524,9 +202,11 @@ function scoreCandidate(
   // 1. Text similarity (max WEIGHTS.TEXT_SIMILARITY pts)
   // For merged descriptions (Header — Sub — Item), also try the last segment
   const descSegments = [description];
-  const cleanSeg = extractCleanSegment(description);
-  if (cleanSeg !== description && cleanSeg.length > 3) {
-    descSegments.push(cleanSeg);
+  if (description.includes("—")) {
+    const lastSegment = description.split("—").pop()?.trim();
+    if (lastSegment && lastSegment.length > 3) {
+      descSegments.push(lastSegment);
+    }
   }
 
   const candFullText = [
@@ -552,34 +232,14 @@ function scoreCandidate(
   }
 
   // Also try char n-gram (max 30 pts, take better of token vs ngram)
-  const cleanSegForNgram = extractCleanSegment(description);
   const ngramScore = Math.max(
     charNgramSimilarity(description, candidate.standard_name_ar || ""),
-    charNgramSimilarity(cleanSegForNgram, candidate.standard_name_ar || ""),
     charNgramSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
   ) * 30;
 
   const effectiveTextScore = Math.max(textScore, ngramScore);
   score += effectiveTextScore;
   parts.push(`text:${effectiveTextScore.toFixed(0)}`);
-
-  // ── Perfect Name Match Bonus ──────────────────────────────────────────
-  // If the clean segment (item name after "—") matches a library name with
-  // very high similarity (≥ 0.90), grant a large bonus to ensure exact matches
-  // always win over generic description matches.
-  const cleanSegForNameMatch = extractCleanSegment(description);
-  if (cleanSegForNameMatch.length >= 5) {
-    const nameMatchSim = Math.max(
-      textSimilarity(cleanSegForNameMatch, candidate.standard_name_ar || ""),
-      textSimilarity(cleanSegForNameMatch, candidate.standard_name_en || ""),
-      ...(candidate.item_name_aliases || []).map(a => a ? textSimilarity(cleanSegForNameMatch, a) : 0),
-    );
-    if (nameMatchSim >= 0.90) {
-      const PERFECT_NAME_BONUS = 30;
-      score += PERFECT_NAME_BONUS;
-      parts.push(`perfect-name:+${PERFECT_NAME_BONUS} (${(nameMatchSim * 100).toFixed(0)}%)`);
-    }
-  }
 
   // 2. Category match (+15 pts)
   const catFirst = category.replace(/_/g, " ").split(" ")[0];
@@ -637,85 +297,13 @@ function scoreCandidate(
     const candHasWxH = candDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
     if (boqHasWxH && candHasWxH) {
       parts.push(`⛔ dim-mismatch: hard skip (WxH differs)`);
-      return { score: 0, textScore: 0, notes: parts.join(" | ") };
-    }
-    // Hard gate: if both have explicit thickness and they differ, zero out
-    const boqHasThickness = boqDimensions.some(d => d.type === "thickness");
-    const candHasThickness = candDimensions.some(d => d.type === "thickness");
-    if (boqHasThickness && candHasThickness) {
-      const thickConflict = boqDimensions
-        .filter(d => d.type === "thickness")
-        .some(bT => candDimensions
-          .filter(d => d.type === "thickness")
-          .some(cT => Math.abs(bT.values[0] - cT.values[0]) >= 1)
-        );
-      if (thickConflict) {
-        parts.push(`⛔ thickness-mismatch: hard skip`);
-        return { score: 0, textScore: 0, notes: parts.join(" | ") };
-      }
+      return { score: 0, notes: parts.join(" | ") };
     }
     score += WEIGHTS.DIMENSION_MISMATCH;
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);
   }
 
-  // 6. Structural Type Gate — hard block if structural element types differ
-  // Uses position-aware detection: when text contains multiple types, the EARLIEST in text wins
-  function detectStructuralType(text: string, types: [string, RegExp][]): [string, RegExp] | undefined {
-    const matches: { entry: [string, RegExp]; pos: number }[] = [];
-    for (const entry of types) {
-      const m = text.match(entry[1]);
-      if (m && m.index !== undefined) {
-        matches.push({ entry, pos: m.index });
-      }
-    }
-    if (matches.length === 0) return undefined;
-    matches.sort((a, b) => a.pos - b.pos);
-    return matches[0].entry;
-  }
-
-  const STRUCTURAL_TYPES: [string, RegExp][] = [
-    ["shear_wall", /حوائط\s*(?:ال)?قص|shear\s*wall/i],
-    ["tie_beam", /كمرات\s*ربط|tie\s*beam/i],
-    ["neck_column", /رقاب\s*(?:ال)?(?:ا|أ)عمد|neck\s*column|column\s*neck/i],
-    ["slab_on_grade", /بلاطه?\s*على\s*(?:ال)?(?:ا|أ)رض|slab\s*on\s*grade|ground\s*slab/i],
-    ["stairs", /(?:ال)?سلالم|سلم|stairs|staircase|درج/i],
-    ["slab_ceiling", /(?:ال)?بلاطات\s*(?:ال)?خرسان|ceiling\s*slab|suspended\s*slab/i],
-    ["slab", /(?:ال)?بلاطات|بلاطه|slab/i],
-    ["beam", /(?:ال)?كمرات|كمره|beam/i],
-    ["column", /(?:ال)?(?:ا|أ)عمد[ةه]|عمود|column/i],
-    ["foundation", /(?:ال)?قواعد|قاعده|(?:ال)?(?:ا|أ)ساسات|foundation/i],
-    ["excavation", /حفر|حفريات|خنادق|excavation|earthwork/i],
-  ];
-  // Use clean segment (item_no / last segment after —) for structural detection
-  const boqCleanForStruct = extractCleanSegment(description);
-  const boqStructText = boqCleanForStruct + " " + extractCleanSegment(descriptionEn || "");
-  const boqStructType = detectStructuralType(boqStructText, STRUCTURAL_TYPES);
-  const candStructText = (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "");
-  const candStructType = detectStructuralType(candStructText, STRUCTURAL_TYPES);
-  if (boqStructType && candStructType && boqStructType[0] !== candStructType[0]) {
-    parts.push(`⛔ structural-gate: ${boqStructType[0]}↔${candStructType[0]}`);
-    return { score: 0, textScore: 0, notes: parts.join(" | ") };
-  }
-
-  // 6a. Access hatch guard — never let roof/slab system entries absorb hatch items
-  const boqCombinedText = description + " " + (descriptionEn || "");
-  const candidatePrimaryText = [candidate.standard_name_ar || "", candidate.standard_name_en || ""].join(" ");
-  const candCombinedText = [
-    candidate.standard_name_ar || "",
-    candidate.standard_name_en || "",
-    candidate.item_description || "",
-    ...(candidate.item_name_aliases || []),
-  ].join(" ");
-  if (ACCESS_HATCH_PATTERN.test(boqCombinedText)) {
-    const candidatePrimaryLooksLikeHatch = ACCESS_HATCH_PATTERN.test(candidatePrimaryText);
-    const candidateLooksLikeRoofSystem = ROOF_SYSTEM_PATTERN.test(candidatePrimaryText) || ROOF_SYSTEM_PATTERN.test(candidate.item_description || "");
-    if (!candidatePrimaryLooksLikeHatch && candidateLooksLikeRoofSystem) {
-      parts.push("⛔ access-hatch-gate: hatch item cannot match roof/slab system");
-      return { score: 0, textScore: 0, notes: parts.join(" | ") };
-    }
-  }
-
-  // 7. Synonym / Anti-confusion
+  // 6. Synonym / Anti-confusion
   const candConcepts = detectConcepts(
     (candidate.standard_name_ar || "") + " " +
     (candidate.standard_name_en || "") + " " +
@@ -724,52 +312,19 @@ function scoreCandidate(
 
   if (boqConcepts.length > 0 && candConcepts.length > 0) {
     // Anti-confusion gate — zero score if conflicting concepts
-    // BUT skip if clean segment has very high text similarity (same item, ambiguous concepts)
-    const cleanSegText = extractCleanSegment(description);
-    const candNames = [candidate.standard_name_ar || "", candidate.standard_name_en || ""];
-    const highTextMatch = candNames.some(cn => cn && textSimilarity(cleanSegText, cn) >= 0.85);
-    if (hasConceptConflict(boqConcepts, candConcepts) && !highTextMatch) {
+    if (hasConceptConflict(boqConcepts, candConcepts)) {
       parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
-      return { score: 0, textScore: 0, notes: parts.join(" | ") };
+      return { score: 0, notes: parts.join(" | ") };
     }
 
     // Synonym boost
-    const synOverlap = hasSynonymOverlap(boqConcepts, candConcepts);
-    if (synOverlap) {
+    if (hasSynonymOverlap(boqConcepts, candConcepts)) {
       score += WEIGHTS.SYNONYM_BOOST;
       parts.push(`syn:+${WEIGHTS.SYNONYM_BOOST}`);
     }
-
-    // ── Concept + Dimension Boost ──────────────────────────────────────
-    // When synonym concept matches AND thickness/dimensions also match,
-    // grant a large bonus so short library names can reach the 50-pt threshold.
-    if (synOverlap && dimResult === 1) {
-      const CONCEPT_DIM_BOOST = 25;
-      score += CONCEPT_DIM_BOOST;
-      parts.push(`concept-dim:+${CONCEPT_DIM_BOOST}`);
-    }
   }
 
-  // 7a. Parent Authority — boost/penalty based on parent segment concepts
-  if (description.includes("—")) {
-    const segments = description.split("—").map(s => s.trim());
-    if (segments.length >= 2) {
-      const parentSegment = segments.slice(0, -1).join(" ");
-      const parentConcepts = detectConcepts(parentSegment);
-      if (parentConcepts.length > 0 && candConcepts.length > 0) {
-        const parentMatch = parentConcepts.some(pc => candConcepts.includes(pc));
-        const parentConflict = hasConceptConflict(parentConcepts, candConcepts);
-        if (parentMatch) {
-          score += WEIGHTS.PARENT_AUTHORITY_BOOST;
-          parts.push(`parent-auth:+${WEIGHTS.PARENT_AUTHORITY_BOOST}`);
-        } else if (parentConflict) {
-          score += WEIGHTS.PARENT_CONFLICT_PENALTY;
-          parts.push(`parent-conflict:${WEIGHTS.PARENT_CONFLICT_PENALTY}`);
-        }
-      }
-    }
-  }
-
+  // 7. Containment bonus
   const overlapCoeff = Math.max(
     overlapCoefficient(description, candidate.standard_name_ar || ""),
     overlapCoefficient(description, candidate.item_description || ""),
@@ -814,26 +369,5 @@ function scoreCandidate(
   score = Math.min(score, 99);
   score = Math.max(score, 0);
 
-  return { score, textScore: effectiveTextScore, notes: parts.join(" | ") };
-}
-
-// ── Exported Category Compatibility (used by pricingEngine for historical matches) ──
-export const INCOMPATIBLE_CATEGORY_GROUPS: Record<string, string[]> = {
-  doors: ['windows', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'hvac_ductwork'],
-  windows: ['doors', 'plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment', 'steel_misc'],
-  plumbing_fixtures: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-  plumbing_pipes: ['doors', 'windows', 'hvac_equipment', 'steel_misc', 'electrical_fixtures'],
-  hvac_equipment: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-  hvac_ductwork: ['doors', 'windows', 'plumbing_fixtures', 'steel_misc'],
-  electrical_fixtures: ['plumbing_fixtures', 'plumbing_pipes', 'hvac_equipment'],
-  electrical_panels: ['plumbing_fixtures', 'plumbing_pipes', 'doors', 'windows'],
-};
-
-export function areCategoriesCompatible(catA: string, catB: string): boolean {
-  if (catA === 'general' || catB === 'general') return true;
-  const blocked = INCOMPATIBLE_CATEGORY_GROUPS[catA];
-  if (blocked && blocked.includes(catB)) return false;
-  const reverse = INCOMPATIBLE_CATEGORY_GROUPS[catB];
-  if (reverse && reverse.includes(catA)) return false;
-  return true;
+  return { score, notes: parts.join(" | ") };
 }

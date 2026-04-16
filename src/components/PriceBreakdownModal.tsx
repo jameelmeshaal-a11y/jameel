@@ -4,11 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
-} from "@/components/ui/alert-dialog";
 import { formatNumber } from "@/lib/mockData";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -18,8 +13,7 @@ import {
   type BreakdownValues, type BreakdownField, type RatioSource, type RatioResolution,
 } from "@/lib/pricing/smartRecalculator";
 import { detectCategory } from "@/lib/pricingEngine";
-// syncToRateLibrary is now handled atomically via save_manual_price RPC
-import { useAuth } from "@/contexts/AuthContext";
+import { syncToRateLibrary } from "@/lib/pricing/rateSyncService";
 
 interface BoQItemRow {
   id: string;
@@ -62,9 +56,6 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [correctionNote, setCorrectionNote] = useState("");
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [approvalNotes, setApprovalNotes] = useState("");
-  const { user } = useAuth();
   const [autoRebalance, setAutoRebalance] = useState(true);
 
   const initial: BreakdownValues = {
@@ -267,111 +258,49 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
       const overridesObj: Record<string, boolean> = {};
       manualFields.forEach(f => { overridesObj[f] = true; });
 
-      // Atomic save: updates boq_items + rate_library + rate_sources in one transaction
-      const { data: rpcResult, error } = await supabase.rpc("save_manual_price", {
-        p_item_id: item.id,
-        p_boq_file_id: item.boq_file_id,
-        p_materials: values.materials,
-        p_labor: values.labor,
-        p_equipment: values.equipment,
-        p_logistics: values.logistics,
-        p_risk: values.risk,
-        p_profit: values.profit,
-        p_unit_rate: unitRate,
-        p_total_price: totalPrice,
-        p_manual_overrides: overridesObj,
-        p_correction_note: correctionNote || null,
-        p_user_id: user?.id || null,
-      });
+      const { error } = await supabase
+        .from("boq_items")
+        .update({
+          materials: values.materials,
+          labor: values.labor,
+          equipment: values.equipment,
+          logistics: values.logistics,
+          risk: values.risk,
+          profit: values.profit,
+          unit_rate: unitRate,
+          total_price: totalPrice,
+          status: "approved",
+          notes: item.notes || "Manual pricing adjustment",
+          manual_overrides: overridesObj,
+          override_at: new Date().toISOString(),
+          override_reason: correctionNote || null,
+          override_type: "manual",
+        })
+        .eq("id", item.id);
 
       if (error) {
-        console.error("[Save] Atomic save failed:", error);
+        console.error("[Save] Error:", error);
         toast.error("فشل حفظ التعديل: " + error.message);
         return;
       }
 
-      const result = rpcResult as any;
-      console.log("[Save] Atomic save result:", result);
+      const syncResult = await syncToRateLibrary({
+        itemId: item.id,
+        boqFileId: item.boq_file_id,
+        values,
+        unitRate,
+        correctionNote: correctionNote || undefined,
+      });
 
-      // Auto-sync: fix any stale_price items that the RPC just flagged
-      let syncedCount = 0;
-      try {
-        const { data: staleItems } = await supabase
-          .from("boq_items")
-          .select("id, linked_rate_id, item_no, description, unit_rate, location_factor, quantity, override_type")
-          .eq("boq_file_id", item.boq_file_id)
-          .eq("status", "stale_price");
-
-        if (staleItems && staleItems.length > 0) {
-          // Only sync non-manual items
-          const toSync = staleItems.filter(si => si.override_type !== "manual");
-          if (toSync.length > 0) {
-            // Get library rates for these items
-            const linkedIds = [...new Set(toSync.map(s => s.linked_rate_id).filter(Boolean))] as string[];
-            const { data: libEntries } = await supabase
-              .from("rate_library")
-              .select("id, target_rate, materials_pct, labor_pct, equipment_pct, logistics_pct, risk_pct, profit_pct")
-              .in("id", linkedIds);
-            const libMap = new Map((libEntries || []).map(l => [l.id, l]));
-
-            for (const si of toSync) {
-              const lib = si.linked_rate_id ? libMap.get(si.linked_rate_id) : null;
-              if (!lib) continue;
-              const locFactor = si.location_factor || 1.0;
-              const newRate = +(lib.target_rate * locFactor).toFixed(2);
-              const totalPct = (lib.materials_pct || 0) + (lib.labor_pct || 0) + (lib.equipment_pct || 0) + (lib.logistics_pct || 0) + (lib.risk_pct || 0) + (lib.profit_pct || 0);
-              const bd = totalPct > 0 ? {
-                materials: +(newRate * (lib.materials_pct || 0) / totalPct).toFixed(2),
-                labor: +(newRate * (lib.labor_pct || 0) / totalPct).toFixed(2),
-                equipment: +(newRate * (lib.equipment_pct || 0) / totalPct).toFixed(2),
-                logistics: +(newRate * (lib.logistics_pct || 0) / totalPct).toFixed(2),
-                risk: +(newRate * (lib.risk_pct || 0) / totalPct).toFixed(2),
-                profit: +(newRate * (lib.profit_pct || 0) / totalPct).toFixed(2),
-              } : { materials: newRate, labor: 0, equipment: 0, logistics: 0, risk: 0, profit: 0 };
-
-              await supabase.from("boq_items").update({
-                unit_rate: newRate,
-                total_price: +(newRate * si.quantity).toFixed(2),
-                ...bd,
-                status: "approved",
-              }).eq("id", si.id);
-              syncedCount++;
-            }
-          }
-        }
-      } catch (syncErr) {
-        console.warn("[Save] Auto-sync stale items failed:", syncErr);
+      if (!syncResult) {
+        await supabase.rpc("recalculate_project_total", { p_project_id: projectId }).then(() => {}, () => {});
+        toast.error("تم حفظ السعر لكن فشل التحديث في مكتبة الأسعار. يرجى المحاولة مرة أخرى.");
+        return;
       }
 
-      // Audit log with approval notes
-      try {
-        await supabase.from("pricing_audit_log").insert({
-          item_id: item.id,
-          project_id: projectId,
-          action_type: "manual_approve",
-          edit_type: "manual_override",
-          change_scope: "item_and_linked",
-          reason: approvalNotes || correctionNote || null,
-          changed_by: user?.id || null,
-          old_values: { unit_rate: item.unit_rate, total_price: item.total_price },
-          new_values: { unit_rate: unitRate, total_price: totalPrice },
-          changed_fields: overridesObj,
-          affected_items_count: 1 + (result?.linked_items_count || 0),
-          master_rate_updated: true,
-        });
-      } catch (auditErr) {
-        console.warn("[Save] Audit log failed:", auditErr);
-      }
-
-      const libMsg = result?.is_new
-        ? "تم إنشاء بند جديد في المكتبة"
-        : "تم تحديث المكتبة";
-      const syncMsg = syncedCount > 0 ? ` + مزامنة ${syncedCount} بند مرتبط` : "";
-      toast.success(`✅ ${libMsg}${syncMsg} — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
-
+      await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
+      toast.success(`تم الحفظ والاعتماد — سعر الوحدة: ${formatNumber(unitRate)} ريال`);
       setEditing(false);
-      setShowConfirmDialog(false);
-      setApprovalNotes("");
       onUpdated?.();
       onClose();
     } catch (err: any) {
@@ -652,7 +581,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           <div className="flex flex-col gap-2 pt-2">
             {editing ? (
               <div className="flex gap-2">
-                <Button className="flex-1 gap-2" onClick={() => setShowConfirmDialog(true)} disabled={saving || !hasChanges}>
+                <Button className="flex-1 gap-2" onClick={handleSave} disabled={saving || !hasChanges}>
                   <CheckCircle className="w-4 h-4" /> {saving ? "جاري الحفظ..." : "حفظ"}
                 </Button>
                 <Button variant="outline" onClick={() => { setValues(initial); setManualFields(new Set()); setTotalCostInput(""); setEditing(false); }}>
@@ -667,38 +596,6 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
           </div>
         </div>
       </div>
-
-      {/* Approval Confirmation Dialog */}
-      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <AlertDialogContent dir="rtl" onClick={(e) => e.stopPropagation()}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>تأكيد اعتماد السعر</AlertDialogTitle>
-            <AlertDialogDescription>
-              البند: <strong>{item.item_no}</strong> — سعر الوحدة الجديد: <strong>{formatNumber(getUnitRate(values))} ريال</strong>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2 py-2">
-            <label className="text-sm font-medium">ملاحظات أو شروط الاعتماد (اختياري)</label>
-            <Textarea
-              placeholder="مثال: تمت مراجعة السعر مع المقاول واعتماده بناءً على عرض رقم..."
-              value={approvalNotes}
-              onChange={(e) => setApprovalNotes(e.target.value)}
-              dir="rtl"
-              className="min-h-[100px]"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              هذه الملاحظات تُحفظ في سجل المراجعة ولا يمكن حذفها
-            </p>
-          </div>
-          <AlertDialogFooter className="flex-row-reverse gap-2">
-            <Button onClick={handleSave} disabled={saving} className="gap-2">
-              <CheckCircle className="w-4 h-4" />
-              {saving ? "جاري الحفظ..." : "تأكيد الاعتماد"}
-            </Button>
-            <AlertDialogCancel disabled={saving}>إلغاء</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

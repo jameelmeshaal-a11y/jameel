@@ -1,56 +1,14 @@
 /**
- * Synonym dictionary, deep normalization & dimension parser for Matching V3.
+ * Synonym dictionary & dimension parser for Matching V3.
  * Isolated module — does NOT modify any existing logic.
  * 
  * @module synonyms
- * @version 4.0 — Deep normalization + prefix-agnostic parsing
+ * @version 3.0
  */
-
-// ─── Deep Normalization ────────────────────────────────────────────────────
-// Strips Arabic prefixes, normalizes characters, removes diacritics.
-// This makes the system "understand" rather than "memorize" — any prefix
-// combination (ب، ال، بال، وال، لل، ف، ك، و) is handled automatically.
-
-const ARABIC_PREFIX_PATTERN = /(?<=\s|^)(?:بال|وال|فال|كال|ولل|بلل|لل|ال|وب|فب|بـ|و|ب|ف|ك|ل)(?=[أإاآ-ي])/g;
-
-/**
- * Deep normalize Arabic/English text for matching.
- * Strips prefixes, normalizes characters, removes noise.
- * Use this BEFORE regex matching or concept detection.
- */
-export function deepNormalize(text: string): string {
-  if (!text) return "";
-  
-  let normalized = text.toLowerCase();
-  
-  // 1. Remove tashkeel (diacritics)
-  normalized = normalized.replace(/[ًٌٍَُِّْـ]/g, "");
-  
-  // 2. Normalize Hamza variants → ا
-  normalized = normalized.replace(/[أإآ]/g, "ا");
-  
-  // 3. Normalize Taa Marbuta → ه
-  normalized = normalized.replace(/ة/g, "ه");
-  
-  // 4. Normalize Alef Maqsura → ي
-  normalized = normalized.replace(/ى/g, "ي");
-  
-  // 5. Strip Arabic prefixes (ب، ال، بال، وال، لل، ف، ك، و)
-  // Apply twice to catch nested prefixes like "وبالسمك" → "وسمك" → "سمك"
-  normalized = normalized.replace(ARABIC_PREFIX_PATTERN, "");
-  normalized = normalized.replace(ARABIC_PREFIX_PATTERN, "");
-  
-  // 6. Remove punctuation except digits, letters, and basic separators
-  normalized = normalized.replace(/[()[\]{}«»؟!،,;:\.\/\\]/g, " ");
-  
-  // 7. Collapse multiple spaces
-  normalized = normalized.replace(/\s+/g, " ").trim();
-  
-  return normalized;
-}
 
 // ─── Synonym Groups ────────────────────────────────────────────────────────
 // Each key is a canonical concept. Values are all known expressions for it.
+// Used for: (1) boosting matches between equivalent terms, (2) anti-confusion gating.
 
 export const SYNONYM_GROUPS: Record<string, string[]> = {
   // ── Plumbing ──
@@ -61,272 +19,73 @@ export const SYNONYM_GROUPS: Record<string, string[]> = {
   "مصفاة": ["مصفاة", "strainer", "فلتر", "مرشح"],
   
   // ── Pipes ──
-  "انابيب_UPVC": ["انابيب UPVC", "مواسير UPVC", "انابيب يو بي في سي", "UPVC pipe", "مواسير صرف"],
-  "انابيب_PPR": ["انابيب PPR", "مواسير PPR", "انابيب بولي بروبلين", "PPR pipe"],
-  "انابيب_حديد": ["انابيب حديد", "مواسير حديد", "انابيب حديد مجلفن", "GI pipe", "galvanized pipe"],
-  "انابيب_نحاس": ["انابيب نحاس", "مواسير نحاس", "copper pipe", "copper tube"],
+  "انابيب_UPVC": ["أنابيب UPVC", "مواسير UPVC", "انابيب يو بي في سي", "UPVC pipe", "مواسير صرف"],
+  "انابيب_PPR": ["أنابيب PPR", "مواسير PPR", "أنابيب بولي بروبلين", "PPR pipe"],
+  "انابيب_حديد": ["أنابيب حديد", "مواسير حديد", "أنابيب حديد مجلفن", "GI pipe", "galvanized pipe"],
+  "انابيب_نحاس": ["أنابيب نحاس", "مواسير نحاس", "copper pipe", "copper tube"],
 
   // ── Fire Protection ──
   "رشاش_متدلي": ["رشاش متدلي", "pendent sprinkler", "رشاش معلق", "pendent", "متدلي"],
   "رشاش_جانبي": ["رشاش جانبي", "sidewall sprinkler", "رشاش حائطي", "sidewall", "جانبي"],
   "رشاش_قائم": ["رشاش قائم", "upright sprinkler", "رشاش عمودي", "upright"],
   "رشاش_حريق": ["رشاش حريق", "sprinkler", "رشاش", "fire sprinkler"],
-  "طفاية_حريق": ["طفاية حريق", "fire extinguisher", "طفايه"],
+  "طفاية_حريق": ["طفاية حريق", "fire extinguisher", "طفاية"],
   "خرطوم_حريق": ["خرطوم حريق", "fire hose", "بكرة حريق", "hose reel"],
 
   // ── Structural ──
-  "خرسانة": ["خرسانه", "concrete", "كونكريت", "صب خرسانه"],
-  "خرسانة_نظافة": ["فرشه نظافه", "فرشات نظافه", "فرشه خرسانيه", "خرسانه نظافه", "خرسانه عاديه", "lean concrete", "blinding concrete", "blinding", "فرشه", "فرشات"],
-  "خرسانة_مسلحة": ["خرسانه مسلحه", "reinforced concrete", "خرسانه مسلحه جاهزه", "r.c", "rc"],
+  "خرسانة": ["خرسانة", "concrete", "كونكريت", "صب خرسانة"],
   "حديد_تسليح": ["حديد تسليح", "rebar", "تسليح", "reinforcement", "حديد"],
-  "كمرات": ["كمرات", "beams", "جسور", "عتبات", "كمره"],
-  "كمرات_ربط": ["كمرات ربط", "tie beam", "كمره ربط", "كمرات ربط الاساسات", "tie beams"],
-  "اعمدة": ["اعمده", "columns", "عمود", "اعمده خرسانيه"],
-  "رقاب_اعمدة": ["رقاب اعمده", "رقاب الاعمده", "neck column", "column neck", "رقبه عمود"],
-  "حوائط_قص": ["حوائط قص", "حوائط القص", "shear wall", "shear walls", "جدار قص"],
-  "قواعد": ["قواعد", "foundations", "اساسات", "قاعده"],
-  "بلاطات": ["بلاطات", "slabs", "سقف", "بلاطه", "سقف خرساني"],
-  "بلاطة_ارضية": ["بلاطه على الارض", "بلاطه ارضيه", "slab on grade", "ground slab", "بلاطه ارضيه"],
-  "سلالم": ["سلالم", "سلم", "stairs", "staircase", "درج"],
+  "كمرات": ["كمرات", "beams", "جسور", "عتبات", "كمرة"],
+  "اعمدة": ["أعمدة", "columns", "عمود", "اعمدة خرسانية"],
+  "قواعد": ["قواعد", "foundations", "أساسات", "قاعدة"],
+  "بلاطات": ["بلاطات", "slabs", "سقف", "بلاطة", "سقف خرساني"],
 
   // ── Finishes ──
-  "بلاط_ارضي": ["بلاط ارضي", "floor tiles", "بلاط ارضيات", "سيراميك ارضي", "سيراميك", "ceramic tiles", "بلاط سيراميك"],
+  "بلاط_ارضي": ["بلاط أرضي", "floor tiles", "بلاط ارضيات", "سيراميك أرضي"],
   "بلاط_جداري": ["بلاط جداري", "wall tiles", "بلاط حوائط", "سيراميك جداري"],
-  "دهان": ["دهان", "paint", "طلاء", "بويه", "دهانات"],
-  "ايبوكسي": ["ايبوكسي", "إيبوكسي", "epoxy", "ايبوكسيه", "إيبوكسية", "epoxy coating", "ايبوكسي ذاتي", "self leveling epoxy"],
-  "جبس": ["جبس", "gypsum", "جبس بورد", "gypsum board", "اسقف مستعاره"],
-  "رخام": ["رخام", "marble", "ماربل"],
-  "جرانيت": ["جرانيت", "granite", "قرانيت"],
-  "بورسلان": ["بورسلان", "porcelain", "بورسلين", "porcelain tiles"],
-  "لياسه": ["لياسه", "plaster", "محاره", "بياض", "لياسه اسمنتيه"],
-  "دروة": ["دروه", "دروة", "parapet", "بارابيت", "سور سطح"],
-
-  // ── Insulation ──
-  "عزل_مائي": ["عزل مائي", "waterproofing", "عزل ماء", "عزل رطوبه", "membrane"],
-  "عزل_حراري": ["عزل حراري", "thermal insulation", "عزل حرارى", "insulation"],
+  "دهان": ["دهان", "paint", "طلاء", "بوية", "دهانات"],
+  "جبس": ["جبس", "gypsum", "جبس بورد", "gypsum board", "أسقف مستعارة"],
 
   // ── Electrical ──
   "كابل_كهرباء": ["كابل كهرباء", "cable", "كيبل", "سلك كهربائي", "electric cable"],
-  "لوحة_كهرباء": ["لوحه كهربائيه", "panel board", "لوحه توزيع", "distribution board", "DB"],
+  "لوحة_كهرباء": ["لوحة كهربائية", "panel board", "لوحة توزيع", "distribution board", "DB"],
   "مفتاح_كهرباء": ["مفتاح كهربائي", "switch", "قاطع", "circuit breaker", "MCB"],
-  "انارة": ["اناره", "lighting", "اضاءه", "لمبه", "كشاف"],
-
-  // ── Communication / PA Systems ──
-  "سماعة_سقفية": ["سماعه سقفيه", "سماعات سقفيه", "ceiling speaker", "CEILING SPEAKER", "LOUD SPEAKER", "سماعه سقف"],
-  "سماعة_جدارية": ["سماعه جداريه", "سماعات جداريه", "wall speaker", "wall mounted speaker"],
-  "سماعة_بوقية": ["سماعه بوقيه", "horn speaker", "سماعه بوق", "horn loudspeaker"],
-  "نظام_اذاعة_داخلية": ["نظام اذاعه داخليه", "نظام اذاعه", "PA system", "public address system", "نظام نداء داخلي", "نظام استدعاء"],
-  "كاميرا_مراقبة": ["كاميرا مراقبه", "CCTV camera", "كاميرا", "camera", "دائره تلفزيونيه مغلقه"],
-  "نظام_انذار_حريق": ["نظام انذار حريق", "fire alarm system", "نظام كشف وانذار", "fire detection"],
-  "نظام_تحكم_ابواب": ["تحكم في الابواب", "access control", "تحكم ابواب", "door control", "نظام دخول"],
-  "نظام_CCTV": ["دائره تلفزيونيه مغلقه", "CCTV", "كاميرات مراقبه", "مراقبه تلفزيونيه", "نظام مراقبه"],
-  "بوابة_كشف_معادن": ["بوابه كشف معادن", "metal detector", "كشف معادن", "بوابه امنيه"],
-  "مواسير_صرف": ["مواسير صرف", "drainage pipe", "صرف صحي", "مواسير HDPE", "مواسير صرف صحي"],
-  "عزل_مجاري_هواء": ["عزل مجاري هواء", "duct insulation", "عزل دكت", "عزل مجاري"],
-
-  // ── Fire Suppression Systems ──
-  "نظام_غاز_اطفاء": ["NOVEC", "NOVEC-1230", "FM200", "FM-200", "غاز صافي", "غاز صافى", "نظام اطفاء غاز", "gas suppression", "clean agent", "اطفاء غاز"],
-  "نظام_رغوي": ["اطفاء رغوي", "foam system", "رغوه", "رغويه", "foam", "فوم"],
+  "انارة": ["إنارة", "lighting", "إضاءة", "لمبة", "كشاف"],
 
   // ── HVAC ──
   "تكييف": ["تكييف", "AC", "air conditioning", "مكيف", "تبريد"],
-  "مجاري_هواء": ["مجاري هواء", "duct", "دكت", "مجري هواء", "ductwork"],
-  "مروحة": ["مروحه", "fan", "مروحه شفط", "exhaust fan"],
+  "مجاري_هواء": ["مجاري هواء", "duct", "دكت", "مجرى هواء", "ductwork"],
+  "مروحة": ["مروحة", "fan", "مروحة شفط", "exhaust fan"],
   
   // ── Doors & Windows ──
-  "باب_خشب": ["باب خشب", "wooden door", "باب خشبي", "ابواب خشب"],
-  "باب_حديد": ["باب حديد", "steel door", "باب معدني", "باب فولاذي", "metal door", "ابواب معدنيه", "hollow core"],
-  "باب_المنيوم": ["باب المنيوم", "aluminum door", "باب المنيوم"],
-  "باب_أمني": ["باب أمني", "باب امني", "أبواب أمنية", "ابواب امنيه", "security door", "باب مصفح", "STUVE", "CHUB"],
-  "نافذة": ["نافذه", "window", "شباك", "نوافذ", "نافذه المنيوم"],
-  "نافذة_أمنية": ["نافذه أمنيه", "نافذه امنيه", "نوافذ أمنيه", "نوافذ امنيه", "security window", "شباك أمني", "زجاج أمني"],
-
-  // ── Sanitary / Kitchen / Fans ──
-  "أجهزة_صحية": ["حوض غسيل", "مرحاض", "أجهزه صحيه", "اجهزه صحيه", "sanitary", "lavatory", "WC", "مغسله"],
-  "خزائن": ["خزائن مطبخ", "كاونتر", "kitchen cabinet", "خزانه", "دولاب", "خزائن"],
-  "مراوح_شفط": ["مروحه شفط", "exhaust fan", "مروحه طرد", "سحب دخان", "مراوح هواء"],
-
-  // ── Mechanical Equipment ──
-  "مضخة": ["مضخه", "pump", "طلمبه", "مضخه مياه"],
-  "خزان": ["خزان", "tank", "خزان مياه", "تانك", "خزان تجميع"],
+  "باب_خشب": ["باب خشب", "wooden door", "باب خشبي", "أبواب خشب"],
+  "باب_حديد": ["باب حديد", "steel door", "باب معدني", "باب فولاذي"],
+  "باب_المنيوم": ["باب ألمنيوم", "aluminum door", "باب المنيوم"],
+  "نافذة": ["نافذة", "window", "شباك", "نوافذ"],
 };
 
 // ─── Anti-Confusion Pairs ──────────────────────────────────────────────────
+// If item matches concept A and candidate matches concept B, block the match.
 
 export const ANTI_CONFUSION_PAIRS: [string, string][] = [
-  // Valves
   ["صمام_بوابة", "منفس_هواء"],
   ["صمام_بوابة", "صمام_فراشة"],
   ["صمام_بوابة", "صمام_عدم_رجوع"],
   ["صمام_فراشة", "منفس_هواء"],
   ["صمام_عدم_رجوع", "منفس_هواء"],
-  // Sprinkler types
   ["رشاش_متدلي", "رشاش_جانبي"],
   ["رشاش_متدلي", "رشاش_قائم"],
   ["رشاش_جانبي", "رشاش_قائم"],
-  // Cables vs pipes
   ["كابل_كهرباء", "انابيب_UPVC"],
   ["كابل_كهرباء", "انابيب_PPR"],
-  // Tiles
   ["بلاط_ارضي", "بلاط_جداري"],
-  // Doors
   ["باب_خشب", "باب_حديد"],
   ["باب_خشب", "باب_المنيوم"],
   ["باب_حديد", "باب_المنيوم"],
-  // Doors vs Windows — never cross-match
-  ["باب_أمني", "نافذة"],
-  ["باب_أمني", "نافذة_أمنية"],
-  ["باب_أمني", "باب_خشب"],
-  ["باب_حديد", "نافذة"],
-  ["باب_حديد", "نافذة_أمنية"],
-  ["باب_خشب", "نافذة"],
-  // Security windows vs standard windows
-  ["نافذة_أمنية", "نافذة"],
-  // Non-window items vs windows
-  ["أجهزة_صحية", "نافذة"],
-  ["أجهزة_صحية", "نافذة_أمنية"],
-  ["خزائن", "نافذة"],
-  ["خزائن", "نافذة_أمنية"],
-  ["مراوح_شفط", "نافذة"],
-  ["مراوح_شفط", "نافذة_أمنية"],
-  // Pipes
   ["انابيب_UPVC", "انابيب_PPR"],
   ["انابيب_UPVC", "انابيب_حديد"],
   ["انابيب_PPR", "انابيب_حديد"],
   ["انابيب_نحاس", "انابيب_حديد"],
-  // Fire suppression — must not cross-match
-  ["نظام_غاز_اطفاء", "رشاش_حريق"],
-  ["نظام_غاز_اطفاء", "رشاش_جانبي"],
-  ["نظام_غاز_اطفاء", "رشاش_متدلي"],
-  ["نظام_غاز_اطفاء", "رشاش_قائم"],
-  ["نظام_غاز_اطفاء", "نظام_رغوي"],
-  ["نظام_رغوي", "رشاش_حريق"],
-  ["نظام_رغوي", "رشاش_جانبي"],
-  ["نظام_رغوي", "رشاش_متدلي"],
-  ["نظام_رغوي", "رشاش_قائم"],
-  // Speaker types
-  ["سماعة_سقفية", "سماعة_جدارية"],
-  ["سماعة_سقفية", "سماعة_بوقية"],
-  ["سماعة_جدارية", "سماعة_بوقية"],
-  // Speakers vs fire systems
-  ["سماعة_سقفية", "نظام_غاز_اطفاء"],
-  ["سماعة_جدارية", "نظام_غاز_اطفاء"],
-  ["سماعة_سقفية", "نظام_رغوي"],
-  // Camera vs fire
-  ["كاميرا_مراقبة", "نظام_غاز_اطفاء"],
-  ["كاميرا_مراقبة", "رشاش_حريق"],
-  // Insulation types
-  ["عزل_مائي", "عزل_حراري"],
-  // Finishes — different materials
-  ["رخام", "جرانيت"],
-  ["رخام", "بورسلان"],
-  ["جرانيت", "بورسلان"],
-  ["رخام", "بلاط_ارضي"],
-  ["جرانيت", "بلاط_ارضي"],
-  // Blockwork vs fire-rated blockwork
-  ["بلوك_مقاوم_حريق", "بلوك"],
-  // Walls vs slabs/tiles — prevent cross-matching
-  ["جدار_بلوك", "بلاطة_مجوفة"],
-  ["جدار_بلوك", "بلاط_ارضي"],
-  ["جدار_بلوك", "بلاط_جداري"],
-  ["جدار_بلوك", "بورسلان"],
-  ["جدار_بلوك", "رخام"],
-  ["جدار_بلوك", "جرانيت"],
-  ["بلاطة_مجوفة", "بلوك"],
-  ["بلاطة_مجوفة", "بلاط_ارضي"],
-  ["بلاطة_مجوفة", "بلاط_جداري"],
-  // Structural elements — prevent cross-matching
-  ["بلاطات_خرسانية", "كمرات_خرسانية"],
-  ["بلاطات_خرسانية", "اعمدة"],
-  ["بلاطات_خرسانية", "قواعد"],
-  ["كمرات_خرسانية", "اعمدة"],
-  ["كمرات_خرسانية", "قواعد"],
-  ["كمرات_خرسانية", "بلاطة_مجوفة"],
-  // Structural sub-types — never cross-match
-  ["كمرات_ربط", "حوائط_قص"],
-  ["كمرات_ربط", "اعمدة"],
-  ["كمرات_ربط", "رقاب_اعمدة"],
-  ["كمرات_ربط", "بلاطات"],
-  ["كمرات_ربط", "بلاطة_ارضية"],
-  ["كمرات_ربط", "سلالم"],
-  ["حوائط_قص", "كمرات"],
-  ["حوائط_قص", "اعمدة"],
-  ["حوائط_قص", "رقاب_اعمدة"],
-  ["حوائط_قص", "بلاطات"],
-  ["حوائط_قص", "بلاطة_ارضية"],
-  ["حوائط_قص", "سلالم"],
-  ["حوائط_قص", "قواعد"],
-  ["رقاب_اعمدة", "كمرات"],
-  ["رقاب_اعمدة", "بلاطات"],
-  ["رقاب_اعمدة", "بلاطة_ارضية"],
-  ["رقاب_اعمدة", "سلالم"],
-  ["رقاب_اعمدة", "قواعد"],
-  ["بلاطة_ارضية", "كمرات"],
-  ["بلاطة_ارضية", "اعمدة"],
-  ["بلاطة_ارضية", "سلالم"],
-  ["بلاطة_ارضية", "قواعد"],
-  ["سلالم", "كمرات"],
-  ["سلالم", "اعمدة"],
-  ["سلالم", "بلاطات"],
-  ["سلالم", "قواعد"],
-  // Security systems — prevent cross-matching
-  ["نظام_تحكم_ابواب", "نظام_CCTV"],
-  ["نظام_تحكم_ابواب", "كاميرا_مراقبة"],
-  ["بوابة_كشف_معادن", "نظام_CCTV"],
-  ["بوابة_كشف_معادن", "كاميرا_مراقبة"],
-  ["بوابة_كشف_معادن", "نظام_تحكم_ابواب"],
-  // Drainage vs structural
-  ["مواسير_صرف", "خرسانة"],
-  ["مواسير_صرف", "حديد_تسليح"],
-  ["مواسير_صرف", "كمرات_خرسانية"],
-  // Duct insulation vs other insulation/finishes
-  ["عزل_مجاري_هواء", "عزل_مائي"],
-  ["عزل_مجاري_هواء", "لياسه"],
-  ["عزل_مجاري_هواء", "دهان"],
-  // Equipment
-  ["مضخة", "خزان"],
-  // Concrete types — prevent cross-matching
-  ["خرسانة_نظافة", "خرسانة_مسلحة"],
-  ["خرسانة_نظافة", "حديد_تسليح"],
-  ["خرسانة_نظافة", "بلاط_ارضي"],
-  ["خرسانة_نظافة", "بلاطة_مجوفة"],
-  ["خرسانة_مسلحة", "بلاط_ارضي"],
-  // Blinding concrete vs ALL structural elements — never cross-match
-  ["خرسانة_نظافة", "كمرات_ربط"],
-  ["خرسانة_نظافة", "كمرات"],
-  ["خرسانة_نظافة", "حوائط_قص"],
-  ["خرسانة_نظافة", "اعمدة"],
-  ["خرسانة_نظافة", "رقاب_اعمدة"],
-  ["خرسانة_نظافة", "بلاطات"],
-  ["خرسانة_نظافة", "بلاطة_ارضية"],
-  ["خرسانة_نظافة", "سلالم"],
-  ["خرسانة_نظافة", "قواعد"],
-  // Earthworks — prevent cross-matching
-  ["حفريات", "ردم_دمك"],
-  ["حفريات", "خرسانة"],
-  ["حفريات", "كمرات"],
-  ["حفريات", "كمرات_خرسانية"],
-  ["حفريات", "اعمدة"],
-  ["حفريات", "بلاطات"],
-  ["حفريات", "قواعد"],
-  ["ردم_دمك", "خرسانة"],
-  // Epoxy vs tiles/ceramic — never cross-match
-  ["ايبوكسي", "بلاط_ارضي"],
-  ["ايبوكسي", "بلاط_جداري"],
-  ["ايبوكسي", "رخام"],
-  ["ايبوكسي", "جرانيت"],
-  ["ايبوكسي", "بورسلان"],
-  // Pumps vs sprinklers — never cross-match
-  ["مضخة", "رشاش_حريق"],
-  ["مضخة", "رشاش_متدلي"],
-  ["مضخة", "رشاش_جانبي"],
-  ["مضخة", "رشاش_قائم"],
-  // Parapet vs wall — different elements
-  ["دروة", "جدار_بلوك"],
-  ["دروة", "بلوك"],
-  // Insulated block vs standard block — never cross-match
-  ["بلوك_معزول", "جدار_بلوك"],
-  ["بلوك_معزول", "بلوك"],
 ];
 
 // ─── Dimension Parser ──────────────────────────────────────────────────────
@@ -339,20 +98,13 @@ export interface ParsedDimension {
 
 /**
  * Extract dimensions, diameters, and sizes from Arabic/English text.
- * Uses deepNormalize to strip prefixes BEFORE regex matching.
- * This means "بسمك", "والسمك", "بالسمك" all become "سمك" automatically.
+ * Returns all found dimensions sorted by value for deterministic comparison.
  */
 export function parseDimensions(text: string): ParsedDimension[] {
   if (!text) return [];
   const results: ParsedDimension[] = [];
 
-  // Deep normalize to strip Arabic prefixes before dimension parsing
-  const normalized = deepNormalize(text);
-  // Keep original for raw match extraction
-  const original = text;
-
-  // Diameter: "قطر 20 مم", "Ø25", "DN50", "20mm dia"
-  // After normalization: "بقطر" → "قطر", "بالقطر" → "قطر"
+  // Diameter: "قطر 20 مم", "Ø25", "DN50", "قطر20مم", "20mm dia"
   const diaPatterns = [
     /قطر\s*(\d+(?:\.\d+)?)\s*(?:مم|mm|ملم)?/g,
     /[Øø]\s*(\d+(?:\.\d+)?)/g,
@@ -363,7 +115,7 @@ export function parseDimensions(text: string): ParsedDimension[] {
   ];
   for (const pat of diaPatterns) {
     let m: RegExpExecArray | null;
-    while ((m = pat.exec(normalized)) !== null) {
+    while ((m = pat.exec(text)) !== null) {
       results.push({ type: "diameter", values: [parseFloat(m[1])], raw: m[0] });
     }
   }
@@ -371,23 +123,21 @@ export function parseDimensions(text: string): ParsedDimension[] {
   // Dimensions: "600x600", "1200*2000مم", "30X600X600"
   const dimPattern = /(\d+(?:\.\d+)?)\s*[xX×*]\s*(\d+(?:\.\d+)?)(?:\s*[xX×*]\s*(\d+(?:\.\d+)?))?/g;
   let m: RegExpExecArray | null;
-  while ((m = dimPattern.exec(normalized)) !== null) {
+  while ((m = dimPattern.exec(text)) !== null) {
     const vals = [parseFloat(m[1]), parseFloat(m[2])];
     if (m[3]) vals.push(parseFloat(m[3]));
     results.push({ type: "dimensions", values: vals.sort((a, b) => a - b), raw: m[0] });
   }
 
   // Thickness: "سمك 3 مم", "thickness 5mm"
-  // After normalization: "بسمك" → "سمك", "بالسمك" → "سمك", "والسمك" → "سمك"
-  const thickPattern = /(?:سمك|سماك[هة]|thickness|thk)\s*(\d+(?:\.\d+)?)\s*(?:مم|mm)?/gi;
-  while ((m = thickPattern.exec(normalized)) !== null) {
+  const thickPattern = /(?:سمك|thickness|thk)\s*(\d+(?:\.\d+)?)\s*(?:مم|mm)?/gi;
+  while ((m = thickPattern.exec(text)) !== null) {
     results.push({ type: "thickness", values: [parseFloat(m[1])], raw: m[0] });
   }
 
   // Size: "مقاس 30", "size 25"
-  // After normalization: "بمقاس" → "مقاس"
   const sizePattern = /(?:مقاس|size|no\.|رقم)\s*(\d+(?:\.\d+)?)/gi;
-  while ((m = sizePattern.exec(normalized)) !== null) {
+  while ((m = sizePattern.exec(text)) !== null) {
     results.push({ type: "size", values: [parseFloat(m[1])], raw: m[0] });
   }
 
@@ -401,7 +151,7 @@ export function parseDimensions(text: string): ParsedDimension[] {
  *  -1 if conflicting dimensions found
  */
 export function compareDimensions(dimsA: ParsedDimension[], dimsB: ParsedDimension[]): number {
-  if (dimsA.length === 0 || dimsB.length === 0) return 0;
+  if (dimsA.length === 0 || dimsB.length === 0) return 0; // no data to compare
 
   let hasMatch = false;
   let hasConflict = false;
@@ -410,6 +160,7 @@ export function compareDimensions(dimsA: ParsedDimension[], dimsB: ParsedDimensi
     for (const dB of dimsB) {
       if (dA.type !== dB.type) continue;
       
+      // Same type — compare values
       const valsMatch = dA.values.length === dB.values.length &&
         dA.values.every((v, i) => Math.abs(v - dB.values[i]) < 0.5);
       
@@ -430,20 +181,29 @@ export function compareDimensions(dimsA: ParsedDimension[], dimsB: ParsedDimensi
 
 /**
  * Identify which synonym concepts a text matches.
- * Uses deepNormalize for prefix-agnostic matching.
+ * Returns canonical concept keys (e.g., "صمام_بوابة").
  */
 export function detectConcepts(text: string): string[] {
   if (!text) return [];
-  const normalized = deepNormalize(text);
+  const lower = text.toLowerCase();
+  const normalized = lower
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[ًٌٍَُِّْـ]/g, "");
 
   const matched: string[] = [];
 
   for (const [concept, synonyms] of Object.entries(SYNONYM_GROUPS)) {
     for (const syn of synonyms) {
-      const synNorm = deepNormalize(syn);
-      if (synNorm && normalized.includes(synNorm)) {
+      const synNorm = syn.toLowerCase()
+        .replace(/[أإآ]/g, "ا")
+        .replace(/ة/g, "ه")
+        .replace(/ى/g, "ي")
+        .replace(/[ًٌٍَُِّْـ]/g, "");
+      if (normalized.includes(synNorm)) {
         matched.push(concept);
-        break;
+        break; // one match per concept is enough
       }
     }
   }
@@ -453,13 +213,12 @@ export function detectConcepts(text: string): string[] {
 
 /**
  * Check if two texts have conflicting concepts (anti-confusion gate).
+ * Returns true if they should NOT be matched.
  */
 export function hasConceptConflict(conceptsA: string[], conceptsB: string[]): boolean {
   for (const cA of conceptsA) {
     for (const cB of conceptsB) {
-      if (cA === cB) continue;
-      // Skip if both concepts appear in both lists (shared ambiguity, not a real conflict)
-      if (conceptsA.includes(cB) && conceptsB.includes(cA)) continue;
+      if (cA === cB) continue; // same concept = no conflict
       const isPair = ANTI_CONFUSION_PAIRS.some(
         ([x, y]) => (x === cA && y === cB) || (x === cB && y === cA)
       );
@@ -478,25 +237,33 @@ export function hasSynonymOverlap(conceptsA: string[], conceptsB: string[]): boo
 
 // ─── Parent Context Extraction ─────────────────────────────────────────────
 
+/**
+ * Extract parent context from notes field [PARENT: ...] tag.
+ */
 export function extractParentContext(notes: string | null | undefined): string {
   if (!notes) return "";
   const match = notes.match(/\[PARENT:\s*(.+?)\]/);
   return match ? match[1].trim() : "";
 }
 
+/**
+ * Build enriched description by merging parent context when the description is short.
+ */
 export function buildEnrichedDescription(
   description: string,
   notes: string | null | undefined,
-  threshold: number = 4,
+  threshold: number = 4, // tokens
 ): string {
   const parentCtx = extractParentContext(notes);
   if (!parentCtx) return description;
   
+  // Count meaningful tokens
   const tokens = description
     .replace(/[ًٌٍَُِّْـ]/g, "")
     .split(/[\s,،./-]+/)
     .filter(t => t.length > 1);
   
+  // Only enrich if description is short
   if (tokens.length <= threshold) {
     return `${parentCtx} — ${description}`;
   }

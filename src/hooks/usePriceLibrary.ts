@@ -44,28 +44,14 @@ export function useUpdatePriceItem() {
         item_code: string | null; item_description: string | null; item_name_aliases: string[] | null;
         approved_by: string | null; approved_at: string | null; source_type: string;
         notes: string | null; is_locked: boolean; updated_at: string;
-        keywords: string[];
       }>;
       oldPrice?: number;
       newPrice?: number;
       userId?: string;
     }) => {
-      // Auto-regenerate keywords and aliases when name changes
-      const enrichedUpdates = { ...updates };
-      if (updates.standard_name_ar) {
-        enrichedUpdates.keywords = generateKeywords(updates.standard_name_ar) as any;
-        // Refresh aliases: keep existing + add new name if not already present
-        const { data: existing } = await supabase.from("rate_library").select("item_name_aliases").eq("id", id).single();
-        const currentAliases = (existing?.item_name_aliases as string[]) || [];
-        if (!currentAliases.includes(updates.standard_name_ar)) {
-          enrichedUpdates.item_name_aliases = [...currentAliases, updates.standard_name_ar] as any;
-        }
-      }
-
-      const { error } = await supabase.from("rate_library").update(enrichedUpdates).eq("id", id);
+      const { error } = await supabase.from("rate_library").update(updates).eq("id", id);
       if (error) throw error;
-
-      // Log price change only
+      // Log price change if price changed
       if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
         await supabase.from("price_change_log").insert({
           rate_library_id: id,
@@ -123,21 +109,6 @@ export function useDeletePriceItem() {
   });
 }
 
-// Generate keywords from Arabic name
-function generateKeywords(name: string): string[] {
-  const stripped = name
-    .replace(/[\u0610-\u061A\u064B-\u065F\u0670]/g, "") // remove tashkeel
-    .replace(/[إأآٱ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي");
-  const stopPrefixes = /^(ال|وال|بال|لل|و|ب|ل|ف|ك)/;
-  const tokens = stripped
-    .split(/[\s,،.؛;/\\()\-–—]+/)
-    .map(t => t.replace(stopPrefixes, ""))
-    .filter(t => t.length >= 2);
-  return [...new Set(tokens)];
-}
-
 // Add new price item
 export function useAddPriceItem() {
   const qc = useQueryClient();
@@ -153,15 +124,9 @@ export function useAddPriceItem() {
       item_code?: string;
       item_name_aliases?: string[];
     }) => {
-      const keywords = generateKeywords(item.standard_name_ar);
-      const aliases = item.item_name_aliases?.length
-        ? item.item_name_aliases
-        : [item.standard_name_ar];
       const { data, error } = await supabase.from("rate_library").insert({
         ...item,
         target_rate: item.base_rate,
-        keywords,
-        item_name_aliases: aliases,
       }).select("id").single();
       if (error) throw error;
       return data;
@@ -304,7 +269,7 @@ export function useMatchPriceItem() {
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const match = useCallback(async (itemName: string, unit?: string, itemNo?: string) => {
+  const match = useCallback(async (itemName: string, unit?: string) => {
     if (!itemName || itemName.length < 3) {
       setResults([]);
       return;
@@ -312,7 +277,7 @@ export function useMatchPriceItem() {
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("match-price-item", {
-        body: { item_name: itemName, unit, item_no: itemNo },
+        body: { item_name: itemName, unit },
       });
       if (error) throw error;
       setResults(data?.matches || []);

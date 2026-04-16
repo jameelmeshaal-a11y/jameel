@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, EyeOff, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X, Lock, Columns } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,8 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { exportOriginalWithPrices } from "@/lib/boqOriginalExport";
-import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, repricePendingItems, resetBoQPricing, calculateBMSCost, isBMSItem, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
+import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -56,8 +55,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [currentItemName, setCurrentItemName] = useState<string>("");
   const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
   const [repricingItemId, setRepricingItemId] = useState<string | null>(null);
-  const [showBreakdown, setShowBreakdown] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"all" | "manual" | "non_manual" | "pending">("all");
 
   // Real-time cache updater callback
   const makeOnItemPriced = useCallback((): OnItemPricedCallback => {
@@ -159,8 +156,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       }
 
       // 2. CLEAN STATE — zero out all pricing data before re-pricing
-      const { reset: resetCount, protected: protectedCount } = await resetBoQPricing(boqFileId);
-      console.log(`🧹 Reset ${resetCount} items, protected ${protectedCount} manual overrides`);
+      const resetCount = await resetBoQPricing(boqFileId);
+      console.log(`🧹 Reset ${resetCount} items to clean state`);
 
       // 3. Clear query cache to prevent stale data
       qc.removeQueries({ queryKey: ["boq-items", boqFileId] });
@@ -197,8 +194,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         }
       }
 
-      const protectionMsg = "";
-      toast.success(`تم إعادة التسعير الشاملة: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)} | تم تصفير جميع البنود بلا استثناء ✅`);
+      toast.success(`تم إعادة التسعير: ${result.itemCount} بند — الإجمالي: ${formatCurrency(result.totalValue)}`);
       
       await Promise.all([
         qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
@@ -250,37 +246,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     }
   }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
 
-  const handleRepricePending = useCallback(async () => {
-    if (!boqFileId) return;
-    setPricing(true);
-    setPricingProgress({ current: 0, total: 0 });
-    setRunningTotal(0);
-    setCurrentItemName("");
-    try {
-      const onItemPricedCb = makeOnItemPriced();
-      const result = await repricePendingItems(boqFileId, cities, (current, total) => {
-        setPricingProgress({ current, total });
-      }, onItemPricedCb);
-      if (result.pricedCount > 0) {
-        toast.success(`✅ تم تسعير ${result.pricedCount} بند pending — ${result.stillPendingCount} بند لا يزال pending${result.skippedManual > 0 ? ` | تم تخطي ${result.skippedManual} بند يدوي` : ""}`);
-      } else {
-        toast.info("لم يتم العثور على تطابقات جديدة للبنود الـ pending");
-      }
-      await Promise.all([
-        qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" }),
-        qc.refetchQueries({ queryKey: ["projects", projectId], type: "active" }),
-        qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
-        qc.invalidateQueries({ queryKey: ["projects"] }),
-      ]);
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setPricing(false);
-      setRunningTotal(null);
-      setCurrentItemName("");
-    }
-  }, [boqFileId, cities, qc, projectId, makeOnItemPriced]);
-
   const handleExport = async () => {
     if (items.length === 0) return;
 
@@ -314,30 +279,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       const date = new Date().toISOString().split("T")[0];
       await exportStyledBoQ(unpricedItems as any, `${projectName}_unpriced_${date}`, boqFileName || "BoQ");
       toast.success(`تم تصدير ${unpricedItems.length} بند غير مسعّر`);
-    } catch (err: any) {
-      toast.error(err.message);
-    }
-  };
-
-  const handleExportEtemad = async () => {
-    if (items.length === 0) return;
-    const pricedCount = items.filter(i => i.unit_rate && i.unit_rate > 0).length;
-    if (pricedCount === 0) {
-      toast.warning("لا توجد بنود مسعّرة للتصدير");
-      return;
-    }
-
-    const boqFile = boqFiles.find(f => f.id === boqFileId);
-    if (!boqFile?.file_path) {
-      toast.error("لم يُعثر على الملف الأصلي في التخزين");
-      return;
-    }
-
-    try {
-      toast.info("جارٍ تحميل الملف الأصلي وكتابة الأسعار...");
-      const projectName = project?.name || "Project";
-      await exportOriginalWithPrices(items as any, boqFile.file_path, projectName, boqFileName || "BoQ");
-      toast.success(`تم تصدير ${pricedCount} سعر على الملف الأصلي بنجاح ✅`);
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -413,25 +354,14 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   }, []);
 
   const filteredItems = useMemo(() => {
-    if (activeFilters.size === 0 && !statusFilter) return items;
+    if (activeFilters.size === 0) return items;
 
     let result = [...items];
-
-    // Status filter (manual/non-manual/pending)
-    if (statusFilter === "manual") {
-      result = result.filter(i => i.override_type === "manual");
-    } else if (statusFilter === "non_manual") {
-      result = result.filter(i => i.override_type !== "manual");
-    } else if (statusFilter === "pending") {
-      result = result.filter(i => i.status === "pending");
-    }
-
-    if (activeFilters.size === 0) return result;
 
     // Build top-20 sets if needed
     const top20UnitRate = activeFilters.has("top_unit_rate")
       ? new Set(
-          [...result]
+          [...items]
             .filter(i => i.unit_rate && i.unit_rate > 0)
             .sort((a, b) => (b.unit_rate || 0) - (a.unit_rate || 0))
             .slice(0, 20)
@@ -441,7 +371,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
     const top20Total = activeFilters.has("top_total")
       ? new Set(
-          [...result]
+          [...items]
             .filter(i => i.total_price && i.total_price > 0)
             .sort((a, b) => (b.total_price || 0) - (a.total_price || 0))
             .slice(0, 20)
@@ -459,22 +389,15 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
     });
 
     return result;
-  }, [items, activeFilters, statusFilter]);
+  }, [items, activeFilters]);
 
   const canExport = exportSummary.canExport;
 
-  // Auto-calculate BMS result when items load — only if a BMS item with qty > 0 exists
+  // Auto-calculate BMS result when items load
   useEffect(() => {
     if (items.length > 0) {
-      const hasBMSItemWithQty = items.some(
-        (i: any) => isBMSItem(i.description || "") && (i.quantity || 0) > 0
-      );
-      if (hasBMSItemWithQty) {
-        const bms = calculateBMSCost({ items });
-        setBmsResult(bms.hasBMSItems ? bms : null);
-      } else {
-        setBmsResult(null);
-      }
+      const bms = calculateBMSCost({ items });
+      setBmsResult(bms.hasBMSItems ? bms : null);
     }
   }, [items]);
 
@@ -594,89 +517,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <BMSAnalysisPanel bmsResult={bmsResult} />
       )}
 
-      {/* LAYER 4: Stale Price Warning Banner */}
-      {(() => {
-        const staleItems = items.filter((i: any) => i.status === "stale_price");
-        if (staleItems.length === 0) return null;
-        return (
-          <div className="rounded-lg border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-900/20 p-3 mb-4 flex flex-wrap items-center justify-between gap-3" dir="rtl">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 shrink-0" />
-              <div>
-                <div className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
-                  ⚠️ يوجد {staleItems.length} بند بأسعار قديمة — تم تحديث المكتبة بعد التسعير
-                </div>
-                <div className="text-xs text-yellow-600 dark:text-yellow-400">
-                  اضغط "تحديث الأسعار" لمزامنة البنود مع أحدث أسعار المكتبة
-                </div>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1 border-yellow-500 text-yellow-700 hover:bg-yellow-100 dark:text-yellow-300 dark:hover:bg-yellow-900/40"
-              disabled={pricing}
-              onClick={async () => {
-                setPricing(true);
-                try {
-                  // Fetch library rates for all stale items and update them properly
-                  const linkedIds = [...new Set(staleItems.map((s: any) => s.linked_rate_id).filter(Boolean))] as string[];
-                  let updatedCount = 0;
-
-                  if (linkedIds.length > 0) {
-                    const { data: libEntries } = await supabase
-                      .from("rate_library")
-                      .select("id, target_rate, materials_pct, labor_pct, equipment_pct, logistics_pct, risk_pct, profit_pct")
-                      .in("id", linkedIds);
-                    const libMap = new Map((libEntries || []).map((l: any) => [l.id, l]));
-
-                    for (const si of staleItems) {
-                      // Never touch manual overrides
-                      if (si.override_type === "manual") continue;
-                      const lib = si.linked_rate_id ? libMap.get(si.linked_rate_id) : null;
-                      if (!lib) continue;
-
-                      const locFactor = si.location_factor || 1.0;
-                      const newRate = +(lib.target_rate * locFactor).toFixed(2);
-                      const totalPct = (lib.materials_pct || 0) + (lib.labor_pct || 0) + (lib.equipment_pct || 0) + (lib.logistics_pct || 0) + (lib.risk_pct || 0) + (lib.profit_pct || 0);
-                      const bd = totalPct > 0 ? {
-                        materials: +(newRate * (lib.materials_pct || 0) / totalPct).toFixed(2),
-                        labor: +(newRate * (lib.labor_pct || 0) / totalPct).toFixed(2),
-                        equipment: +(newRate * (lib.equipment_pct || 0) / totalPct).toFixed(2),
-                        logistics: +(newRate * (lib.logistics_pct || 0) / totalPct).toFixed(2),
-                        risk: +(newRate * (lib.risk_pct || 0) / totalPct).toFixed(2),
-                        profit: +(newRate * (lib.profit_pct || 0) / totalPct).toFixed(2),
-                      } : { materials: newRate, labor: 0, equipment: 0, logistics: 0, risk: 0, profit: 0 };
-
-                      await supabase.from("boq_items").update({
-                        unit_rate: newRate,
-                        total_price: +(newRate * si.quantity).toFixed(2),
-                        ...bd,
-                        status: "approved",
-                      }).eq("id", si.id);
-                      updatedCount++;
-                    }
-                  }
-
-                  // Recalculate project total
-                  await supabase.rpc("recalculate_project_total", { p_project_id: projectId });
-                  await qc.refetchQueries({ queryKey: ["boq-items", boqFileId], type: "active" });
-                  await qc.invalidateQueries({ queryKey: ["projects", projectId] });
-                  toast.success(`تم تحديث ${updatedCount} بند بأسعار المكتبة الجديدة ✅`);
-                } catch (err: any) {
-                  toast.error("فشل تحديث الأسعار: " + err.message);
-                } finally {
-                  setPricing(false);
-                }
-              }}
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${pricing ? "animate-spin" : ""}`} />
-              تحديث الأسعار
-            </Button>
-          </div>
-        );
-      })()}
-
       {hasItems && autoFixFailed && !consistency.consistent && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -738,11 +578,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
                 </Button>
               )}
-              {items.filter(i => i.status === "pending").length > 0 && (
-                <Button variant="secondary" size="sm" className="gap-1 border-primary/30" onClick={handleRepricePending} disabled={pricing}>
-                  <Play className="w-3 h-3" /> تسعير الـ Pending ({items.filter(i => i.status === "pending").length})
-                </Button>
-              )}
               {pricedCount > 0 && (
                 <Button variant="outline" size="sm" className="gap-1" onClick={handleIntegrityCheck} disabled={checkingIntegrity || pricing}>
                   {checkingIntegrity ? <Loader2 className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
@@ -758,9 +593,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               </Button>
               <Button variant="outline" size="sm" className="gap-1" onClick={handleExportUnpriced}>
                 <ListX className="w-3 h-3" /> تصدير غير المسعّر
-              </Button>
-              <Button variant="outline" size="sm" className="gap-1 border-green-600 text-green-700 hover:bg-green-50" onClick={handleExportEtemad}>
-                <FileText className="w-3 h-3" /> 📋 تصدير اعتماد
               </Button>
             </>
           )}
@@ -815,30 +647,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded-lg border bg-muted/20">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs text-muted-foreground ml-1">فلترة:</span>
-
-          {/* Status quick-filters */}
-          {([
-            { key: "all" as const, label: "الكل", icon: null },
-            { key: "manual" as const, label: "🔒 يدوي معتمد", icon: null },
-            { key: "non_manual" as const, label: "غير يدوي", icon: null },
-            { key: "pending" as const, label: "⏳ pending", icon: null },
-          ] as const).map(f => (
-            <button
-              key={f.key}
-              onClick={() => setStatusFilter(f.key)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${
-                statusFilter === f.key
-                  ? "bg-primary/15 text-primary border-primary/40 font-medium shadow-sm"
-                  : "bg-background text-muted-foreground border-border hover:bg-muted"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-
-          <span className="w-px h-4 bg-border mx-1" />
-
-          {/* Existing advanced filters */}
           {[
             { key: "top_unit_rate", label: "الأعلى سعر وحدة", color: "bg-primary/10 text-primary border-primary/30" },
             { key: "top_total", label: "الأعلى إجمالي", color: "bg-primary/10 text-primary border-primary/30" },
@@ -858,13 +666,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               {f.label}
             </button>
           ))}
-          {(activeFilters.size > 0 || statusFilter !== "all") && (
+          {activeFilters.size > 0 && (
             <>
               <span className="text-[11px] text-muted-foreground mx-1">
                 عرض {filteredItems.length} من {items.length} بند
               </span>
               <button
-                onClick={() => { setActiveFilters(new Set()); setStatusFilter("all"); }}
+                onClick={() => setActiveFilters(new Set())}
                 className="text-[11px] px-2 py-1 rounded-full border border-border bg-background text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all flex items-center gap-1"
               >
                 <X className="w-3 h-3" /> مسح
@@ -874,18 +682,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
-          <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
-          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
-          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
-        </div>
-        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setShowBreakdown(prev => !prev)}>
-          {showBreakdown ? <EyeOff className="w-3.5 h-3.5" /> : <Columns className="w-3.5 h-3.5" />}
-          {showBreakdown ? "إخفاء التحليل" : "عرض التحليل"}
-        </Button>
+      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted inline-block" /> {t("originalProtected")}</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-accent inline-block" /> {t("pricingSystem")}</span>
+        <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-emerald-500" /> {t("approved")}</span>
+        <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> {t("reviewNeeded")}</span>
+        <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" /> {t("conflict")}</span>
       </div>
 
       <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
@@ -896,19 +698,19 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               {items.some(i => i.section_no && i.section_no !== "") && <th className="protected-col w-20">رقم القسم</th>}
               <th className="protected-col">{t("itemNo")}</th>
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
+              <th className="w-16 text-center">المطابقة</th>
               <th className="protected-col w-16">{t("unit")}</th>
               <th className="protected-col w-24 text-right">{t("qty")}</th>
+              <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
-              <th className="pricing-col w-28">الفئة</th>
-              <th className="w-16 text-center">المطابقة</th>
               <th className="w-10"></th>
-              {showBreakdown && !ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
-              {showBreakdown && <th className="pricing-col w-20 text-right">{t("labor")}</th>}
-              {showBreakdown && <th className="pricing-col w-20 text-right">{t("equip")}</th>}
-              {showBreakdown && <th className="pricing-col w-20 text-right">{t("logis")}</th>}
-              {showBreakdown && <th className="pricing-col w-16 text-right">{t("risk")}</th>}
-              {showBreakdown && <th className="pricing-col w-16 text-right">{t("profit")}</th>}
+              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
+              <th className="pricing-col w-20 text-right">{t("labor")}</th>
+              <th className="pricing-col w-20 text-right">{t("equip")}</th>
+              <th className="pricing-col w-20 text-right">{t("logis")}</th>
+              <th className="pricing-col w-16 text-right">{t("risk")}</th>
+              <th className="pricing-col w-16 text-right">{t("profit")}</th>
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
@@ -926,12 +728,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
                 <td className="text-muted-foreground">{index + 1}</td>
                 {items.some(i => i.section_no && i.section_no !== "") && <td className="protected-col font-mono text-xs">{item.section_no}</td>}
-                <td className="protected-col font-mono text-xs">
-                  <span className="inline-flex items-center gap-1">
-                    {item.item_no}
-                    {item.override_type === "manual" && <Lock className="w-3 h-3 text-amber-600 dark:text-amber-400" />}
-                  </span>
-                </td>
+                <td className="protected-col font-mono text-xs">{item.item_no}</td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
@@ -939,6 +736,21 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                   {item.status === "unmatched" && (
                     <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
+                  )}
+                </td>
+                <td className="text-center">
+                  {isPriced && (
+                    item.linked_rate_id && item.source === "library-high" ? (
+                      <span title="موجود في المكتبة — معتمد">✅</span>
+                    ) : item.linked_rate_id && item.source === "library-medium" ? (
+                      <span title="اقتراح — يحتاج مراجعة">🟡</span>
+                    ) : item.source === "no_match" || item.status === "unmatched" ? (
+                      <span title="غير موجود في المكتبة — أدخل السعر يدوياً">🔴</span>
+                    ) : item.unit_rate && item.unit_rate > 0 ? (
+                      <span title="مسعّر">🟢</span>
+                    ) : (
+                      <span title="غير مسعّر">🔴</span>
+                    )
                   )}
                 </td>
                 <td className="protected-col text-center text-xs" dir="rtl">
@@ -972,8 +784,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   )}
                 </td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
-                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="pricing-col">
                   {isPriced && (
                     <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
@@ -981,25 +791,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </Badge>
                   )}
                 </td>
-                <td className="text-center">
-                  {item.override_type === "manual" ? (
-                    <Badge variant="outline" className="text-[9px] border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 font-semibold gap-1 px-1.5 py-0.5">
-                      <Lock className="w-3 h-3" /> محمي يدوياً
-                    </Badge>
-                  ) : isPriced && (
-                    item.linked_rate_id && item.source === "library-high" ? (
-                      <span title="موجود في المكتبة — معتمد">✅</span>
-                    ) : item.linked_rate_id && item.source === "library-medium" ? (
-                      <span title="اقتراح — يحتاج مراجعة">🟡</span>
-                    ) : item.source === "no_match" || item.status === "unmatched" ? (
-                      <span title="غير موجود في المكتبة — أدخل السعر يدوياً">🔴</span>
-                    ) : item.unit_rate && item.unit_rate > 0 ? (
-                      <span title="مسعّر">🟢</span>
-                    ) : (
-                      <span title="غير مسعّر">🔴</span>
-                    )
-                  )}
-                </td>
+                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="text-center">
                   {isPriced && (
                     <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)}>
@@ -1007,12 +800,12 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </Button>
                   )}
                 </td>
-                {showBreakdown && !ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
-                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>}
-                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>}
-                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>}
-                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>}
-                {showBreakdown && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>}
+                {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>
                 <td className="text-center">
                   {isPriced && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>

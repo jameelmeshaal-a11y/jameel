@@ -745,7 +745,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      extract_sub_item: { Args: { full_desc: string }; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -757,26 +756,6 @@ export type Database = {
         Args: { p_project_id: string }
         Returns: number
       }
-      save_manual_price: {
-        Args: {
-          p_boq_file_id: string
-          p_correction_note?: string
-          p_equipment: number
-          p_item_id: string
-          p_labor: number
-          p_logistics: number
-          p_manual_overrides?: Json
-          p_materials: number
-          p_profit: number
-          p_risk: number
-          p_total_price: number
-          p_unit_rate: number
-          p_user_id?: string
-        }
-        Returns: Json
-      }
-      show_limit: { Args: never; Returns: number }
-      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

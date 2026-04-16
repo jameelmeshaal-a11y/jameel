@@ -6,7 +6,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { detectCategory } from "./categoryDetector";
 import { getCostModel } from "./costModels";
-import { parseDimensions, compareDimensions } from "./synonyms";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -16,8 +15,7 @@ export type IssueType =
   | "breakdown_mismatch"  // sum of components ≠ unit_rate
   | "low_confidence"      // confidence 50-69%
   | "zero_price"          // unit_rate = 0 on priceable item
-  | "zero_breakdown"      // materials+labor+equipment+logistics = 0 with price > 0
-  | "dimension_mismatch"; // linked to library record with different WxH dimensions
+  | "zero_breakdown";     // materials+labor+equipment+logistics = 0 with price > 0
 
 export type FixAction = "reprice" | "redistribute" | "unlink" | "manual";
 
@@ -180,31 +178,6 @@ export async function runIntegrityCheck(boqFileId: string): Promise<IntegrityRep
       }
     }
 
-    // ── Check 6: Dimension mismatch with linked library ──
-    if (item.linked_rate_id) {
-      const lib = libMap.get(item.linked_rate_id);
-      if (lib) {
-        const boqDims = parseDimensions((item.description || "") + " " + (item.description_en || ""));
-        const libDims = parseDimensions((lib.standard_name_ar || "") + " " + (lib.standard_name_en || ""));
-        const boqHasWxH = boqDims.some((d: any) => d.type === "dimensions" && d.values.length >= 2);
-        const libHasWxH = libDims.some((d: any) => d.type === "dimensions" && d.values.length >= 2);
-        if (boqHasWxH && libHasWxH && compareDimensions(boqDims, libDims) === -1) {
-          itemIssues.push({
-            itemId: item.id,
-            itemNo: item.item_no,
-            description: item.description,
-            issueType: "dimension_mismatch",
-            severity: "critical",
-            currentValue: 0,
-            expectedValue: 0,
-            detail: `بند مرتبط بسجل مكتبة بمقاسات مختلفة — يجب إعادة المطابقة`,
-            fixAction: "unlink",
-            linkedRateId: item.linked_rate_id,
-          });
-        }
-      }
-    }
-
     if (itemIssues.length === 0 && item.unit_rate && item.unit_rate > 0) {
       healthyCount++;
     }
@@ -218,7 +191,6 @@ export async function runIntegrityCheck(boqFileId: string): Promise<IntegrityRep
     low_confidence: 0,
     zero_price: 0,
     zero_breakdown: 0,
-    dimension_mismatch: 0,
   };
   let critical = 0;
   let warning = 0;
@@ -264,9 +236,6 @@ export async function fixIntegrityIssues(
     try {
       const item = itemMap.get(issue.itemId);
       if (!item) { failed++; continue; }
-
-      // Guard: never touch manual override items
-      if (item.override_type === "manual") { continue; }
 
       if (issue.fixAction === "reprice" && issue.linkedRateId) {
         const lib = libMap.get(issue.linkedRateId);
@@ -387,92 +356,4 @@ function calculateBreakdown(
   if (diff !== 0) materials = +(materials + diff).toFixed(2);
 
   return { materials, labor, equipment, logistics, risk, profit };
-}
-
-// ─── Deviation Report ───────────────────────────────────────────────────────
-
-export interface DeviationItem {
-  itemId: string;
-  itemNo: string;
-  description: string;
-  unit: string;
-  unitRate: number;
-  libraryRate: number;
-  deviationPct: number;
-  linkedRateId: string;
-  libraryName: string;
-  classification: "likely_mislink" | "spec_difference" | "needs_review";
-}
-
-/**
- * Find all items with >30% deviation from their linked library rate.
- * Classifies each as mislink, spec difference, or needs review.
- */
-export async function findDeviationItems(boqFileId: string): Promise<DeviationItem[]> {
-  const [itemsRes, libraryRes] = await Promise.all([
-    supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId),
-    supabase.from("rate_library").select("*"),
-  ]);
-
-  const items = itemsRes.data || [];
-  const library = libraryRes.data || [];
-  const libMap = new Map(library.map(l => [l.id, l]));
-
-  const deviations: DeviationItem[] = [];
-
-  for (const item of items) {
-    if (!item.linked_rate_id || !item.unit_rate || item.unit_rate <= 0) continue;
-    if (item.override_type === "manual") continue; // skip manual items
-
-    const lib = libMap.get(item.linked_rate_id);
-    if (!lib || lib.target_rate <= 0) continue;
-
-    const locFactor = item.location_factor || 1.0;
-    const expectedRate = lib.target_rate * locFactor;
-    const deviationPct = Math.abs(item.unit_rate - expectedRate) / expectedRate * 100;
-
-    if (deviationPct < 30) continue;
-
-    // Classify the deviation
-    let classification: DeviationItem["classification"] = "needs_review";
-    if (deviationPct > 100) {
-      classification = "likely_mislink";
-    } else if (item.unit !== lib.unit) {
-      classification = "likely_mislink";
-    } else {
-      // Check concept conflict
-      const itemConcepts = detectCategory(item.description || "", item.description_en || "");
-      const libConcepts = detectCategory(lib.standard_name_ar || "", lib.standard_name_en || "");
-      if (itemConcepts.category !== libConcepts.category) {
-        classification = "likely_mislink";
-      } else {
-        classification = deviationPct > 60 ? "needs_review" : "spec_difference";
-      }
-    }
-
-    deviations.push({
-      itemId: item.id,
-      itemNo: item.item_no,
-      description: item.description,
-      unit: item.unit,
-      unitRate: item.unit_rate,
-      libraryRate: +(expectedRate).toFixed(2),
-      deviationPct: +deviationPct.toFixed(1),
-      linkedRateId: item.linked_rate_id,
-      libraryName: lib.standard_name_ar,
-      classification,
-    });
-  }
-
-  return deviations.sort((a, b) => b.deviationPct - a.deviationPct);
-}
-
-// ─── Manual Protection Guard ────────────────────────────────────────────────
-
-/**
- * Checks if an item is manually overridden and blocks automated changes.
- * Returns true if item is protected (should NOT be modified).
- */
-export function isManuallyProtected(item: { override_type?: string | null; status?: string }): boolean {
-  return item.override_type === "manual" || item.status === "manual_override";
 }
