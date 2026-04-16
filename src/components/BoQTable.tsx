@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
+import { exportEtemad } from "@/lib/export/etemadExporter";
 import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
@@ -265,6 +266,21 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       toast.success("تم تنزيل ملف Excel بنجاح");
     } catch (err: any) {
       toast.error(err.message);
+    }
+  };
+
+  const handleEtemadExport = async () => {
+    if (items.length === 0) return;
+    try {
+      const boqFile = boqFiles.find(f => f.id === boqFileId);
+      if (!boqFile?.file_path) {
+        toast.error("لا يوجد ملف أصلي مرتبط بهذا الـ BoQ");
+        return;
+      }
+      await exportEtemad(boqFileId, items as any, boqFile.file_path, boqFile.name);
+      toast.success("تم تصدير ملف الاعتماد بنجاح ✅");
+    } catch (err: any) {
+      toast.error(err.message || "فشل تصدير الاعتماد");
     }
   };
 
@@ -596,6 +612,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               </Button>
               <Button variant="outline" size="sm" className="gap-1" onClick={handleExportUnpriced}>
                 <ListX className="w-3 h-3" /> تصدير غير المسعّر
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1 border-emerald-600 text-emerald-600 hover:bg-emerald-50" onClick={handleEtemadExport}>
+                <Shield className="w-3 h-3" /> تصدير اعتماد
               </Button>
             </>
           )}
