@@ -5,15 +5,10 @@ import { corsHeaders } from "https://esm.sh/@supabase/supabase-js@2.95.0/cors";
 function normalizeArabicText(text: string): string {
   if (!text) return "";
   let t = text;
-  // Strip tashkeel
   t = t.replace(/[\u064B-\u065F\u0670]/g, "");
-  // Normalize alef variants
   t = t.replace(/[أإآ]/g, "ا");
-  // Taa marbuta → haa
   t = t.replace(/ة/g, "ه");
-  // Alef maqsura → yaa
   t = t.replace(/ى/g, "ي");
-  // Strip common prefixes per token
   const tokens = t
     .split(/\s+/)
     .map((w) => w.replace(/^(وال|بال|لل|ال|و)/, ""))
@@ -53,6 +48,39 @@ function jaccardTokens(a: string[], b: string[]): number {
   return union === 0 ? 0 : inter / union;
 }
 
+// ─── INCOMPATIBLE_GROUPS (mirrors client-side matchingV3) ───────────────────
+const INCOMPATIBLE_GROUPS: Record<string, Set<string>> = {
+  doors:       new Set(["windows", "plumbing", "hvac", "electrical", "concrete", "earthworks"]),
+  windows:     new Set(["doors", "plumbing", "hvac", "electrical", "concrete", "earthworks"]),
+  plumbing:    new Set(["doors", "windows", "hvac", "electrical", "concrete", "earthworks"]),
+  hvac:        new Set(["doors", "windows", "plumbing", "electrical", "concrete", "earthworks"]),
+  electrical:  new Set(["doors", "windows", "plumbing", "hvac", "concrete", "earthworks"]),
+  concrete:    new Set(["doors", "windows", "plumbing", "hvac", "electrical", "earthworks"]),
+  earthworks:  new Set(["doors", "windows", "plumbing", "hvac", "electrical", "concrete"]),
+};
+
+function areCategoriesCompatible(catA: string, catB: string): boolean {
+  const normA = catA.toLowerCase().split("_")[0];
+  const normB = catB.toLowerCase().split("_")[0];
+  if (normA === normB) return true;
+  const blocked = INCOMPATIBLE_GROUPS[normA];
+  if (blocked && blocked.has(normB)) return false;
+  return true;
+}
+
+// Simple category detection from Arabic text
+function detectCategoryFromText(text: string): string {
+  const t = text.toLowerCase();
+  if (/باب|أبواب|door/.test(t)) return "doors";
+  if (/نافذة|شباك|نوافذ|window/.test(t)) return "windows";
+  if (/صمام|أنابيب|مواسير|صرف|plumbing|pipe/.test(t)) return "plumbing";
+  if (/تكييف|مجاري هواء|hvac|duct/.test(t)) return "hvac";
+  if (/كابل|كهرب|لوحة توزيع|electrical/.test(t)) return "electrical";
+  if (/خرسانة|concrete|بلاطة|slab/.test(t)) return "concrete";
+  if (/حفر|ردم|earthwork/.test(t)) return "earthworks";
+  return "general";
+}
+
 interface LibraryItem {
   id: string;
   standard_name_ar: string;
@@ -85,7 +113,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { item_name, unit } = await req.json();
+    const { item_name, unit, category: reqCategory } = await req.json();
     if (!item_name || typeof item_name !== "string") {
       return new Response(JSON.stringify({ error: "item_name is required" }), {
         status: 400,
@@ -112,25 +140,28 @@ Deno.serve(async (req) => {
     const queryNorm = normalizeArabicText(item_name);
     const queryTokens = tokenize(item_name);
     const queryLower = item_name.toLowerCase();
+    const boqCategory = reqCategory || detectCategoryFromText(item_name);
 
     const matches: MatchResult[] = [];
 
     for (const item of (items || []) as LibraryItem[]) {
+      // ── Category gate: block incompatible categories ──
+      if (!areCategoriesCompatible(boqCategory, item.category)) {
+        continue;
+      }
+
       let bestScore = 0;
 
       // Score against Arabic name
       const arNorm = normalizeArabicText(item.standard_name_ar);
       const arTokens = tokenize(item.standard_name_ar);
       
-      // Exact normalized match
       if (queryNorm === arNorm && queryNorm.length > 0) {
         bestScore = 98;
       } else {
-        // Jaccard token similarity
         const jaccard = jaccardTokens(queryTokens, arTokens);
         bestScore = Math.max(bestScore, jaccard * 100);
 
-        // Levenshtein-based similarity on normalized text
         if (queryNorm.length > 0 && arNorm.length > 0) {
           const maxLen = Math.max(queryNorm.length, arNorm.length);
           const levSim = (1 - levenshtein(queryNorm, arNorm) / maxLen) * 100;
@@ -189,7 +220,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Sort by confidence descending, limit to top 5
     matches.sort((a, b) => b.confidence - a.confidence);
     const topMatches = matches.slice(0, 5);
 

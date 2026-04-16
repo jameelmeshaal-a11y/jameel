@@ -1,18 +1,16 @@
 /**
  * Matching Engine V3 — Multi-layer rate library matching.
  * 
- * ISOLATED MODULE: Does NOT modify any existing matching logic.
- * Called via feature flag in pricingEngine.ts.
- * 
- * Improvements over V2:
- * 1. Dimension-aware scoring (diameter/size match/mismatch)
- * 2. Anti-confusion gate (prevents wrong category matches)
- * 3. Synonym boost (equivalent terms score higher)
- * 4. Parent context enrichment (short items inherit context)
- * 5. Exact code match vs code mismatch penalty
+ * Scoring Pipeline (strict order):
+ *   A: item_no exact match → 98 (bypasses all gates)
+ *   B: INCOMPATIBLE_GROUPS hard gate → 0
+ *   C: extractCleanSegment + textScore < 50 → 0
+ *   D: hasConceptConflict → 0
+ *   E: historicalMap lookup → 95
+ *   → remaining points (dimensions, keywords, codes, containment)
  * 
  * @module matchingV3
- * @version 3.0
+ * @version 3.1
  */
 
 import {
@@ -68,31 +66,80 @@ interface RateLibraryItem {
 export interface MatchResultV3 {
   item: RateLibraryItem;
   confidence: number;
-  matchNotes: string; // human-readable explanation of scoring
+  matchNotes: string;
+}
+
+// ─── Historical Mapping Types ───────────────────────────────────────────────
+
+export interface HistoricalMappingV3 {
+  normalizedDesc: string;
+  tokens: string[];
+  linkedRateId: string;
+  unit: string;
+}
+
+// ─── INCOMPATIBLE_GROUPS ────────────────────────────────────────────────────
+// If BoQ category is key, candidate categories in the set are blocked.
+
+export const INCOMPATIBLE_GROUPS: Record<string, Set<string>> = {
+  doors:       new Set(["windows", "plumbing", "hvac", "electrical", "concrete", "earthworks"]),
+  windows:     new Set(["doors", "plumbing", "hvac", "electrical", "concrete", "earthworks"]),
+  plumbing:    new Set(["doors", "windows", "hvac", "electrical", "concrete", "earthworks"]),
+  hvac:        new Set(["doors", "windows", "plumbing", "electrical", "concrete", "earthworks"]),
+  electrical:  new Set(["doors", "windows", "plumbing", "hvac", "concrete", "earthworks"]),
+  concrete:    new Set(["doors", "windows", "plumbing", "hvac", "electrical", "earthworks"]),
+  earthworks:  new Set(["doors", "windows", "plumbing", "hvac", "electrical", "concrete"]),
+};
+
+/**
+ * Check if two categories are compatible (not in each other's incompatible set).
+ */
+export function areCategoriesCompatible(catA: string, catB: string): boolean {
+  const normA = catA.toLowerCase().split("_")[0];
+  const normB = catB.toLowerCase().split("_")[0];
+  if (normA === normB) return true;
+  const blocked = INCOMPATIBLE_GROUPS[normA];
+  if (blocked && blocked.has(normB)) return false;
+  return true;
+}
+
+// ─── extractCleanSegment ────────────────────────────────────────────────────
+
+/**
+ * Extract the last meaningful segment from a hierarchical description.
+ * E.g. "أعمال معمارية — أبواب — باب خشب MD-05" → "باب خشب MD-05"
+ */
+export function extractCleanSegment(desc: string): string {
+  if (!desc) return desc;
+  // Split by common Arabic hierarchy separators (— and –) but NOT single hyphen (used in codes like MD-05)
+  const separators = /[—–\/]/;
+  const parts = desc.split(separators).map(p => p.trim()).filter(p => p.length >= 3);
+  if (parts.length === 0) return desc;
+  return parts[parts.length - 1];
 }
 
 // ─── Scoring Weights ────────────────────────────────────────────────────────
 
 const WEIGHTS = {
-  TEXT_SIMILARITY: 50,       // max points from text comparison
-  CATEGORY_MATCH: 15,       // category alignment
-  KEYWORD_OVERLAP: 20,      // keyword token hits (max)
-  EXACT_CODE_MATCH: 40,     // exact model/ref code match
-  CODE_MISMATCH: -25,       // both have codes but they differ
-  DIMENSION_MATCH: 15,      // dimensions match exactly
-  DIMENSION_MISMATCH: -20,  // dimensions conflict
-  SYNONYM_BOOST: 10,        // synonym concept overlap
-  CONTAINMENT_BONUS: 20,    // overlap coefficient ≥ 0.8
-  LIBRARY_KEYWORDS: 15,     // hits against library keywords field
-  PARENT_CONTEXT_BOOST: 10, // enriched description improved the score
-  CORRECTION_NOTES_BOOST: 12, // correction notes keyword match
+  TEXT_SIMILARITY: 50,
+  CATEGORY_MATCH: 15,
+  KEYWORD_OVERLAP: 20,
+  EXACT_CODE_MATCH: 40,
+  CODE_MISMATCH: -25,
+  DIMENSION_MATCH: 15,
+  DIMENSION_MISMATCH: -20,
+  SYNONYM_BOOST: 10,
+  CONTAINMENT_BONUS: 20,
+  LIBRARY_KEYWORDS: 15,
+  PARENT_CONTEXT_BOOST: 10,
+  CORRECTION_NOTES_BOOST: 12,
 } as const;
 
 // ─── Main V3 Matcher ────────────────────────────────────────────────────────
 
 /**
  * Find the best rate library match using V3 multi-layer scoring.
- * Contract: same signature and return type as legacy findRateLibraryMatch.
+ * Updated signature: accepts item_no and historicalMap for stages A and E.
  */
 export function findRateLibraryMatchV3(
   description: string,
@@ -103,6 +150,8 @@ export function findRateLibraryMatchV3(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
+  itemNo?: string | null,
+  historicalMap?: HistoricalMappingV3[],
 ): { item: RateLibraryItem; confidence: number } | null {
   // Path A — Direct lookup (trusted, not scored)
   if (linkedRateId) {
@@ -120,20 +169,21 @@ export function findRateLibraryMatchV3(
   const boqTokens = tokenize(fullText);
   const boqDimensions = parseDimensions(fullText);
   const boqConcepts = detectConcepts(fullText);
+  const cleanSegment = extractCleanSegment(enrichedDesc);
 
   let bestMatch: RateLibraryItem | null = null;
   let bestScore = 0;
   let bestNotes = "";
 
   for (const candidate of rateLibrary) {
-    // Unit gate — soft penalty instead of hard skip for V3
+    // Unit gate — hard gate
     const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
-    if (!unitMatch) continue; // keep hard gate for units
+    if (!unitMatch) continue;
 
     const result = scoreCandidate(
-      enrichedDesc, descriptionEn, category,
+      enrichedDesc, descriptionEn, category, cleanSegment,
       boqCodes, boqTokens, boqDimensions, boqConcepts,
-      candidate, useEnriched,
+      candidate, useEnriched, itemNo, historicalMap,
     );
 
     if (result.score > bestScore && result.score >= 50) {
@@ -158,9 +208,9 @@ export function findRateLibraryMatchV3(
       if (normalizeUnit(candidate.unit) !== normalizedUnit_) continue;
 
       const result = scoreCandidate(
-        enrichedDesc, descriptionEn, category,
+        enrichedDesc, descriptionEn, category, cleanSegment,
         boqCodes, boqTokens, boqDimensions, boqConcepts,
-        candidate, useEnriched,
+        candidate, useEnriched, itemNo, historicalMap,
       );
 
       const cappedScore = Math.min(result.score, 55);
@@ -178,7 +228,7 @@ export function findRateLibraryMatchV3(
   return null;
 }
 
-// ─── Candidate Scoring ──────────────────────────────────────────────────────
+// ─── Candidate Scoring (Stages A→E + remaining) ────────────────────────────
 
 interface ScoringResult {
   score: number;
@@ -189,24 +239,59 @@ function scoreCandidate(
   description: string,
   descriptionEn: string,
   category: string,
+  cleanSegment: string,
   boqCodes: string[],
   boqTokens: string[],
   boqDimensions: ReturnType<typeof parseDimensions>,
   boqConcepts: string[],
   candidate: RateLibraryItem,
   usedParentContext: boolean,
+  itemNo?: string | null,
+  historicalMap?: HistoricalMappingV3[],
 ): ScoringResult {
   const parts: string[] = [];
-  let score = 0;
 
-  // 1. Text similarity (max WEIGHTS.TEXT_SIMILARITY pts)
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE A: item_no exact match → 98 (bypasses ALL other stages)
+  // ════════════════════════════════════════════════════════════════════
+  if (itemNo && itemNo.trim().length > 0 && candidate.item_code && candidate.item_code.trim().length > 0) {
+    const normalizedItemNo = itemNo.trim().toLowerCase();
+    const normalizedCandCode = candidate.item_code.trim().toLowerCase();
+    // Check ≥95% similarity (for near-exact matches like "MD-05" vs "MD-05")
+    if (normalizedItemNo === normalizedCandCode) {
+      parts.push(`⚡ item_no exact: ${itemNo} = ${candidate.item_code} → 98`);
+      return { score: 98, notes: parts.join(" | ") };
+    }
+    // Also check if one contains the other (e.g., "J2-MD-05" contains "MD-05")
+    if (normalizedItemNo.includes(normalizedCandCode) || normalizedCandCode.includes(normalizedItemNo)) {
+      const shorter = Math.min(normalizedItemNo.length, normalizedCandCode.length);
+      const longer = Math.max(normalizedItemNo.length, normalizedCandCode.length);
+      if (shorter / longer >= 0.95) {
+        parts.push(`⚡ item_no ~exact: ${itemNo} ≈ ${candidate.item_code} → 98`);
+        return { score: 98, notes: parts.join(" | ") };
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE B: INCOMPATIBLE_GROUPS hard gate → 0
+  // ════════════════════════════════════════════════════════════════════
+  if (!areCategoriesCompatible(category, candidate.category)) {
+    parts.push(`⛔ category-gate: ${category} ↔ ${candidate.category}`);
+    return { score: 0, notes: parts.join(" | ") };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE C: extractCleanSegment + text similarity
+  // ════════════════════════════════════════════════════════════════════
+  const candCleanSegment = extractCleanSegment(
+    (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "")
+  );
+
   // For merged descriptions (Header — Sub — Item), also try the last segment
   const descSegments = [description];
-  if (description.includes("—")) {
-    const lastSegment = description.split("—").pop()?.trim();
-    if (lastSegment && lastSegment.length > 3) {
-      descSegments.push(lastSegment);
-    }
+  if (cleanSegment !== description && cleanSegment.length > 3) {
+    descSegments.push(cleanSegment);
   }
 
   const candFullText = [
@@ -238,17 +323,59 @@ function scoreCandidate(
   ) * 30;
 
   const effectiveTextScore = Math.max(textScore, ngramScore);
+
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE D: hasConceptConflict on clean segment → 0
+  // ════════════════════════════════════════════════════════════════════
+  const candConcepts = detectConcepts(
+    (candidate.standard_name_ar || "") + " " +
+    (candidate.standard_name_en || "") + " " +
+    (candidate.item_description || "")
+  );
+
+  if (boqConcepts.length > 0 && candConcepts.length > 0) {
+    if (hasConceptConflict(boqConcepts, candConcepts)) {
+      parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
+      return { score: 0, notes: parts.join(" | ") };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE E: historicalMap lookup → 95
+  // ════════════════════════════════════════════════════════════════════
+  if (historicalMap && historicalMap.length > 0) {
+    for (const hist of historicalMap) {
+      if (hist.linkedRateId === candidate.id) {
+        // Check if this historical mapping matches our description
+        const histTokens = new Set(hist.tokens);
+        const matchTokens = boqTokens.filter(t => histTokens.has(t)).length;
+        const union = new Set([...boqTokens, ...hist.tokens]).size;
+        const jaccard = union > 0 ? matchTokens / union : 0;
+        if (jaccard >= 0.85) {
+          parts.push(`📎 historical: jaccard=${(jaccard * 100).toFixed(0)}% → 95`);
+          return { score: 95, notes: parts.join(" | ") };
+        }
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // Remaining scoring layers
+  // ════════════════════════════════════════════════════════════════════
+  let score = 0;
+
+  // Text similarity score
   score += effectiveTextScore;
   parts.push(`text:${effectiveTextScore.toFixed(0)}`);
 
-  // 2. Category match (+15 pts)
+  // Category match (+15 pts)
   const catFirst = category.replace(/_/g, " ").split(" ")[0];
   if (candidate.category.toLowerCase().includes(catFirst)) {
     score += WEIGHTS.CATEGORY_MATCH;
     parts.push(`cat:+${WEIGHTS.CATEGORY_MATCH}`);
   }
 
-  // 3. Keyword overlap (max 20 pts)
+  // Keyword overlap (max 20 pts)
   const candTokens = tokenize(
     (candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || "")
   );
@@ -257,7 +384,7 @@ function scoreCandidate(
   score += kwScore;
   if (kwScore > 0) parts.push(`kw:+${kwScore}`);
 
-  // 4. Model/code matching — EXACT match required
+  // Model/code matching — EXACT match required
   if (boqCodes.length > 0) {
     const candText = [
       candidate.standard_name_ar || "",
@@ -274,14 +401,13 @@ function scoreCandidate(
         score += WEIGHTS.EXACT_CODE_MATCH;
         parts.push(`code:+${WEIGHTS.EXACT_CODE_MATCH}`);
       } else {
-        // Both have codes but they differ — penalty
         score += WEIGHTS.CODE_MISMATCH;
         parts.push(`code:${WEIGHTS.CODE_MISMATCH}`);
       }
     }
   }
 
-  // 5. Dimension comparison
+  // Dimension comparison
   const candDimensions = parseDimensions(
     (candidate.standard_name_ar || "") + " " +
     (candidate.standard_name_en || "") + " " +
@@ -292,7 +418,6 @@ function scoreCandidate(
     score += WEIGHTS.DIMENSION_MATCH;
     parts.push(`dim:+${WEIGHTS.DIMENSION_MATCH}`);
   } else if (dimResult === -1) {
-    // Hard gate: if both have explicit WxH dimensions and they differ, zero out (like anti-confusion)
     const boqHasWxH = boqDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
     const candHasWxH = candDimensions.some(d => d.type === "dimensions" && d.values.length >= 2);
     if (boqHasWxH && candHasWxH) {
@@ -303,28 +428,15 @@ function scoreCandidate(
     parts.push(`dim:${WEIGHTS.DIMENSION_MISMATCH}`);
   }
 
-  // 6. Synonym / Anti-confusion
-  const candConcepts = detectConcepts(
-    (candidate.standard_name_ar || "") + " " +
-    (candidate.standard_name_en || "") + " " +
-    (candidate.item_description || "")
-  );
-
+  // Synonym boost
   if (boqConcepts.length > 0 && candConcepts.length > 0) {
-    // Anti-confusion gate — zero score if conflicting concepts
-    if (hasConceptConflict(boqConcepts, candConcepts)) {
-      parts.push(`⛔ anti-confusion: ${boqConcepts[0]}↔${candConcepts[0]}`);
-      return { score: 0, notes: parts.join(" | ") };
-    }
-
-    // Synonym boost
     if (hasSynonymOverlap(boqConcepts, candConcepts)) {
       score += WEIGHTS.SYNONYM_BOOST;
       parts.push(`syn:+${WEIGHTS.SYNONYM_BOOST}`);
     }
   }
 
-  // 7. Containment bonus
+  // Containment bonus
   const overlapCoeff = Math.max(
     overlapCoefficient(description, candidate.standard_name_ar || ""),
     overlapCoefficient(description, candidate.item_description || ""),
@@ -335,7 +447,7 @@ function scoreCandidate(
     parts.push(`contain:+${WEIGHTS.CONTAINMENT_BONUS}`);
   }
 
-  // 8. Library keywords field
+  // Library keywords field
   if (candidate.keywords?.length > 0) {
     const kwSet = new Set(candidate.keywords.map(k => k.toLowerCase()));
     const kwHits = boqTokens.filter(t => kwSet.has(t)).length;
@@ -344,13 +456,13 @@ function scoreCandidate(
     if (libKwScore > 0) parts.push(`libkw:+${libKwScore}`);
   }
 
-  // 9. Parent context boost
+  // Parent context boost
   if (usedParentContext && effectiveTextScore > 20) {
     score += WEIGHTS.PARENT_CONTEXT_BOOST;
     parts.push(`parent:+${WEIGHTS.PARENT_CONTEXT_BOOST}`);
   }
 
-  // 10. Correction notes boost — leverage user corrections for better matching
+  // Correction notes boost
   if (candidate.notes) {
     const correctionMatches = candidate.notes.match(/\[تصحيح[^\]]*\]:\s*(.+)/g);
     if (correctionMatches && correctionMatches.length > 0) {

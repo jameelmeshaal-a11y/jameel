@@ -17,7 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+import { findRateLibraryMatchV3, type HistoricalMappingV3 } from "./pricing/matchingV3";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
 // Set to false to instantly revert to legacy matching.
@@ -113,12 +113,15 @@ function findRateLibraryMatch(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
+  itemNo?: string | null,
+  historicalMapRef?: HistoricalMappingV3[],
 ): { item: RateLibraryItem; confidence: number } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
       rateLibrary, linkedRateId, approvedRateIds, notes,
+      itemNo, historicalMapRef,
     );
   }
 
@@ -553,7 +556,14 @@ export async function runPricingEngine(
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
-    // 5a. Rate library match (Path A + B + C) — V3 with context support
+    // 5a. Rate library match (Path A + B + C + E) — V3 with item_no + historical map
+    const v3HistMap = historicalMap.map(h => ({
+      normalizedDesc: h.normalizedDesc,
+      tokens: h.tokens,
+      linkedRateId: h.linkedRateId,
+      unit: h.unit,
+    })) as HistoricalMappingV3[];
+
     let libraryMatchResult = findRateLibraryMatch(
       block.mergedDescription,
       block.mergedDescriptionEn,
@@ -563,9 +573,11 @@ export async function runPricingEngine(
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
       (block.primaryRow as any).notes,
+      (block.primaryRow as any).item_no,
+      v3HistMap,
     );
 
-    // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
+    // 5b. Historical mapping fallback (Path A.5) — only if V3 didn't find via Stage E
     if (!libraryMatchResult) {
       libraryMatchResult = findHistoricalMatch(
         block.mergedDescription,
@@ -968,11 +980,19 @@ export async function repriceUnpricedItems(
     const descriptionEn = row.description_en || "";
     const detection = detectCategory(description, descriptionEn);
 
-    // Try library match
+    // Try library match (with item_no + historicalMap for V3)
+    const v3HistMap2 = historicalMap.map(h => ({
+      normalizedDesc: h.normalizedDesc,
+      tokens: h.tokens,
+      linkedRateId: h.linkedRateId,
+      unit: h.unit,
+    })) as HistoricalMappingV3[];
+
     let libraryMatchResult = findRateLibraryMatch(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
-      row.linked_rate_id, approvedRateIds,
+      row.linked_rate_id, approvedRateIds, row.notes,
+      row.item_no, v3HistMap2,
     );
 
     // Historical fallback
@@ -1106,10 +1126,18 @@ export async function repriceSingleItem(
   const descriptionEn = item.description_en || "";
   const detection = detectCategory(description, descriptionEn);
 
+  const v3HistMap3 = historicalMap.map(h => ({
+    normalizedDesc: h.normalizedDesc,
+    tokens: h.tokens,
+    linkedRateId: h.linkedRateId,
+    unit: h.unit,
+  })) as HistoricalMappingV3[];
+
   let libraryMatchResult = findRateLibraryMatch(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
+    item.item_no, v3HistMap3,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
