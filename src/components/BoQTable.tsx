@@ -70,10 +70,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         setRunningTotal(prev => (prev || 0) + update.total_price);
       }
       // Show current item name
-      if (update.notes) {
-        const match = update.notes.match(/[""]([^""]+)[""]/);
-        if (match) setCurrentItemName(match[1].slice(0, 50));
-      }
+      const match = String(update?.notes ?? "").match(/[""]([^""]+)[""]/);
+      if (match?.[1]) setCurrentItemName(match[1].slice(0, 50));
     };
   }, [boqFileId, qc]);
 
@@ -120,10 +118,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
-      // Auto-run integrity check after pricing
-      const report = await runIntegrityCheck(boqFileId);
-      setIntegrityReport(report);
-      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -203,10 +197,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
-      // Auto-run integrity check after re-pricing
-      const report = await runIntegrityCheck(boqFileId);
-      setIntegrityReport(report);
-      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
