@@ -800,9 +800,33 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                 <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="text-center">
                   {isPriced && (
-                    <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)}>
-                      <Eye className="w-3.5 h-3.5" />
-                    </Button>
+                    <div className="flex items-center justify-center gap-0.5">
+                      <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)} title="عرض التفاصيل">
+                        <Eye className="w-3.5 h-3.5" />
+                      </Button>
+                      {!isArchived && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground hover:text-foreground" disabled={pricing} title="إعادة تسعير شاملة">
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent dir="rtl">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
+                                سيتم تسجيل جميع التغييرات في سجل المراجعة.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                              <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
                   )}
                 </td>
                 {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
