@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X } from "lucide-react";
+import { Eye, Download, CheckCircle, AlertTriangle, XCircle, FileText, Info, Loader2, Play, RefreshCw, ListX, ShieldAlert, Wrench, RotateCcw, Pencil, Shield, Filter, X, Lock, BadgeCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -653,6 +653,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             { key: "low_confidence", label: "موثوقية منخفضة", color: "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700" },
             { key: "unapproved", label: "غير معتمد", color: "bg-orange-50 text-orange-700 border-orange-300 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700" },
             { key: "unpriced", label: "غير مسعّر", color: "bg-destructive/10 text-destructive border-destructive/30" },
+            { key: "manual_override", label: "🔒 يدوي معتمد", color: "bg-warning/10 text-warning border-warning/30" },
+            { key: "approved_library", label: "✅ مكتبة معتمدة", color: "bg-success/10 text-success border-success/30" },
+            { key: "pending", label: "⏳ pending", color: "bg-muted text-muted-foreground border-border" },
           ].map(f => (
             <button
               key={f.key}
