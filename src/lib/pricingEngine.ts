@@ -119,6 +119,7 @@ function findRateLibraryMatch(
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
       rateLibrary, linkedRateId, approvedRateIds, notes,
+      itemNo, historicalMapRef,
     );
   }
 
