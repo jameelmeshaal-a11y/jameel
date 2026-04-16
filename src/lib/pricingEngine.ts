@@ -17,7 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { textSimilarity, normalizeUnit, tokenize, normalizeArabicText, charNgramSimilarity, overlapCoefficient, extractModelCodes } from "./pricing/similarItemMatcher";
-import { findRateLibraryMatchV3 } from "./pricing/matchingV3";
+import { findRateLibraryMatchV3, type HistoricalMappingV3 } from "./pricing/matchingV3";
 
 // ─── Feature Flag: V3 Matching ──────────────────────────────────────────────
 // Set to false to instantly revert to legacy matching.
@@ -113,6 +113,8 @@ function findRateLibraryMatch(
   linkedRateId?: string | null,
   approvedRateIds?: Set<string>,
   notes?: string | null,
+  itemNo?: string | null,
+  historicalMapRef?: HistoricalMappingV3[],
 ): { item: RateLibraryItem; confidence: number } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
