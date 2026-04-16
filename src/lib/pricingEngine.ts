@@ -556,7 +556,14 @@ export async function runPricingEngine(
     // 4. Classify using MERGED description
     const detection = detectCategory(block.mergedDescription, block.mergedDescriptionEn);
 
-    // 5a. Rate library match (Path A + B + C) — V3 with context support
+    // 5a. Rate library match (Path A + B + C + E) — V3 with item_no + historical map
+    const v3HistMap = historicalMap.map(h => ({
+      normalizedDesc: h.normalizedDesc,
+      tokens: h.tokens,
+      linkedRateId: h.linkedRateId,
+      unit: h.unit,
+    })) as HistoricalMappingV3[];
+
     let libraryMatchResult = findRateLibraryMatch(
       block.mergedDescription,
       block.mergedDescriptionEn,
@@ -566,9 +573,11 @@ export async function runPricingEngine(
       (block.primaryRow as any).linked_rate_id,
       approvedRateIds,
       (block.primaryRow as any).notes,
+      (block.primaryRow as any).item_no,
+      v3HistMap,
     );
 
-    // 5b. Historical mapping fallback (Path A.5) — deterministic, before AI
+    // 5b. Historical mapping fallback (Path A.5) — only if V3 didn't find via Stage E
     if (!libraryMatchResult) {
       libraryMatchResult = findHistoricalMatch(
         block.mergedDescription,
