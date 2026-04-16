@@ -980,11 +980,19 @@ export async function repriceUnpricedItems(
     const descriptionEn = row.description_en || "";
     const detection = detectCategory(description, descriptionEn);
 
-    // Try library match
+    // Try library match (with item_no + historicalMap for V3)
+    const v3HistMap2 = historicalMap.map(h => ({
+      normalizedDesc: h.normalizedDesc,
+      tokens: h.tokens,
+      linkedRateId: h.linkedRateId,
+      unit: h.unit,
+    })) as HistoricalMappingV3[];
+
     let libraryMatchResult = findRateLibraryMatch(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
-      row.linked_rate_id, approvedRateIds,
+      row.linked_rate_id, approvedRateIds, row.notes,
+      row.item_no, v3HistMap2,
     );
 
     // Historical fallback
@@ -1118,10 +1126,18 @@ export async function repriceSingleItem(
   const descriptionEn = item.description_en || "";
   const detection = detectCategory(description, descriptionEn);
 
+  const v3HistMap3 = historicalMap.map(h => ({
+    normalizedDesc: h.normalizedDesc,
+    tokens: h.tokens,
+    linkedRateId: h.linkedRateId,
+    unit: h.unit,
+  })) as HistoricalMappingV3[];
+
   let libraryMatchResult = findRateLibraryMatch(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
+    item.item_no, v3HistMap3,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
