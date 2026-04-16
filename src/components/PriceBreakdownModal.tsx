@@ -530,7 +530,7 @@ export default function PriceBreakdownModal({ item, projectId, ownerMaterials = 
                   <div className="flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-warning" />
                     <label className="text-xs font-semibold text-warning" dir="rtl">
-                      سبب التعديل / ملاحظة للنظام
+                      سبب التعديل (إلزامي) / ملاحظة للنظام *
                     </label>
                   </div>
                   <textarea
