@@ -385,6 +385,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       if (activeFilters.has("low_confidence") && !(item.confidence !== null && item.confidence < 70)) return false;
       if (activeFilters.has("unapproved") && !(item.status !== "approved" && item.status !== "descriptive" && isPriceableItem(item))) return false;
       if (activeFilters.has("unpriced") && !(!item.unit_rate || item.unit_rate === 0)) return false;
+      if (activeFilters.has("manual_override") && item.override_type !== "manual") return false;
+      if (activeFilters.has("approved_library") && item.source !== "approved_library") return false;
+      if (activeFilters.has("pending") && item.status !== "pending") return false;
       return true;
     });
 
