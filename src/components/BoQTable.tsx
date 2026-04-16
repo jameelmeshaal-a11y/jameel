@@ -55,6 +55,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
   const [runningTotal, setRunningTotal] = useState<number | null>(null);
   const [currentItemName, setCurrentItemName] = useState<string>("");
   const [bmsResult, setBmsResult] = useState<BMSCalculationResult | null>(null);
+  const [bmsView, setBmsView] = useState<'hidden' | 'collapsed' | 'expanded'>('hidden');
+  const [readinessOpen, setReadinessOpen] = useState(false);
   const [repricingItemId, setRepricingItemId] = useState<string | null>(null);
 
   // Real-time cache updater callback
@@ -70,10 +72,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         setRunningTotal(prev => (prev || 0) + update.total_price);
       }
       // Show current item name
-      if (update.notes) {
-        const match = update.notes.match(/[""]([^""]+)[""]/);
-        if (match) setCurrentItemName(match[1].slice(0, 50));
-      }
+      const match = String(update?.notes ?? "").match(/[""]([^""]+)[""]/);
+      if (match?.[1]) setCurrentItemName(match[1].slice(0, 50));
     };
   }, [boqFileId, qc]);
 
@@ -120,10 +120,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
-      // Auto-run integrity check after pricing
-      const report = await runIntegrityCheck(boqFileId);
-      setIntegrityReport(report);
-      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -203,10 +199,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         qc.refetchQueries({ queryKey: ["project-consistency", projectId], type: "active" }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
-      // Auto-run integrity check after re-pricing
-      const report = await runIntegrityCheck(boqFileId);
-      setIntegrityReport(report);
-      setIntegrityReportOpen(true);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -531,9 +523,31 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         </div>
       )}
 
-      {/* BMS Points Analysis */}
-      {bmsResult && bmsResult.hasBMSItems && (
-        <BMSAnalysisPanel bmsResult={bmsResult} />
+      {/* BMS Points Analysis — Lazy mount */}
+      {bmsResult && bmsResult.hasBMSItems && bmsView === 'hidden' && (
+        <div className="mb-4">
+          <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setBmsView('collapsed')}>
+            <Info className="w-3 h-3" /> عرض تحليل BMS ({bmsResult.totalPoints} نقطة)
+          </Button>
+        </div>
+      )}
+      {bmsResult && bmsResult.hasBMSItems && bmsView !== 'hidden' && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setBmsView(bmsView === 'collapsed' ? 'expanded' : 'collapsed')}>
+              {bmsView === 'expanded' ? '▲ طي' : '▼ توسيع'} تحليل BMS
+            </Button>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setBmsView('hidden')}>
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+          {bmsView === 'expanded' && <BMSAnalysisPanel bmsResult={bmsResult} />}
+          {bmsView === 'collapsed' && (
+            <div className="rounded-lg border bg-muted/30 p-2 text-xs text-muted-foreground">
+              BMS: {bmsResult.totalPoints} نقطة · {bmsResult.matches.length} بند · {formatCurrency(bmsResult.totalCost)}
+            </div>
+          )}
+        </div>
       )}
 
       {hasItems && autoFixFailed && !consistency.consistent && (
@@ -623,42 +637,52 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
 
       {hasItems && (
         <div className="rounded-lg border bg-muted/30 p-3 mb-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            className="flex flex-wrap items-center justify-between gap-2 w-full text-left"
+            onClick={() => setReadinessOpen(!readinessOpen)}
+          >
             <div>
-              <div className="text-sm font-medium">Export readiness summary</div>
-              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Rows with warnings: {exportSummary.warningRowsCount}</div>
+              <div className="text-sm font-medium flex items-center gap-1">
+                {readinessOpen ? '▲' : '▼'} ملخص جاهزية التصدير
+                <Badge variant="outline" className="text-[10px] ml-2">{exportSummary.pricedItemsCount} بند</Badge>
+              </div>
             </div>
             <Badge variant={exportSummary.exportStatus === "warning" ? "secondary" : "default"}>
               {exportSummary.exportStatus === "ready" ? "Ready" : "Warning"}
             </Badge>
-          </div>
-          {exportSummary.warningMessage && (
-            <div className="text-xs text-muted-foreground mt-2">{exportSummary.warningMessage}</div>
-          )}
-          {exportSummary.errorMessage && (
-            <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
-          )}
-          {exportSummary.warningRows.length > 0 && (
-            <div className="mt-3 rounded-md border bg-background/70 p-3">
-              <div className="text-xs font-medium mb-2">Warnings</div>
-              <div className="space-y-2">
-                {exportSummary.warningRows.slice(0, 3).map((row, index) => (
-                  <div key={`${row.rowNumber ?? "row"}-${row.itemCode}-${index}`} className="text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Row {row.rowNumber ?? "—"}</span>
-                    {row.itemCode ? ` · ${row.itemCode}` : ""}
-                    {row.description ? ` · ${row.description}` : ""}
-                    {` · ${row.reason}`}
+          </button>
+          {readinessOpen && (
+            <div className="mt-3">
+              <div className="text-xs text-muted-foreground">Valid priced items: {exportSummary.pricedItemsCount} · Descriptive rows skipped: {exportSummary.descriptiveRowsSkippedCount} · Rows with warnings: {exportSummary.warningRowsCount}</div>
+              {exportSummary.warningMessage && (
+                <div className="text-xs text-muted-foreground mt-2">{exportSummary.warningMessage}</div>
+              )}
+              {exportSummary.errorMessage && (
+                <div className="text-xs mt-2">{exportSummary.errorMessage}</div>
+              )}
+              {exportSummary.warningRows.length > 0 && (
+                <div className="mt-3 rounded-md border bg-background/70 p-3">
+                  <div className="text-xs font-medium mb-2">Warnings</div>
+                  <div className="space-y-2">
+                    {exportSummary.warningRows.slice(0, 3).map((row, index) => (
+                      <div key={`${row.rowNumber ?? "row"}-${row.itemCode}-${index}`} className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Row {row.rowNumber ?? "—"}</span>
+                        {row.itemCode ? ` · ${row.itemCode}` : ""}
+                        {row.description ? ` · ${row.description}` : ""}
+                        {` · ${row.reason}`}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" className="gap-1" onClick={() => setBlockingRowsOpen(true)}>
-                  <ListX className="w-3.5 h-3.5" /> View Warnings
-                </Button>
-                <Button variant="outline" size="sm" className="gap-1" onClick={handleRevalidate} disabled={revalidating}>
-                  <RefreshCw className={`w-3.5 h-3.5 ${revalidating ? "animate-spin" : ""}`} /> Revalidate Project
-                </Button>
-              </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" className="gap-1" onClick={() => setBlockingRowsOpen(true)}>
+                      <ListX className="w-3.5 h-3.5" /> View Warnings
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1" onClick={handleRevalidate} disabled={revalidating}>
+                      <RefreshCw className={`w-3.5 h-3.5 ${revalidating ? "animate-spin" : ""}`} /> Revalidate Project
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

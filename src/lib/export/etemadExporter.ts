@@ -1,4 +1,3 @@
-import * as ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -12,103 +11,94 @@ interface EtemadItem {
   source: string | null;
 }
 
-/**
- * Find a column by header text — stops at first match.
- */
-function findColumnByHeader(
-  ws: ExcelJS.Worksheet,
-  headerRowIdx: number,
-  candidates: string[]
-): number | null {
-  const row = ws.getRow(headerRowIdx);
-  for (let c = 1; c <= row.cellCount + 5; c++) {
-    const val = String(row.getCell(c).value ?? "").trim();
-    for (const cand of candidates) {
-      if (val === cand || val.startsWith(cand + " ") || val.startsWith(cand + "\n")) {
-        return c;
+// ═══════════════════════════════════════════════════════════════
+// Layer 1: readSheetStructure — extract sheets + sharedStrings
+// ═══════════════════════════════════════════════════════════════
+
+interface SheetStructure {
+  sheets: Map<string, string>; // path → xml
+  sharedStrings: string[];
+}
+
+function parseSharedStrings(xml: string): string[] {
+  const result: string[] = [];
+  let cursor = 0;
+  while (true) {
+    const siStart = xml.indexOf("<si", cursor);
+    if (siStart === -1) break;
+    const siEnd = xml.indexOf("</si>", siStart);
+    if (siEnd === -1) break;
+    const siContent = xml.substring(siStart, siEnd + 5);
+    // Flatten all <t>...</t> inside this <si>, ignoring <rPr> and formatting
+    let text = "";
+    let tCursor = 0;
+    while (true) {
+      const tStart = siContent.indexOf("<t", tCursor);
+      if (tStart === -1) break;
+      const tTagEnd = siContent.indexOf(">", tStart);
+      if (tTagEnd === -1) break;
+      if (siContent[tTagEnd - 1] === "/") {
+        // self-closing <t/>
+        tCursor = tTagEnd + 1;
+        continue;
       }
+      const tCloseStart = siContent.indexOf("</t>", tTagEnd);
+      if (tCloseStart === -1) break;
+      text += siContent.substring(tTagEnd + 1, tCloseStart);
+      tCursor = tCloseStart + 4;
     }
-  }
-  return null;
-}
-
-/**
- * Find header row index dynamically by searching for rows containing both quantity and item markers.
- */
-function findHeaderRow(ws: ExcelJS.Worksheet): number {
-  const qtyMarkers = ["الكمية", "الكميه", "Qty", "Quantity"];
-  const itemMarkers = ["البند", "الوصف", "Description", "Item"];
-  for (let r = 1; r <= Math.min(ws.rowCount, 20); r++) {
-    const row = ws.getRow(r);
-    let hasQty = false, hasItem = false;
-    for (let c = 1; c <= row.cellCount + 5; c++) {
-      const val = String(row.getCell(c).value ?? "").trim();
-      if (qtyMarkers.some(m => val.includes(m))) hasQty = true;
-      if (itemMarkers.some(m => val.includes(m))) hasItem = true;
-    }
-    if (hasQty && hasItem) return r;
-  }
-  return 1;
-}
-
-/**
- * Normalize a single <border> XML node so it has all six expected child elements
- * (left, right, top, bottom, diagonal, vertical/horizontal optional).
- * ExcelJS crashes with "Cannot read properties of undefined (reading 'top')"
- * when borders are missing child elements.
- */
-function normalizeBorderNode(borderXml: string): string {
-  const requiredChildren = ["left", "right", "top", "bottom", "diagonal"];
-  let result = borderXml;
-  for (const child of requiredChildren) {
-    // Check if child exists (either self-closing or with content)
-    const hasChild = new RegExp(`<${child}(\\s|/|>)`).test(result);
-    if (!hasChild) {
-      // Insert empty self-closing tag before </border>
-      result = result.replace(/<\/border>/, `<${child}/></border>`);
-    }
+    result.push(text);
+    cursor = siEnd + 5;
   }
   return result;
 }
 
-/**
- * Sanitize the workbook XML to prevent ExcelJS crashes:
- * 1. Strip shared formula attributes from sheet XMLs.
- * 2. Normalize <border> nodes in styles.xml so every border has all child elements.
- */
-async function sanitizeWorkbook(buffer: ArrayBuffer): Promise<{ cleanBuffer: ArrayBuffer; zip: JSZip }> {
-  const zip = await JSZip.loadAsync(buffer);
-
-  // 1. Strip shared formula attributes from all worksheets
-  const sheetFiles = Object.keys(zip.files).filter(f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"));
+async function readSheetStructure(zip: JSZip): Promise<SheetStructure> {
+  const sheets = new Map<string, string>();
+  const sheetFiles = Object.keys(zip.files).filter(
+    f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml")
+  );
   for (const sf of sheetFiles) {
-    let xml = await zip.file(sf)!.async("string");
-    xml = xml.replace(/\s+t="shared"/g, "");
-    xml = xml.replace(/\s+si="\d+"/g, "");
-    xml = xml.replace(/\s+ref="[A-Z]+\d+:[A-Z]+\d+"/g, "");
-    zip.file(sf, xml);
+    const xml = await zip.file(sf)!.async("string");
+    sheets.set(sf, xml);
   }
 
-  // 2. Normalize <border> nodes in styles.xml
-  const stylesFile = zip.file("xl/styles.xml");
-  if (stylesFile) {
-    let stylesXml = await stylesFile.async("string");
-    // Match all <border ...>...</border> nodes (including self-closing)
-    stylesXml = stylesXml.replace(/<border\b[^>]*>([\s\S]*?)<\/border>/g, (match) => {
-      return normalizeBorderNode(match);
-    });
-    // Replace self-closing <border/> with full empty border
-    stylesXml = stylesXml.replace(/<border\s*\/>/g, "<border><left/><right/><top/><bottom/><diagonal/></border>");
-    zip.file("xl/styles.xml", stylesXml);
+  let sharedStrings: string[] = [];
+  const sstFile = zip.file("xl/sharedStrings.xml");
+  if (sstFile) {
+    const sstXml = await sstFile.async("string");
+    sharedStrings = parseSharedStrings(sstXml);
   }
 
-  const cleanBuffer = await zip.generateAsync({ type: "arraybuffer" });
-  return { cleanBuffer, zip };
+  return { sheets, sharedStrings };
 }
 
-/**
- * Convert column number (1-based) to Excel column letter (A, B, ..., Z, AA, AB, ...).
- */
+// ═══════════════════════════════════════════════════════════════
+// Layer 2: Cursor-based XML parser + Header detection
+// ═══════════════════════════════════════════════════════════════
+
+interface ParsedCell {
+  ref: string;      // e.g. "A1"
+  colLetter: string; // e.g. "A"
+  col: number;       // 1-based
+  type: string;      // "s", "n", "inlineStr", ""
+  styleIdx: string;  // style attribute value
+  rawValue: string;  // raw <v> content or inline text
+}
+
+interface ParsedRow {
+  rowNum: number;
+  startIdx: number;
+  endIdx: number;
+  cells: ParsedCell[];
+}
+
+function colLetterToNum(letter: string): number {
+  let n = 0;
+  for (const c of letter) n = n * 26 + (c.charCodeAt(0) - 64);
+  return n;
+}
+
 function colNumToLetter(col: number): string {
   let result = "";
   let n = col;
@@ -120,254 +110,472 @@ function colNumToLetter(col: number): string {
   return result;
 }
 
-/**
- * Fallback path: use JSZip directly to inject cell values into sheet1.xml without ExcelJS.
- * This is used when ExcelJS fails to load/save the workbook due to style corruption.
- */
-async function fallbackInjectViaJSZip(
-  zip: JSZip,
-  injections: Array<{ row: number; col: number; value: number }>,
-  sheetPath: string = "xl/worksheets/sheet1.xml"
-): Promise<ArrayBuffer> {
-  const sheetFile = zip.file(sheetPath);
-  if (!sheetFile) throw new Error("لا توجد ورقة عمل في الملف الأصلي");
-
-  let xml = await sheetFile.async("string");
-
-  for (const inj of injections) {
-    const cellRef = `${colNumToLetter(inj.col)}${inj.row}`;
-    const newCellXml = `<c r="${cellRef}" t="n"><v>${inj.value}</v></c>`;
-
-    // Try to find existing cell and replace it
-    const cellRegex = new RegExp(`<c\\s+r="${cellRef}"(?:\\s+[^>]*)?(?:/>|>[\\s\\S]*?</c>)`, "g");
-    if (cellRegex.test(xml)) {
-      xml = xml.replace(cellRegex, newCellXml);
-    } else {
-      // Cell doesn't exist; inject into the row
-      const rowRegex = new RegExp(`(<row\\s+r="${inj.row}"[^>]*>)([\\s\\S]*?)(</row>)`);
-      const rowMatch = xml.match(rowRegex);
-      if (rowMatch) {
-        xml = xml.replace(rowRegex, `$1$2${newCellXml}$3`);
-      }
-      // If row also doesn't exist, skip silently
-    }
-  }
-
-  zip.file(sheetPath, xml);
-  return zip.generateAsync({ type: "arraybuffer" });
+function getAttr(tag: string, attrName: string): string {
+  const regex = new RegExp(`\\b${attrName}="([^"]*)"`, "i");
+  const m = tag.match(regex);
+  return m ? m[1] : "";
 }
 
 /**
- * Discover header row + key columns by parsing sheet1.xml and sharedStrings.xml directly.
- * Used by the fallback path when ExcelJS cannot load the workbook.
+ * Cursor-based row scanner: finds <row r="N">...</row> blocks
+ * Handles single-line and multi-line XML safely.
  */
-async function discoverColumnsViaJSZip(zip: JSZip): Promise<{
+function parseRows(xml: string, maxRow?: number): ParsedRow[] {
+  const rows: ParsedRow[] = [];
+  let cursor = 0;
+
+  while (true) {
+    const rowTagStart = xml.indexOf("<row ", cursor);
+    if (rowTagStart === -1) break;
+
+    const rowTagEnd = xml.indexOf(">", rowTagStart);
+    if (rowTagEnd === -1) break;
+
+    const rowTag = xml.substring(rowTagStart, rowTagEnd + 1);
+    const rowNumStr = getAttr(rowTag, "r");
+    const rowNum = parseInt(rowNumStr) || 0;
+
+    if (maxRow && rowNum > maxRow) {
+      cursor = rowTagEnd + 1;
+      continue;
+    }
+
+    // Self-closing row
+    if (rowTag.endsWith("/>")) {
+      rows.push({ rowNum, startIdx: rowTagStart, endIdx: rowTagEnd + 1, cells: [] });
+      cursor = rowTagEnd + 1;
+      continue;
+    }
+
+    // Find </row>
+    const rowCloseIdx = xml.indexOf("</row>", rowTagEnd);
+    if (rowCloseIdx === -1) {
+      cursor = rowTagEnd + 1;
+      continue;
+    }
+    const rowEndIdx = rowCloseIdx + 6;
+    const rowContent = xml.substring(rowTagEnd + 1, rowCloseIdx);
+
+    // Parse cells within this row
+    const cells = parseCellsInContent(rowContent);
+    rows.push({ rowNum, startIdx: rowTagStart, endIdx: rowEndIdx, cells });
+    cursor = rowEndIdx;
+  }
+  return rows;
+}
+
+function parseCellsInContent(content: string): ParsedCell[] {
+  const cells: ParsedCell[] = [];
+  let cursor = 0;
+
+  while (true) {
+    const cStart = content.indexOf("<c ", cursor);
+    if (cStart === -1) break;
+
+    const cTagEnd = content.indexOf(">", cStart);
+    if (cTagEnd === -1) break;
+
+    const cTag = content.substring(cStart, cTagEnd + 1);
+    const ref = getAttr(cTag, "r");
+    const type = getAttr(cTag, "t");
+    const styleIdx = getAttr(cTag, "s");
+    const colLetter = ref.replace(/\d+/g, "");
+    const col = colLetterToNum(colLetter);
+
+    let rawValue = "";
+
+    if (cTag.endsWith("/>")) {
+      // Self-closing cell
+      cells.push({ ref, colLetter, col, type, styleIdx, rawValue });
+      cursor = cTagEnd + 1;
+      continue;
+    }
+
+    // Find </c>
+    const cCloseIdx = content.indexOf("</c>", cTagEnd);
+    if (cCloseIdx === -1) {
+      cursor = cTagEnd + 1;
+      continue;
+    }
+
+    const inner = content.substring(cTagEnd + 1, cCloseIdx);
+
+    if (type === "inlineStr") {
+      // Extract all <t>...</t> from inline string
+      let text = "";
+      let tCur = 0;
+      while (true) {
+        const tS = inner.indexOf("<t", tCur);
+        if (tS === -1) break;
+        const tE = inner.indexOf(">", tS);
+        if (tE === -1) break;
+        if (inner[tE - 1] === "/") { tCur = tE + 1; continue; }
+        const tC = inner.indexOf("</t>", tE);
+        if (tC === -1) break;
+        text += inner.substring(tE + 1, tC);
+        tCur = tC + 4;
+      }
+      rawValue = text;
+    } else {
+      // Extract <v>...</v>
+      const vStart = inner.indexOf("<v>");
+      const vAltStart = inner.indexOf("<v ");
+      const vIdx = vStart !== -1 ? vStart : vAltStart;
+      if (vIdx !== -1) {
+        const vTagEnd = inner.indexOf(">", vIdx);
+        const vClose = inner.indexOf("</v>", vTagEnd);
+        if (vClose !== -1) {
+          rawValue = inner.substring(vTagEnd + 1, vClose);
+        }
+      }
+    }
+
+    cells.push({ ref, colLetter, col, type, styleIdx, rawValue });
+    cursor = cCloseIdx + 4;
+  }
+  return cells;
+}
+
+function resolveValue(cell: ParsedCell, sharedStrings: string[]): string {
+  if (cell.type === "s") {
+    const idx = parseInt(cell.rawValue);
+    return isNaN(idx) ? "" : (sharedStrings[idx] || "");
+  }
+  if (cell.type === "inlineStr") {
+    return cell.rawValue;
+  }
+  return cell.rawValue;
+}
+
+interface HeaderMap {
   headerRow: number;
   unitRateCol: number | null;
   totalCol: number | null;
   itemNoCol: number | null;
+  qtyCol: number | null;
+  descCol: number | null;
   sheetPath: string;
-}> {
-  // Find the first sheet that contains header markers
-  const sheetFiles = Object.keys(zip.files).filter(f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"));
-  let sheetXml = "";
-  let sheetPath = "xl/worksheets/sheet1.xml";
-  for (const sf of sheetFiles) {
-    const xml = await zip.file(sf)!.async("string");
-    if (/الكمية|الكميه|Qty|Quantity/i.test(xml)) {
-      sheetXml = xml;
-      sheetPath = sf;
-      break;
-    }
-  }
-  if (!sheetXml && sheetFiles.length > 0) {
-    sheetPath = sheetFiles[0];
-    sheetXml = await zip.file(sheetPath)!.async("string");
-  }
-  if (!sheetXml) throw new Error("لا توجد أوراق عمل في الملف");
-
-  let sharedStrings: string[] = [];
-  const sstFile = zip.file("xl/sharedStrings.xml");
-  if (sstFile) {
-    const sstXml = await sstFile.async("string");
-    const matches = sstXml.match(/<si>[\s\S]*?<\/si>/g) || [];
-    sharedStrings = matches.map(si => {
-      const tParts = si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
-      return tParts.map(t => t.replace(/<t[^>]*>/, "").replace(/<\/t>/, "")).join("");
-    });
-  }
-
-  const qtyMarkers = ["الكمية", "الكميه", "Qty", "Quantity"];
-  const itemMarkers = ["البند", "الوصف", "Description", "Item", "الوحدة"];
-  const unitRateNames = ["سعر الوحدة", "سعر الوحده", "Unit Rate", "Unit Price", "السعر"];
-  const totalNames = ["الإجمالي", "المبلغ", "Total", "Amount", "إجمالي"];
-  const itemNoNames = ["رقم البند", "م", "No", "Item No", "#"];
-
-  const colLetterToNum = (letter: string): number => {
-    let n = 0;
-    for (const c of letter) n = n * 26 + (c.charCodeAt(0) - 64);
-    return n;
-  };
-
-  // Parse rows 1..20 to find header row
-  const rowRegex = /<row\s+r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
-  let headerRow = 1;
-  let unitRateCol: number | null = null;
-  let totalCol: number | null = null;
-  let itemNoCol: number | null = null;
-
-  let m: RegExpExecArray | null;
-  while ((m = rowRegex.exec(sheetXml)) !== null) {
-    const rowNum = parseInt(m[1]);
-    if (rowNum > 20 && headerRow === 1) continue;
-    const rowContent = m[2];
-    const cellRegex = /<c\b[^>]*\br="([A-Z]+)\d+"[^>]*(?:\bt="([^"]+)")?[^>]*(?:\/>|>([\s\S]*?)<\/c>)/g;
-    const cellTexts: Array<{ col: number; text: string }> = [];
-    let cm: RegExpExecArray | null;
-    while ((cm = cellRegex.exec(rowContent)) !== null) {
-      const col = colLetterToNum(cm[1]);
-      const cellType = cm[2] || "";
-      const inner = cm[3];
-      let text = "";
-      if (cellType === "s") {
-        const vMatch = inner.match(/<v>(\d+)<\/v>/);
-        if (vMatch) text = sharedStrings[parseInt(vMatch[1])] || "";
-      } else if (cellType === "inlineStr") {
-        const tMatch = inner.match(/<t[^>]*>([\s\S]*?)<\/t>/);
-        if (tMatch) text = tMatch[1];
-      } else {
-        const vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
-        if (vMatch) text = vMatch[1];
-      }
-      cellTexts.push({ col, text: text.trim() });
-    }
-
-    const hasQty = cellTexts.some(ct => qtyMarkers.some(mm => ct.text.includes(mm)));
-    const hasItem = cellTexts.some(ct => itemMarkers.some(mm => ct.text.includes(mm)));
-
-    if (hasQty && hasItem && headerRow === 1) {
-      headerRow = rowNum;
-      for (const ct of cellTexts) {
-        if (!unitRateCol && unitRateNames.some(n => ct.text === n || ct.text.startsWith(n + " ") || ct.text.startsWith(n + "\n"))) {
-          unitRateCol = ct.col;
-        }
-        if (!totalCol && totalNames.some(n => ct.text === n || ct.text.startsWith(n + " ") || ct.text.startsWith(n + "\n"))) {
-          totalCol = ct.col;
-        }
-        if (!itemNoCol && itemNoNames.some(n => ct.text === n || ct.text.startsWith(n + " ") || ct.text.startsWith(n + "\n"))) {
-          itemNoCol = ct.col;
-        }
-      }
-      break;
-    }
-  }
-
-  return { headerRow, unitRateCol, totalCol, itemNoCol, sheetPath };
 }
 
-/**
- * Export Etemad-ready Excel: inject prices into original uploaded file.
- */
+const QTY_MARKERS = ["الكمية", "الكميه", "Qty", "Quantity"];
+const ITEM_MARKERS = ["البند", "الوصف", "Description", "Item", "الوحدة"];
+const UNIT_RATE_NAMES = ["سعر الوحدة", "سعر الوحده", "Unit Rate", "Unit Price", "السعر"];
+const TOTAL_NAMES = ["الإجمالي", "المبلغ", "Total", "Amount", "إجمالي"];
+const ITEM_NO_NAMES = ["رقم البند", "م", "No", "Item No", "#"];
+const QTY_COL_NAMES = ["الكمية", "الكميه", "Qty", "Quantity"];
+const DESC_COL_NAMES = ["البند", "الوصف", "Description", "وصف البند"];
+
+function matchesAny(text: string, candidates: string[]): boolean {
+  const t = text.trim();
+  return candidates.some(c => t === c || t.startsWith(c + " ") || t.startsWith(c + "\n"));
+}
+
+function detectHeaderMap(
+  structure: SheetStructure
+): HeaderMap {
+  // Find sheet containing header markers
+  let targetSheetPath = "";
+  let targetXml = "";
+
+  for (const [path, xml] of structure.sheets) {
+    if (/الكمية|الكميه|Qty|Quantity/i.test(xml)) {
+      targetSheetPath = path;
+      targetXml = xml;
+      break;
+    }
+  }
+  if (!targetSheetPath && structure.sheets.size > 0) {
+    const first = structure.sheets.entries().next().value!;
+    targetSheetPath = first[0];
+    targetXml = first[1];
+  }
+  if (!targetXml) throw new Error("لا توجد أوراق عمل في الملف");
+
+  // Parse rows up to 20 to find header
+  const rows = parseRows(targetXml, 25);
+
+  for (const row of rows) {
+    if (row.rowNum > 20) break;
+
+    const resolvedCells = row.cells.map(c => ({
+      ...c,
+      text: resolveValue(c, structure.sharedStrings).trim()
+    }));
+
+    const hasQty = resolvedCells.some(c => QTY_MARKERS.some(m => c.text.includes(m)));
+    const hasItem = resolvedCells.some(c => ITEM_MARKERS.some(m => c.text.includes(m)));
+
+    if (hasQty && hasItem) {
+      let unitRateCol: number | null = null;
+      let totalCol: number | null = null;
+      let itemNoCol: number | null = null;
+      let qtyCol: number | null = null;
+      let descCol: number | null = null;
+
+      for (const c of resolvedCells) {
+        if (!unitRateCol && matchesAny(c.text, UNIT_RATE_NAMES)) unitRateCol = c.col;
+        if (!totalCol && matchesAny(c.text, TOTAL_NAMES)) totalCol = c.col;
+        if (!itemNoCol && matchesAny(c.text, ITEM_NO_NAMES)) itemNoCol = c.col;
+        if (!qtyCol && matchesAny(c.text, QTY_COL_NAMES)) qtyCol = c.col;
+        if (!descCol && matchesAny(c.text, DESC_COL_NAMES)) descCol = c.col;
+      }
+
+      return {
+        headerRow: row.rowNum,
+        unitRateCol,
+        totalCol,
+        itemNoCol,
+        qtyCol,
+        descCol,
+        sheetPath: targetSheetPath,
+      };
+    }
+  }
+
+  // Fallback: minimal scan — return first sheet, header=1, no columns
+  console.warn("[etemadExporter] Header detection failed, using fallback");
+  return {
+    headerRow: 1,
+    unitRateCol: null,
+    totalCol: null,
+    itemNoCol: null,
+    qtyCol: null,
+    descCol: null,
+    sheetPath: targetSheetPath,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Layer 3: buildRowIndexMap — priority-based mapping
+// ═══════════════════════════════════════════════════════════════
+
+interface RowMapEntry {
+  excelRow: number;
+  itemNo: string;
+}
+
+function buildRowIndexMap(
+  xml: string,
+  headerMap: HeaderMap,
+  sharedStrings: string[]
+): { byItemNo: Map<string, number>; byRowIndex: Map<number, number> } {
+  const byItemNo = new Map<string, number>();
+  const byRowIndex = new Map<number, number>();
+
+  const rows = parseRows(xml);
+  let dataIndex = 0;
+
+  for (const row of rows) {
+    if (row.rowNum <= headerMap.headerRow) continue;
+    dataIndex++;
+
+    // Extract item_no if column is known
+    if (headerMap.itemNoCol) {
+      const itemNoCell = row.cells.find(c => c.col === headerMap.itemNoCol);
+      if (itemNoCell) {
+        const val = resolveValue(itemNoCell, sharedStrings).trim();
+        if (val && !byItemNo.has(val)) {
+          byItemNo.set(val, row.rowNum);
+        }
+      }
+    }
+
+    byRowIndex.set(dataIndex, row.rowNum);
+  }
+
+  return { byItemNo, byRowIndex };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Layer 4: injectCellValue — safe minimal (no clone)
+// ═══════════════════════════════════════════════════════════════
+
+function injectCellValue(
+  xml: string,
+  targetRow: number,
+  targetCol: number,
+  value: number
+): string {
+  const cellRef = `${colNumToLetter(targetCol)}${targetRow}`;
+  const rows = parseRows(xml);
+  const row = rows.find(r => r.rowNum === targetRow);
+
+  if (!row) {
+    // Row doesn't exist — skip silently
+    return xml;
+  }
+
+  const rowXml = xml.substring(row.startIdx, row.endIdx);
+
+  // Find existing cell in this row
+  const cellStartTag = `<c `;
+  let cellFound = false;
+  let newRowXml = rowXml;
+
+  // Scan for cell with matching ref
+  let cursor = 0;
+  const rowContent = rowXml;
+
+  while (true) {
+    const cStart = rowContent.indexOf("<c ", cursor);
+    if (cStart === -1) break;
+
+    const cTagEnd = rowContent.indexOf(">", cStart);
+    if (cTagEnd === -1) break;
+
+    const cTag = rowContent.substring(cStart, cTagEnd + 1);
+    const ref = getAttr(cTag, "r");
+
+    if (ref === cellRef) {
+      cellFound = true;
+      // Preserve r, s; change t to "n"; replace content
+      const s = getAttr(cTag, "s");
+      const sAttr = s ? ` s="${s}"` : "";
+
+      if (cTag.endsWith("/>")) {
+        // Self-closing → replace with full cell
+        const newCell = `<c r="${cellRef}"${sAttr} t="n"><v>${value}</v></c>`;
+        newRowXml = newRowXml.substring(0, cStart) + newCell + newRowXml.substring(cTagEnd + 1);
+      } else {
+        const cCloseIdx = rowContent.indexOf("</c>", cTagEnd);
+        if (cCloseIdx === -1) break;
+        // Replace entire cell content: remove <f>, set <v>
+        const newCell = `<c r="${cellRef}"${sAttr} t="n"><v>${value}</v></c>`;
+        newRowXml = newRowXml.substring(0, cStart) + newCell + newRowXml.substring(cCloseIdx + 4);
+      }
+      break;
+    }
+
+    // Move past this cell
+    if (cTag.endsWith("/>")) {
+      cursor = cTagEnd + 1;
+    } else {
+      const cCloseIdx = rowContent.indexOf("</c>", cTagEnd);
+      cursor = cCloseIdx !== -1 ? cCloseIdx + 4 : cTagEnd + 1;
+    }
+  }
+
+  if (!cellFound) {
+    // Insert new minimal cell before </row>
+    const newCell = `<c r="${cellRef}" t="n"><v>${value}</v></c>`;
+    const closeRowIdx = newRowXml.lastIndexOf("</row>");
+    if (closeRowIdx !== -1) {
+      newRowXml = newRowXml.substring(0, closeRowIdx) + newCell + newRowXml.substring(closeRowIdx);
+    }
+  }
+
+  // Replace old row XML with new
+  return xml.substring(0, row.startIdx) + newRowXml + xml.substring(row.endIdx);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Sanitizer: strip shared formulas (prevents corruption)
+// ═══════════════════════════════════════════════════════════════
+
+function stripSharedFormulas(xml: string): string {
+  return xml
+    .replace(/\s+t="shared"/g, "")
+    .replace(/\s+si="\d+"/g, "")
+    .replace(/\s+ref="[A-Z]+\d+:[A-Z]+\d+"/g, "");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Main export function
+// ═══════════════════════════════════════════════════════════════
+
 export async function exportEtemad(
   boqFileId: string,
   items: EtemadItem[],
   originalFilePath: string,
   originalFileName: string
 ): Promise<void> {
-  // 1. Download original file from storage
+  // 1. Download original file
   const { data: fileData, error: dlErr } = await supabase.storage
     .from("boq-files")
     .download(originalFilePath);
   if (dlErr || !fileData) throw new Error("تعذر تحميل الملف الأصلي من التخزين");
 
-  // 2. Sanitize: strip shared formulas + normalize border nodes
   const rawBuffer = await fileData.arrayBuffer();
-  const { cleanBuffer, zip } = await sanitizeWorkbook(rawBuffer);
+  const zip = await JSZip.loadAsync(rawBuffer);
 
-  // Build itemNo + row_index maps
-  const itemMap = new Map<number, EtemadItem>();
+  // 2. Strip shared formulas from all sheets
+  const sheetFiles = Object.keys(zip.files).filter(
+    f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml")
+  );
+  for (const sf of sheetFiles) {
+    let xml = await zip.file(sf)!.async("string");
+    xml = stripSharedFormulas(xml);
+    zip.file(sf, xml);
+  }
+
+  // 3. Read structure + sharedStrings
+  const structure = await readSheetStructure(zip);
+
+  // 4. Detect header map (cursor parser with fallback)
+  let headerMap: HeaderMap;
+  try {
+    headerMap = detectHeaderMap(structure);
+  } catch (e) {
+    console.error("[etemadExporter] Header detection error:", e);
+    throw new Error("تعذر العثور على هيكل الجدول في الملف الأصلي");
+  }
+
+  if (!headerMap.unitRateCol && !headerMap.totalCol) {
+    throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
+  }
+
+  // 5. Build row index map
+  const sheetXml = structure.sheets.get(headerMap.sheetPath) || "";
+  const { byItemNo, byRowIndex } = buildRowIndexMap(sheetXml, headerMap, structure.sharedStrings);
+
+  // Build item maps
   const itemNoMap = new Map<string, EtemadItem>();
   for (const item of items) {
-    itemMap.set(item.row_index, item);
     if (item.item_no) itemNoMap.set(item.item_no.trim(), item);
   }
 
+  // 6. Inject values
+  let currentXml = structure.sheets.get(headerMap.sheetPath) || "";
+
+  for (const item of items) {
+    if (item.status === "pending" || (!item.unit_rate && !item.total_price)) continue;
+
+    // Priority mapping: item_no exact → row_index fallback
+    let excelRow: number | null = null;
+
+    // Priority 1: item_no exact match
+    if (item.item_no) {
+      const mapped = byItemNo.get(item.item_no.trim());
+      if (mapped) excelRow = mapped;
+    }
+
+    // Priority 2: row_index structural fallback
+    if (!excelRow) {
+      const mapped = byRowIndex.get(item.row_index);
+      if (mapped) excelRow = mapped;
+    }
+
+    if (!excelRow) continue;
+
+    if (headerMap.unitRateCol && item.unit_rate != null) {
+      currentXml = injectCellValue(currentXml, excelRow, headerMap.unitRateCol, item.unit_rate);
+    }
+    if (headerMap.totalCol && item.total_price != null) {
+      currentXml = injectCellValue(currentXml, excelRow, headerMap.totalCol, item.total_price);
+    }
+  }
+
+  // 7. Write modified sheet back
+  zip.file(headerMap.sheetPath, currentXml);
+
+  // 8. Generate and download
+  const outBuffer = await zip.generateAsync({ type: "arraybuffer" });
   const baseName = originalFileName.replace(/\.(xlsx|xls)$/i, "");
   const downloadName = `${baseName}_مسعّر.xlsx`;
 
-  // 3. Try ExcelJS path first
-  let outBuffer: ArrayBuffer;
-  try {
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(cleanBuffer);
-    const ws = wb.worksheets[0];
-    if (!ws) throw new Error("لا توجد ورقة عمل في الملف الأصلي");
-
-    const headerRowIdx = findHeaderRow(ws);
-    const unitRateCol = findColumnByHeader(ws, headerRowIdx, ["سعر الوحدة", "سعر الوحده", "Unit Rate", "Unit Price", "السعر"]);
-    const totalCol = findColumnByHeader(ws, headerRowIdx, ["الإجمالي", "المبلغ", "Total", "Amount", "إجمالي"]);
-    const itemNoCol = findColumnByHeader(ws, headerRowIdx, ["رقم البند", "م", "No", "Item No", "#"]);
-
-    if (!unitRateCol && !totalCol) {
-      throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
-    }
-
-    for (let r = headerRowIdx + 1; r <= ws.rowCount; r++) {
-      const dataRowIdx = r - headerRowIdx;
-      let matchedItem: EtemadItem | undefined;
-
-      if (itemNoCol) {
-        const cellItemNo = String(ws.getRow(r).getCell(itemNoCol).value ?? "").trim();
-        if (cellItemNo && itemNoMap.has(cellItemNo)) {
-          matchedItem = itemNoMap.get(cellItemNo);
-        }
-      }
-      if (!matchedItem) matchedItem = itemMap.get(dataRowIdx);
-      if (!matchedItem) continue;
-
-      if (matchedItem.status === "pending" || (!matchedItem.unit_rate && !matchedItem.total_price)) {
-        if (unitRateCol) ws.getRow(r).getCell(unitRateCol).value = null;
-        if (totalCol) ws.getRow(r).getCell(totalCol).value = null;
-        continue;
-      }
-
-      if (unitRateCol && matchedItem.unit_rate != null) {
-        ws.getRow(r).getCell(unitRateCol).value = matchedItem.unit_rate;
-      }
-      if (totalCol && matchedItem.total_price != null) {
-        ws.getRow(r).getCell(totalCol).value = matchedItem.total_price;
-      }
-    }
-
-    outBuffer = await wb.xlsx.writeBuffer() as ArrayBuffer;
-  } catch (excelJsErr) {
-    // 4. Fallback path: use JSZip directly to inject values into sheet1.xml
-    console.warn("[etemadExporter] ExcelJS failed, using JSZip fallback:", excelJsErr);
-
-    const { headerRow, unitRateCol, totalCol, itemNoCol, sheetPath } = await discoverColumnsViaJSZip(zip);
-
-    if (!unitRateCol && !totalCol) {
-      throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي (fallback)");
-    }
-
-    // Build injections by row_index (item_no matching not feasible without re-parsing every row)
-    const injections: Array<{ row: number; col: number; value: number }> = [];
-    for (const item of items) {
-      if (item.status === "pending") continue;
-      const excelRow = headerRow + item.row_index;
-      if (unitRateCol && item.unit_rate != null) {
-        injections.push({ row: excelRow, col: unitRateCol, value: item.unit_rate });
-      }
-      if (totalCol && item.total_price != null) {
-        injections.push({ row: excelRow, col: totalCol, value: item.total_price });
-      }
-    }
-
-    outBuffer = await fallbackInjectViaJSZip(zip, injections, sheetPath);
-  }
-
-  // 5. Download
-  const blob = new Blob([outBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const blob = new Blob([outBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
