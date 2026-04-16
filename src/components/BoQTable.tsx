@@ -570,28 +570,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <Button size="sm" className="gap-1" onClick={handlePricing} disabled={pricing || !hasItems}>
                 <Play className="w-3 h-3" /> {t("priceAll")}
               </Button>
-              {pricedCount > 0 && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1" disabled={pricing}>
-                      <RotateCcw className="w-3 h-3" /> إعادة التسعير
-                    </Button>
-                  </AlertDialogTrigger>
-                    <AlertDialogContent dir="rtl">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>إعادة تسعير شاملة (تصفير كامل)</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        ⚠️ سيتم تصفير جميع الأسعار والتوزيعات والتعديلات اليدوية أولاً، ثم إعادة التسعير من مكتبة الأسعار الحالية بحالة نظيفة تماماً.
-                        سيتم تسجيل جميع التغييرات في سجل المراجعة.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>إلغاء</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleRePrice}>تأكيد إعادة التسعير</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
               {priceableCount - pricedCount > 0 && (
                 <Button variant="secondary" size="sm" className="gap-1" onClick={handleRepriceUnpriced} disabled={pricing}>
                   <Play className="w-3 h-3" /> تسعير غير المسعّرة ({priceableCount - pricedCount})
