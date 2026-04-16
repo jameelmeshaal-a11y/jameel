@@ -1,5 +1,5 @@
-import ExcelJS from "exceljs";
-import JSZip from "jszip";
+import * as ExcelJS from "exceljs";
+import * as JSZip from "jszip";
 import { supabase } from "@/integrations/supabase/client";
 
 interface EtemadItem {
