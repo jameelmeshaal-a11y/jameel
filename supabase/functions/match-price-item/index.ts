@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { item_name, unit, category: reqCategory } = await req.json();
+    const { item_name, unit, category: reqCategory, item_no, boq_file_id } = await req.json();
     if (!item_name || typeof item_name !== "string") {
       return new Response(JSON.stringify({ error: "item_name is required" }), {
         status: 400,
@@ -137,25 +137,63 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Stage 1 scope: rate_library IDs already linked in the same boq_file
+    const sameFileLibIds = new Set<string>();
+    if (boq_file_id && typeof boq_file_id === "string") {
+      const { data: linked } = await supabase
+        .from("boq_items")
+        .select("linked_rate_id")
+        .eq("boq_file_id", boq_file_id)
+        .not("linked_rate_id", "is", null);
+      for (const r of (linked || []) as Array<{ linked_rate_id: string | null }>) {
+        if (r.linked_rate_id) sameFileLibIds.add(r.linked_rate_id);
+      }
+    }
+
     const queryNorm = normalizeArabicText(item_name);
     const queryTokens = tokenize(item_name);
     const queryLower = item_name.toLowerCase();
     const boqCategory = reqCategory || detectCategoryFromText(item_name);
+    const normUnit = (u: string) => (u || "").toLowerCase().replace(/[^a-z0-9أ-ي]/g, "");
+    const reqUnitNorm = unit ? normUnit(unit) : "";
 
     const matches: MatchResult[] = [];
 
     for (const item of (items || []) as LibraryItem[]) {
-      // ── Category gate: block incompatible categories ──
-      if (!areCategoriesCompatible(boqCategory, item.category)) {
-        continue;
+      // ── Stage 2 GATE: Category compatibility ──
+      if (!areCategoriesCompatible(boqCategory, item.category)) continue;
+
+      // ── Stage 2 GATE: Unit must match (when provided) ──
+      if (reqUnitNorm && item.unit && normUnit(item.unit) !== reqUnitNorm) continue;
+
+      // ── Stage 1 (item_no Hard Override → 99) — scoped to same boq_file ──
+      if (item_no && item.item_code && sameFileLibIds.has(item.id)) {
+        const a = String(item_no).trim().toLowerCase();
+        const b = item.item_code.trim().toLowerCase();
+        if (a && b && (a === b ||
+          ((a.includes(b) || b.includes(a)) &&
+            Math.min(a.length, b.length) / Math.max(a.length, b.length) >= 0.95))) {
+          matches.push({
+            id: item.id,
+            name_ar: item.standard_name_ar,
+            name_en: item.standard_name_en,
+            category: item.category,
+            unit: item.unit,
+            unit_price: item.target_rate || item.base_rate,
+            item_code: item.item_code || "",
+            confidence: 99,
+            match_level: "auto",
+          });
+          continue;
+        }
       }
 
+      // ── Stage 3 + 4: Description scoring on the gated pool ──
       let bestScore = 0;
 
-      // Score against Arabic name
       const arNorm = normalizeArabicText(item.standard_name_ar);
       const arTokens = tokenize(item.standard_name_ar);
-      
+
       if (queryNorm === arNorm && queryNorm.length > 0) {
         bestScore = 98;
       } else {
@@ -169,19 +207,20 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Score against English name
       if (item.standard_name_en) {
         const enLower = item.standard_name_en.toLowerCase();
         if (queryLower === enLower) {
           bestScore = Math.max(bestScore, 98);
         } else {
           const enTokens = tokenize(item.standard_name_en);
-          const jaccard = jaccardTokens(queryTokens.map(t => t.toLowerCase()), enTokens.map(t => t.toLowerCase()));
+          const jaccard = jaccardTokens(
+            queryTokens.map((t) => t.toLowerCase()),
+            enTokens.map((t) => t.toLowerCase())
+          );
           bestScore = Math.max(bestScore, jaccard * 100);
         }
       }
 
-      // Score against aliases
       if (item.item_name_aliases && item.item_name_aliases.length > 0) {
         for (const alias of item.item_name_aliases) {
           const aliasNorm = normalizeArabicText(alias);
@@ -195,17 +234,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Unit bonus/penalty
-      if (unit && item.unit) {
-        const normUnit = (u: string) => u.toLowerCase().replace(/[^a-z0-9أ-ي]/g, "");
-        if (normUnit(unit) === normUnit(item.unit)) {
-          bestScore = Math.min(100, bestScore + 3);
-        } else {
-          bestScore = Math.max(0, bestScore - 10);
-        }
+      // Unit was already gated; small bonus for explicit confirmation
+      if (reqUnitNorm && item.unit && normUnit(item.unit) === reqUnitNorm) {
+        bestScore = Math.min(100, bestScore + 3);
       }
 
-      if (bestScore >= 50) {
+      // ── STRICT THRESHOLD: ≥85 = description match, 75-84 = bundled, <75 = no match ──
+      if (bestScore >= 75) {
         matches.push({
           id: item.id,
           name_ar: item.standard_name_ar,
@@ -215,7 +250,7 @@ Deno.serve(async (req) => {
           unit_price: item.target_rate || item.base_rate,
           item_code: item.item_code || "",
           confidence: Math.round(bestScore),
-          match_level: bestScore >= 70 ? "auto" : "suggestion",
+          match_level: "auto",
         });
       }
     }
