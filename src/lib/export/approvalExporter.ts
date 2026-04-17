@@ -186,18 +186,44 @@ interface HeaderMap {
   totalCol: number | null;
 }
 
-const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "م", "no", "#", "item no", "item code", "code", "الرمز"];
-const DESC_KEYS = ["الوصف", "البيان", "وصف", "description", "البند", "اسم البند"];
+// Header keyword sets — TOTAL keys are checked BEFORE unit-rate keys
+// to avoid "السعر الإجمالي" being mis-detected as unit rate.
+const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code"];
+const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
 const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
-const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price", "السعر", "سعر"];
-const TOTAL_KEYS = ["الإجمالي", "الاجمالي", "المبلغ", "السعر الإجمالي", "السعر الاجمالي", "total", "amount", "إجمالي", "اجمالي"];
+// MUST contain "وحدة"/"وحده"/"unit" + price/سعر/rate. Exclude bare "السعر" (matches total too).
+const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price"];
+// Specific total phrases — checked first.
+const TOTAL_KEYS = ["السعر الإجمالي", "السعر الاجمالي", "السعر الكلي", "إجمالي السعر", "اجمالي السعر", "total amount", "total price", "المبلغ الإجمالي", "المبلغ الاجمالي"];
 
+/** Normalize Arabic text for comparison (strip diacritics, unify alef/ya/ta-marbuta). */
+function normHeader(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Strict match: cell text must EQUAL one of the keys (after normalization),
+ * OR the cell text must START WITH the key followed by a space/end
+ * (e.g. cell "وصف البند   Item Description" matches key "وصف البند").
+ * No backwards substring matches — that caused "الوحدة" to match "سعر الوحدة".
+ */
 function matchesAny(text: string, keys: string[]): boolean {
-  const t = text.toLowerCase().trim();
+  const t = normHeader(text);
   if (!t) return false;
   return keys.some(k => {
-    const kk = k.toLowerCase();
-    return t === kk || t.includes(kk) || kk.includes(t);
+    const kk = normHeader(k);
+    if (!kk) return false;
+    if (t === kk) return true;
+    // Allow key as a whole-word prefix or contained whole phrase in cell text
+    if (t.startsWith(kk + " ") || t.endsWith(" " + kk) || t.includes(" " + kk + " ")) return true;
+    return false;
   });
 }
 
@@ -220,41 +246,28 @@ function detectHeaderMap(rows: ParsedRow[]): HeaderMap {
       const text = cell.resolved;
       if (!text) continue;
 
-      if (descCol === null && matchesAny(text, DESC_KEYS)) descCol = parsed.col;
-      if (qtyCol === null && matchesAny(text, QTY_KEYS)) qtyCol = parsed.col;
-      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) unitRateCol = parsed.col;
-      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) totalCol = parsed.col;
-      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) itemNoCol = parsed.col;
+      // Check TOTAL before UNIT_RATE — total phrases are more specific
+      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) { totalCol = parsed.col; continue; }
+      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) { unitRateCol = parsed.col; continue; }
+      if (qtyCol === null && matchesAny(text, QTY_KEYS)) { qtyCol = parsed.col; continue; }
+      if (descCol === null && matchesAny(text, DESC_KEYS)) { descCol = parsed.col; continue; }
+      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) { itemNoCol = parsed.col; continue; }
     }
 
-    // Confirmed header: has description + at least qty or unit_rate
+    // Confirmed header: needs description AND (qty or unit_rate or total)
     if (descCol !== null && (qtyCol !== null || unitRateCol !== null || totalCol !== null)) {
-      return {
-        headerRow: row.rowNum,
-        itemNoCol,
-        descCol,
-        qtyCol,
-        unitRateCol,
-        totalCol,
-      };
+      return { headerRow: row.rowNum, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
     }
   }
 
-  // Fallback: minimalRowScan — find any row with "description" or "البيان" / "الوصف"
+  // Fallback: minimalRowScan — find any row with description keyword
   for (let i = 0; i < Math.min(rows.length, 50); i++) {
     const row = rows[i];
     for (const cell of row.cells) {
       const parsed = parseRef(cell.ref);
       if (!parsed) continue;
       if (matchesAny(cell.resolved, DESC_KEYS)) {
-        return {
-          headerRow: row.rowNum,
-          itemNoCol: null,
-          descCol: parsed.col,
-          qtyCol: null,
-          unitRateCol: null,
-          totalCol: null,
-        };
+        return { headerRow: row.rowNum, itemNoCol: null, descCol: parsed.col, qtyCol: null, unitRateCol: null, totalCol: null };
       }
     }
   }
@@ -398,20 +411,25 @@ function injectIntoRowXml(
     attrs = attrs.replace(/\st="[^"]*"/g, "");
     // Strip cm, vm, ph attributes that may reference invalid metadata
     attrs = attrs.replace(/\scm="[^"]*"/g, "");
+    attrs = attrs.replace(/\svm="[^"]*"/g, "");
+    attrs = attrs.replace(/\sph="[^"]*"/g, "");
 
     if (value === null || value === undefined || isNaN(value)) {
-      // Empty cell — preserve style, no value
+      // Empty cell — preserve style, no value, no formula
       const newCell = `<c${attrs}/>`;
       return rowXml.replace(cellPattern, newCell);
     }
 
-    const newCell = `<c${attrs} t="n"><v>${value}</v></c>`;
+    // Inject as a number cell. NOTE: omit t="n" — the OOXML default cell type
+    // is numeric, and matching the original Lovable-exported file (which uses
+    // bare <c r="..." s="..."><v>123</v></c>) maximises Excel compatibility.
+    const newCell = `<c${attrs}><v>${value}</v></c>`;
     return rowXml.replace(cellPattern, newCell);
   }
 
   // Cell doesn't exist — insert in correct column order
   if (value === null || value === undefined || isNaN(value)) return rowXml;
-  const newCell = `<c r="${cellRef}" t="n"><v>${value}</v></c>`;
+  const newCell = `<c r="${cellRef}"><v>${value}</v></c>`;
 
   // Find insertion point: find first existing cell with col > targetCol
   const allCellsRegex = /<c\b[^>]*\sr="([A-Z]+\d+)"/g;
@@ -479,10 +497,12 @@ async function sanitizeWorkbook(zip: JSZip): Promise<void> {
   );
   for (const sf of sheetFiles) {
     let xml = await zip.file(sf)!.async("string");
-    // Remove shared formula attributes (they reference other cells we may have changed)
-    xml = xml.replace(/\s+t="shared"/g, "");
-    xml = xml.replace(/\s+si="\d+"/g, "");
-    xml = xml.replace(/\s+ref="[A-Z]+\d+:[A-Z]+\d+"/g, "");
+    // Strip shared formulas ONLY from <f> tags inside <c> cells.
+    // Pattern: <f t="shared" ref="A1:B2" si="0">...</f>  or  <f t="shared" si="0"/>
+    // We match the <f ...> open tag with t="shared" and remove the whole <f .../> block,
+    // including the optional formula body. This avoids affecting <mergeCell ref="..."/>.
+    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*\/>/g, "");
+    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*>[\s\S]*?<\/f>/g, "");
     zip.file(sf, xml);
   }
 
