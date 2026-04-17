@@ -239,8 +239,8 @@ Deno.serve(async (req) => {
         bestScore = Math.min(100, bestScore + 3);
       }
 
-      // ── STRICT THRESHOLD: ≥85 = description match, 75-84 = bundled, <75 = no match ──
-      if (bestScore >= 75) {
+      // ── STRICT THRESHOLD: ≥80 (governance V4.1). Below = no match ──
+      if (bestScore >= 80) {
         matches.push({
           id: item.id,
           name_ar: item.standard_name_ar,

@@ -169,12 +169,42 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
-        {/* Library info */}
-        <div className="flex items-center gap-2 mb-4 text-sm">
-          <Badge variant="outline">V2 — Multi-Source</Badge>
+        {/* Library info + Governance */}
+        <div className="flex items-center gap-2 mb-4 text-sm flex-wrap">
+          <Badge variant="outline">V4.1 — Strict Governance</Badge>
           <Badge variant="outline">{uniqueCategories.length} فئات</Badge>
           <Badge variant="outline">{rates.length} بنود</Badge>
-          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">المحرك يستخدم مصادر متعددة ✓</Badge>
+          <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-200">target_rate فقط ✓</Badge>
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            onClick={async () => {
+              const t = toast.loading("جارٍ فحص حوكمة الأسعار...");
+              const { data, error } = await supabase.rpc("verify_pricing_governance" as any);
+              toast.dismiss(t);
+              if (error) {
+                toast.error(`فشل الفحص: ${error.message}`);
+                return;
+              }
+              const r = data as any;
+              if (r?.healthy) {
+                toast.success(
+                  `✅ حوكمة سليمة 100% — ${r.total_priced} بند مسعّر، 0 انحراف، 0 يتيم`,
+                  { duration: 8000 }
+                );
+              } else {
+                toast.error(
+                  `⚠️ انحراف: ${r?.drift_count || 0} بند سعرها ≠ المكتبة | ${r?.orphan_count || 0} بند بدون رابط`,
+                  { duration: 12000 }
+                );
+                console.warn("[Governance Drift Samples]", r?.drift_samples);
+              }
+            }}
+          >
+            <Shield className="w-4 h-4 ml-1" />
+            فحص حوكمة الأسعار
+          </Button>
         </div>
 
         {/* Rate Library */}
