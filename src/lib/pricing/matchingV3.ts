@@ -133,11 +133,15 @@ const WEIGHTS = {
   CORRECTION_NOTES_BOOST: 12,
 } as const;
 
-// ─── Main V3 Matcher ────────────────────────────────────────────────────────
+// ─── Main V4 Matcher (strict 4-stage pipeline) ─────────────────────────────
 
 /**
- * Find the best rate library match using V3 multi-layer scoring.
- * Updated signature: accepts item_no and historicalMap for stages A and E.
+ * Find the best rate library match using V4 strict pipeline.
+ *
+ * @param sameFileLibraryIds  Set of rate_library IDs that already have a linked
+ *                            BoQ item in the SAME boq_file. Stage 1 (item_no
+ *                            ≥95% → 99) only fires for candidates in this set
+ *                            to prevent cross-file item_no leakage.
  */
 export function findRateLibraryMatchV3(
   description: string,
@@ -150,9 +154,9 @@ export function findRateLibraryMatchV3(
   notes?: string | null,
   itemNo?: string | null,
   historicalMap?: HistoricalMappingV3[],
+  sameFileLibraryIds?: Set<string>,
 ): { item: RateLibraryItem; confidence: number } | null {
-  // Path A — linked_rate_id is now a HINT (validated), not a hard override.
-  // We resolve the candidate but defer trust until conflict checks pass below.
+  // linked_rate_id is a HINT (validated), not a hard override.
   let linkedHint: RateLibraryItem | null = null;
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
@@ -176,23 +180,32 @@ export function findRateLibraryMatchV3(
   let bestNotes = "";
 
   for (const candidate of rateLibrary) {
-    // Unit gate — hard gate
-    const unitMatch = normalizeUnit(candidate.unit) === normalizeUnit(unit);
-    if (!unitMatch) continue;
+    // ── Stage 2 GATE — Unit (hard) ──
+    if (normalizeUnit(candidate.unit) !== normalizeUnit(unit)) continue;
+
+    // ── Stage 1 scope: item_no Hard Override only for same-file candidates ──
+    // For other candidates we skip Stage A inside scoreCandidate by clearing itemNo.
+    const allowItemNoStage =
+      !!itemNo &&
+      !!sameFileLibraryIds &&
+      sameFileLibraryIds.has(candidate.id);
 
     const result = scoreCandidate(
       enrichedDesc, descriptionEn, category, cleanSegment,
       boqCodes, boqTokens, boqDimensions, boqConcepts,
-      candidate, useEnriched, itemNo, historicalMap,
+      candidate, useEnriched,
+      allowItemNoStage ? itemNo : null,
+      historicalMap,
     );
 
-    // Apply linked_rate_id bonus (+5) ONLY if no conflict was triggered (score > 0)
+    // linked_rate_id bonus (+5) only if no conflict triggered
     let finalScore = result.score;
     if (linkedHint && candidate.id === linkedHint.id && result.score > 0) {
       finalScore = Math.min(99, result.score + 5);
     }
 
-    if (finalScore > bestScore && finalScore >= 50) {
+    // ── Stage 4 STRICT THRESHOLD: minimum 75. No loose fallback. ──
+    if (finalScore > bestScore && finalScore >= 75) {
       bestScore = finalScore;
       bestMatch = candidate;
       bestNotes = result.notes + (finalScore !== result.score ? ` | 📎 linked-hint:+5` : "");
@@ -203,34 +216,8 @@ export function findRateLibraryMatchV3(
     return { item: bestMatch, confidence: bestScore };
   }
 
-  // Path C — Approved-rate fallback (threshold 50, capped at 55)
-  if (approvedRateIds && approvedRateIds.size > 0) {
-    const normalizedUnit_ = normalizeUnit(unit);
-    let fallbackMatch: RateLibraryItem | null = null;
-    let fallbackScore = 0;
-
-    for (const candidate of rateLibrary) {
-      if (!approvedRateIds.has(candidate.id)) continue;
-      if (normalizeUnit(candidate.unit) !== normalizedUnit_) continue;
-
-      const result = scoreCandidate(
-        enrichedDesc, descriptionEn, category, cleanSegment,
-        boqCodes, boqTokens, boqDimensions, boqConcepts,
-        candidate, useEnriched, itemNo, historicalMap,
-      );
-
-      const cappedScore = Math.min(result.score, 55);
-      if (cappedScore >= 50 && cappedScore > fallbackScore) {
-        fallbackScore = cappedScore;
-        fallbackMatch = candidate;
-      }
-    }
-
-    if (fallbackMatch) {
-      return { item: fallbackMatch, confidence: Math.min(fallbackScore, 55) };
-    }
-  }
-
+  // NO loose approved-rate fallback below 75 (removed in V4 strict pipeline).
+  // Items that don't reach 75 stay pending for manual review.
   return null;
 }
 
