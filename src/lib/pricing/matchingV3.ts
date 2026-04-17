@@ -1,16 +1,14 @@
 /**
- * Matching Engine V3 — Multi-layer rate library matching.
- * 
- * Scoring Pipeline (strict order):
- *   A: item_no exact match → 98 (bypasses all gates)
- *   B: INCOMPATIBLE_GROUPS hard gate → 0
- *   C: extractCleanSegment + textScore < 50 → 0
- *   D: hasConceptConflict → 0
- *   E: historicalMap lookup → 95
- *   → remaining points (dimensions, keywords, codes, containment)
- * 
+ * Matching Engine V4 — STRICT 4-stage pipeline (each stage is a gate).
+ *
+ * Stage 1 — item_no ≥95% (scoped to same boq_file_id) → confidence 99, STOP
+ * Stage 2 — Category + Unit gate (filter pool, no score)
+ * Stage 3 — Description (normalized + synonyms + similarity) → confidence ≥85, STOP
+ * Stage 4 — Bundled strict composite (≥75) → confidence, STOP
+ * Else   — null (item stays pending). NO loose fallback below 75.
+ *
  * @module matchingV3
- * @version 3.1
+ * @version 4.0
  */
 
 import {
