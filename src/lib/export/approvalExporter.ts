@@ -186,18 +186,44 @@ interface HeaderMap {
   totalCol: number | null;
 }
 
-const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "م", "no", "#", "item no", "item code", "code", "الرمز"];
-const DESC_KEYS = ["الوصف", "البيان", "وصف", "description", "البند", "اسم البند"];
+// Header keyword sets — TOTAL keys are checked BEFORE unit-rate keys
+// to avoid "السعر الإجمالي" being mis-detected as unit rate.
+const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code"];
+const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
 const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
-const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price", "السعر", "سعر"];
-const TOTAL_KEYS = ["الإجمالي", "الاجمالي", "المبلغ", "السعر الإجمالي", "السعر الاجمالي", "total", "amount", "إجمالي", "اجمالي"];
+// MUST contain "وحدة"/"وحده"/"unit" + price/سعر/rate. Exclude bare "السعر" (matches total too).
+const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price"];
+// Specific total phrases — checked first.
+const TOTAL_KEYS = ["السعر الإجمالي", "السعر الاجمالي", "السعر الكلي", "إجمالي السعر", "اجمالي السعر", "total amount", "total price", "المبلغ الإجمالي", "المبلغ الاجمالي"];
 
+/** Normalize Arabic text for comparison (strip diacritics, unify alef/ya/ta-marbuta). */
+function normHeader(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Strict match: cell text must EQUAL one of the keys (after normalization),
+ * OR the cell text must START WITH the key followed by a space/end
+ * (e.g. cell "وصف البند   Item Description" matches key "وصف البند").
+ * No backwards substring matches — that caused "الوحدة" to match "سعر الوحدة".
+ */
 function matchesAny(text: string, keys: string[]): boolean {
-  const t = text.toLowerCase().trim();
+  const t = normHeader(text);
   if (!t) return false;
   return keys.some(k => {
-    const kk = k.toLowerCase();
-    return t === kk || t.includes(kk) || kk.includes(t);
+    const kk = normHeader(k);
+    if (!kk) return false;
+    if (t === kk) return true;
+    // Allow key as a whole-word prefix or contained whole phrase in cell text
+    if (t.startsWith(kk + " ") || t.endsWith(" " + kk) || t.includes(" " + kk + " ")) return true;
+    return false;
   });
 }
 
