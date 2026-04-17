@@ -35,7 +35,8 @@ import {
   type ProjectType,
   type ProjectSummary,
 } from "./pricing/locationEngine";
-import { fetchAllSources, resolveFromSources } from "./pricing/sourceResolver";
+// GOVERNANCE LAYER 3: rate_sources / resolveFromSources removed entirely.
+// Single source of truth = rate_library.target_rate.
 import { classifyBoQRow, getRowClassificationNote, isPriceableBoQRow } from "./boqRowClassification";
 import { groupSemanticRows, hasManualOverride, type SemanticBlock } from "./boqRowGrouping";
 
@@ -452,12 +453,11 @@ export async function runPricingEngine(
   projectType: ProjectType = "government_civil",
   onItemPriced?: OnItemPricedCallback,
 ): Promise<PricingResult> {
-  // Fetch items, library, location factors, sources, file metadata, AND historical map in parallel
-  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
+  // Fetch items, library, location factors, file metadata, AND historical map in parallel
+  const [itemsResult, libraryResult, locationFactors, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
-    fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
     buildSameFileLibraryIds(boqFileId),
@@ -471,14 +471,8 @@ export async function runPricingEngine(
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
   const projectCity = cities[0] || "";
 
-  // Build set of approved rate IDs from sources AND library-level approval
+  // GOVERNANCE: approved set built from library metadata only (no rate_sources)
   const approvedRateIds = new Set<string>();
-  for (const [rateId, sources] of sourcesMap.entries()) {
-    if (sources.some(s => s.source_type === 'Approved')) {
-      approvedRateIds.add(rateId);
-    }
-  }
-  // Also include library items with library-level approval metadata
   for (const libItem of rateLibrary) {
     if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
@@ -588,94 +582,42 @@ export async function runPricingEngine(
     if (matchedItem) {
       libraryHits++;
 
-      const itemSources = sourcesMap.get(matchedItem.id) || [];
-      const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
+      // GOVERNANCE LAYER 4: effectiveRate := target_rate. No sources, no city, no overrides.
+      const effectiveRate = matchedItem.target_rate;
+      const isApprovedRate = matchedItem.source_type === 'Approved' || !!matchedItem.approved_at;
 
-      const displayedSourceCount = Math.max(1, sourceResolution.sourceCount);
+      const libResult = priceFromApprovedRate(
+        effectiveRate,
+        matchedItem,
+        block.quantity,
+        locFactor,
+        matchedItem.base_city || "",
+        projectCity,
+        detection.category,
+      );
 
-      // Check if this item is approved via sources OR library-level metadata
-      const isApprovedRate = sourceResolution.method === "approved"
-        || matchedItem.source_type === 'Approved'
-        || !!matchedItem.approved_at;
+      const sourceLabel = isApprovedRate
+        ? `✅ Approved Library Rate: ${effectiveRate} SAR (target_rate, used directly)`
+        : `📚 Library Rate: ${effectiveRate} SAR (target_rate, used directly)`;
 
-      if (isApprovedRate) {
-        // ✅ APPROVED = use rate directly, NO multipliers
-        const approvedRate = sourceResolution.method === "approved"
-          ? sourceResolution.resolvedRate
-          : matchedItem.target_rate;
-
-        const libResult = priceFromApprovedRate(
-          approvedRate,
-          matchedItem,
-          block.quantity,
-          locFactor,
-          sourceResolution.baseCity || matchedItem.base_city || "",
-          projectCity,
-          detection.category,
-        );
-
-        const sourceLabel = sourceResolution.method === "approved"
-          ? `✅ Approved Rate: ${sourceResolution.approvedRate} SAR (used directly)`
-          : `✅ Library-Approved (${matchedItem.source_type}): ${approvedRate} SAR (used directly)`;
-
-        cost = {
-          ...libResult,
-          category: detection.category,
-          priceFlag: "normal" as const,
-          explanation: [
-            `📚 Library V2: "${matchedItem.standard_name_ar}"`,
-            sourceLabel,
-            `Sources: ${displayedSourceCount}`,
-            sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
-            `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
-            `Region: ${locationMatch.region_ar} (×${libResult.locationFactor})`,
-            `Zone: ${locationMatch.zone_class}`,
-            `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
-            `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
-            `🎯 Match: ${matchConfidence}% | Ref: ${matchedItem.id}`,
-            block.contributorRows.length > 0
-              ? `🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`
-              : "",
-          ].filter(Boolean).join(" | "),
-        };
-      } else {
-        // Non-approved match: STILL use exact target_rate — NO multipliers
-        const effectiveRate = sourceResolution.resolvedRate || matchedItem.target_rate;
-        const libResult = priceFromApprovedRate(
-          effectiveRate,
-          matchedItem,
-          block.quantity,
-          locFactor,
-          matchedItem.base_city || "",
-          projectCity,
-          detection.category,
-        );
-
-        const sourceLabel = sourceResolution.method === "weighted"
-          ? `⚖️ Weighted (S:${sourceResolution.supplierAvg ?? "—"} H:${sourceResolution.historicalAvg ?? "—"})`
-          : `📚 Library`;
-
-        cost = {
-          ...libResult,
-          category: detection.category,
-          priceFlag: "normal" as const,
-          explanation: [
-            `📚 Library V2: "${matchedItem.standard_name_ar}"`,
-            sourceLabel,
-            `Sources: ${Math.max(1, sourceResolution.sourceCount)}`,
-            sourceResolution.highVariance ? `⚠️ High variance ${sourceResolution.variance}%` : "",
-            `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
-            `Region: ${locationMatch.region_ar} (×${libResult.locationFactor})`,
-            `Zone: ${locationMatch.zone_class}`,
-            `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
-            `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
-            `🎯 Match: ${matchConfidence}% | Ref: ${matchedItem.id}`,
-            block.contributorRows.length > 0
-              ? `🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`
-              : "",
-          ].filter(Boolean).join(" | "),
-        };
-      }
+      cost = {
+        ...libResult,
+        category: detection.category,
+        priceFlag: "normal" as const,
+        explanation: [
+          `📚 Library V4.1: "${matchedItem.standard_name_ar}"`,
+          sourceLabel,
+          `Range: ${matchedItem.min_rate}–${matchedItem.max_rate}`,
+          `Region: ${locationMatch.region_ar} (display only ×1.00)`,
+          `Zone: ${locationMatch.zone_class}`,
+          `Profit: ${matchedItem.profit_pct}% | Risk: ${libraryItem_risk(matchedItem)}%`,
+          `${matchedItem.is_locked ? "🔒 Locked" : "🔓 Open"}`,
+          `🎯 Match: ${matchConfidence}% | Ref: ${matchedItem.id}`,
+          block.contributorRows.length > 0
+            ? `🔗 وصف مدمج من ${block.contributorRows.length + 1} صفوف`
+            : "",
+        ].filter(Boolean).join(" | "),
+      };
     } else {
       // ═══ NO MATCH — no AI fallback, no price generation ═══
       const unmatchedUpdate = {
@@ -939,11 +881,10 @@ export async function repriceUnpricedItems(
     return { pricedCount: 0, stillUnpricedCount: 0 };
   }
 
-  // 2. Fetch library, location factors, sources, historical map in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
+  // 2. Fetch library, location factors, historical map in parallel (no rate_sources)
+  const [libraryResult, locationFactors, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
-    fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
     buildSameFileLibraryIds(boqFileId),
@@ -953,11 +894,8 @@ export async function repriceUnpricedItems(
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
   const projectCity = cities[0] || "";
 
-  // Build approved rate IDs
+  // GOVERNANCE: approved set from library metadata only
   const approvedRateIds = new Set<string>();
-  for (const [rateId, sources] of sourcesMap.entries()) {
-    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
-  }
   for (const libItem of rateLibrary) {
     if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
@@ -1011,16 +949,8 @@ export async function repriceUnpricedItems(
     const matchedItem = libraryMatchResult.item;
     const matchConfidence = libraryMatchResult.confidence;
 
-    const itemSources = sourcesMap.get(matchedItem.id) || [];
-    const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
-
-    const isApprovedRate = sourceResolution.method === "approved"
-      || matchedItem.source_type === 'Approved'
-      || !!matchedItem.approved_at;
-
-    const effectiveRate = isApprovedRate
-      ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
-      : (sourceResolution.resolvedRate || matchedItem.target_rate);
+    // GOVERNANCE LAYER 4: effectiveRate := target_rate
+    const effectiveRate = matchedItem.target_rate;
 
     let result = priceFromApprovedRate(
       effectiveRate, matchedItem, row.quantity, locFactor,
@@ -1102,11 +1032,10 @@ export async function repriceSingleItem(
     };
   }
 
-  // 2. Fetch dependencies in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
+  // 2. Fetch dependencies in parallel (no rate_sources)
+  const [libraryResult, locationFactors, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
-    fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
     buildSameFileLibraryIds(boqFileId),
@@ -1116,11 +1045,8 @@ export async function repriceSingleItem(
   const ownerMaterials = !!(boqFileResult.data as any)?.owner_materials;
   const projectCity = cities[0] || "";
 
-  // Build approved rate IDs
+  // GOVERNANCE: approved set from library metadata only
   const approvedRateIds = new Set<string>();
-  for (const [rateId, sources] of sourcesMap.entries()) {
-    if (sources.some(s => s.source_type === 'Approved')) approvedRateIds.add(rateId);
-  }
   for (const libItem of rateLibrary) {
     if (libItem.approved_at || libItem.source_type === 'Approved') {
       approvedRateIds.add(libItem.id);
@@ -1281,16 +1207,8 @@ export async function repriceSingleItem(
   const matchedItem = libraryMatchResult.item;
   const matchConfidence = libraryMatchResult.confidence;
 
-  const itemSources = sourcesMap.get(matchedItem.id) || [];
-  const sourceResolution = resolveFromSources(itemSources, matchedItem.target_rate);
-
-  const isApprovedRate = sourceResolution.method === "approved"
-    || matchedItem.source_type === 'Approved'
-    || !!matchedItem.approved_at;
-
-  const effectiveRate = isApprovedRate
-    ? (sourceResolution.method === "approved" ? sourceResolution.resolvedRate : matchedItem.target_rate)
-    : (sourceResolution.resolvedRate || matchedItem.target_rate);
+  // GOVERNANCE LAYER 4: effectiveRate := target_rate
+  const effectiveRate = matchedItem.target_rate;
 
   let result = priceFromApprovedRate(
     effectiveRate, matchedItem, item.quantity, locFactor,
