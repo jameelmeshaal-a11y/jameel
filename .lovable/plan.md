@@ -1,104 +1,81 @@
 
 
-## الخطة v4.0 — Production-Stable Export Engine
+## خطة الإصلاح — تصدير اعتماد + المزايا الموثقة
 
-### 1) `etemadExporter.ts` — 4 طبقات + 4 stabilizers
+### المرحلة 1: تشخيص الوضع الحالي (قبل أي تعديل)
 
-#### الطبقة 1: `readSheetStructure(zip)` + sharedStrings flattening قوي
-```
-parseSharedStrings(xml):
-  for each <si>:
-    flatten = جمع نصوص كل <t>...</t> داخل <si> (تجاهل <rPr> و <r> wrappers)
-    push flatten إلى array
-```
-- يدعم rich text, multiple `<t>` segments, nested formatting بأمان
-- لا يعتمد على بنية معقدة، فقط على `<t>` extraction
+أحتاج التحقق من:
+1. هل `src/lib/boqOriginalExport.ts` موجود فعلاً؟ (الملف غير ظاهر في قائمة المشروع)
+2. الوضع الحالي لـ `src/lib/export/etemadExporter.ts` (تم إعادة كتابته في v4.0)
+3. هل RPC `save_manual_price` مُستخدم حالياً في `PriceBreakdownModal.tsx`؟
+4. الوضع الحالي لـ `pricingEngine.ts` بخصوص حماية البنود اليدوية
+5. الوضع الحالي لـ `matchingV3.ts` بخصوص `linked_rate_id`
 
-#### الطبقة 2: `detectHeaderMap` — Cursor parser + Fallback
-- **المسار الأساسي**: cursor-based scanner (`<row>` → `<c>` → resolve)
-- **Fallback**: عند فشل cursor parser، `minimalRowScan(xml)` يستخدم regex بسيط على `<row r="N">` فقط (دون parsing للخلايا) لإيجاد header row تقريباً
-- يضمن: لا انهيار كامل عند ملفات غريبة
-
-#### الطبقة 3: `buildRowIndexMap` — Priority-based (ليس strict)
-```
-priority order:
-  1. item_no exact match → استخدم مباشرة (ثقة عالية)
-  2. row_index fallback (structural primary) → افتراضي قوي
-  3. description similarity ≥0.7 → last resort فقط
-```
-- **ليس validation strict**: إذا item_no تطابق، لا نتحقق من qty/description
-- يمنع false negatives من تغيرات qty المعاد حسابها
-
-#### الطبقة 4: `injectCellValue` — Safe minimal (لا clone)
-- إذا الخلية موجودة:
-  - حافظ على `r`, `s`, attributes الأصلية
-  - احذف `<f>` فقط
-  - استبدل/أضف `<v>` بالقيمة الجديدة
-  - حول `t="s"` → `t="n"` للأرقام
-- **إذا الخلية غير موجودة** (لا clone template):
-  ```xml
-  <c r="REF" t="n"><v>VALUE</v></c>
-  ```
-  - styles افتراضي (0)
-  - آمن 100%، لا corruption، لا Excel repair
-  - أدرج في الصف بترتيب `r` صحيح
-
-#### المسار النهائي
-```
-download → JSZip.load → 
-readSheetStructure (with safe sharedStrings flatten) →
-try { cursor detectHeaderMap } catch { minimalRowScan fallback } →
-buildRowIndexMap (priority: item_no → row_index → desc) →
-forEach(item) injectCellValue (safe minimal, no clone) →
-zip.generate → download
-```
-
-**حذف ExcelJS كلياً** من الـ imports والمسار.
+**ملاحظة جوهرية**: المشروع يستخدم `etemadExporter.ts` (وليس `boqOriginalExport.ts`). لذا الحل الموثق في الملف لن ينطبق حرفياً — سنطبق نفس **المبدأ** على الملف الفعلي.
 
 ---
 
-### 2) `BoQTable.tsx` — UI controllers + compute guards
+### المرحلة 2: الإصلاحات (بعد التشخيص)
 
-**BMSAnalysisPanel** — Lazy mount + compute guard:
-- State: `bmsView: 'hidden' | 'collapsed' | 'expanded'` افتراضياً `'hidden'`
-- **داخل `useEffect`**: 
-  ```typescript
-  useEffect(() => {
-    if (bmsView === 'hidden') return; // compute guard
-    // ...calculate BMS
-  }, [bmsView, items]);
-  ```
-- Mount الـ component فقط عند `bmsView !== 'hidden'`
-- زر toggle في الـ header
+#### (1) تصدير اعتماد — الحل الجذري الموثق
+- فحص `etemadExporter.ts` للتأكد من عدم إضافة شيت ثانٍ
+- التأكد أن المسار يحقن فقط في الشيت الأصلي
+- إذا كان هناك أي إضافة لشيت "تحليل الأسعار" → حذفها
+- التحقق من أن `injectCellValue` يعمل بشكل صحيح بعد sanitize
 
-**Export readiness summary** (سطر 624-665):
-- لف بـ `Collapsible` افتراضياً مطوي
+#### (2) الحفظ الذري عبر RPC `save_manual_price`
+- استبدال أي `update boq_items` + `syncToRateLibrary` منفصلين بـ استدعاء RPC واحد
+- RPC موجود فعلاً في قاعدة البيانات (مؤكد من schema)
+- إزالة `syncToRateLibrary` من `handleSave`
 
-**PricingIntegrityReport** — Event-driven:
-- إزالة `setIntegrityReportOpen(true)` التلقائي (سطر 124-126, 207-209)
-- يفتح فقط من زر «🛡️ فحص السلامة»
+#### (3) حماية البنود اليدوية في `pricingEngine.ts`
+- إضافة guard صريح في `repriceSingleItem` و `repriceUnpricedItems`
+- تخطي أي بند بـ `override_type === 'manual'`
 
-**حماية notes.match()** (سطر 73-75):
-```typescript
-const match = String(update?.notes ?? "").match(/[""]([^""]+)[""]/);
-if (match?.[1]) setCurrentItemName(match[1].slice(0, 50));
-```
+#### (4) إخفاء بنود التحليل من جدول الكميات
+- ملاحظة: لا يوجد عمود `item_type` في `boq_items` (مؤكد من schema)
+- بدلاً من الفلترة بـ `item_type`، نستخدم `quantity === 0` + علامات وصفية كما هو معتمد في النظام
+- إضافة toggle UI فقط (الفلترة موجودة بالفعل عبر `BoQ Row Classification System`)
+
+#### (5) توليد keywords/aliases تلقائياً
+- إضافة `generateKeywords()` helper في `usePriceLibrary.ts`
+- استدعاء في `useAddPriceItem` و `useUpdatePriceItem`
+
+#### (6) إصلاح `matchingV3.ts` — `linked_rate_id` كـ hint
+- ملاحظة مهمة: يتعارض مع memory `item-no-hard-override` (≥95% = bypass)
+- التعديل المقترح: `linked_rate_id` يصبح bonus +5 فقط، **لكن** نحافظ على `item_no` Hard Override كما هو
+- إضافة فحص تعارض (concept/dimension/category) قبل الثقة في `linked_rate_id`
+
+#### (7) Migration — backfill keywords
+- SQL لملء `keywords` و `item_name_aliases` للبنود الحالية الفارغة
 
 ---
 
-### الملفات المعدّلة
+### الملفات المعدّلة (متوقعة)
 
 | الملف | التغيير |
 |---|---|
-| `src/lib/export/etemadExporter.ts` | إعادة كتابة كاملة: JSZip-only + cursor parser + minimal-scan fallback + safe sharedStrings flatten + priority mapping + safe minimal cell injection (no clone) |
-| `src/components/BoQTable.tsx` | (أ) safe match (ب) BMS lazy + compute guard (ج) Collapsible للـ readiness (د) إزالة auto-open للـ Integrity |
+| `src/lib/export/etemadExporter.ts` | تحقق + تنظيف أي شيت إضافي |
+| `src/components/PriceBreakdownModal.tsx` | استبدال handleSave بـ RPC ذري |
+| `src/lib/pricingEngine.ts` | guard للبنود اليدوية |
+| `src/components/BoQTable.tsx` | toggle لإخفاء بنود التحليل |
+| `src/hooks/usePriceLibrary.ts` | توليد keywords/aliases |
+| `src/lib/pricing/matchingV3.ts` | linked_rate_id كـ hint + فحص تعارض |
+| Migration جديد | backfill keywords للبنود الحالية |
 
-### ضمانات Production
-- ✅ صفر تغيير على `pricingEngine.ts`، `matchingV3.ts`، RPCs، schema
-- ✅ كل وظائف BMS/Integrity محفوظة قابلة للاستدعاء
-- ✅ Fallback parser → لا انهيار صامت
-- ✅ Safe minimal cell → لا Excel repair، لا corrupted styles
-- ✅ Priority mapping → لا false negatives
-- ✅ sharedStrings flattening آمن مع rich text
-- ✅ BMS compute guard → صفر حسابات خلفية مخفية
+### ضمانات الالتزام بالـ Memory
+- ✅ `item_no` Hard Override (≥95% = confidence 99) محفوظ
+- ✅ Category Hard Gate محفوظ
+- ✅ Hardened Propagation (word_similarity ≥0.65) محفوظ
+- ✅ Manual Approval Sync عبر RPC `save_manual_price` (موجود فعلاً)
+- ✅ Reset Governance — البنود اليدوية محمية
+- ✅ Zero AI Pricing + VAT excluded
+- ✅ صفر تغيير على schema الأساسي
+
+### ترتيب التنفيذ
+1. تشخيص etemadExporter + إصلاح التصدير (الأولوية القصوى)
+2. اختبار التصدير
+3. RPC ذري + حماية يدوية
+4. keywords + matchingV3 hint
+5. UI toggle + migration backfill
 
