@@ -2,6 +2,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useEffect, useCallback } from "react";
 
+/**
+ * Generate normalized Arabic keywords from a name.
+ * - Strips diacritics, normalizes hamza/ta-marbuta/alif-maksura
+ * - Removes common Arabic prefixes (ال، وال، بال، لل، و، ب، ل، ف، ك)
+ * - Filters tokens shorter than 2 chars
+ */
+function generateKeywords(name: string): string[] {
+  if (!name) return [];
+  const stripped = name
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+  const stopPrefixes = /^(ال|وال|بال|لل|و|ب|ل|ف|ك)/;
+  const tokens = stripped
+    .split(/[\s,،.؛;/\\()\-–—]+/)
+    .map(t => t.replace(stopPrefixes, "").trim())
+    .filter(t => t.length >= 2);
+  return [...new Set(tokens)];
+}
+
 // Fetch all rate_library items with optional search/category filter
 export function usePriceLibrary(search: string = "", category: string = "all") {
   return useQuery({
