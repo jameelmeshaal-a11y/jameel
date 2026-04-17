@@ -115,13 +115,14 @@ function findRateLibraryMatch(
   notes?: string | null,
   itemNo?: string | null,
   historicalMapRef?: HistoricalMappingV3[],
+  sameFileLibraryIds?: Set<string>,
 ): { item: RateLibraryItem; confidence: number } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
       rateLibrary, linkedRateId, approvedRateIds, notes,
-      itemNo, historicalMapRef,
+      itemNo, historicalMapRef, sameFileLibraryIds,
     );
   }
 
