@@ -1,56 +1,28 @@
+## حوكمة صارمة — المكتبة هي السقف والحد، لا تجاوز
 
+### ما تم تنفيذه
 
-## الحل النهائي الكامل — حذف شامل واعتماد المكتبة الحالية مرجعاً وحيداً
+#### 1) توحيد سعر الردم في المكتبة → 40 ريال
+- كل بنود `category='earthworks'` التي تحتوي «ردم» في الاسم/الوصف:
+  `base_rate = target_rate = min_rate = max_rate = 40`
+- كل بنود BoQ التي وصفها يحتوي «ردم» تم تصفيرها (`status='pending'`) لإعادة تسعيرها من 40 الجديد.
 
-### ما سأنفذه (3 خطوات متسلسلة)
+#### 2) حذف Path C fallback نهائياً (`src/lib/pricingEngine.ts`)
+- أُزيل تماماً المطابقة الرخوة على نص مشابه ≥50% بسقف 55.
+- الآن: بند لا يحقق ≥75 في Pipeline V4 → يبقى `pending` بدون أي سعر.
 
-#### الخطوة 1 — حذف شامل لكل البيانات القديمة
-- حذف **كل** سجلات `rate_sources` نهائياً (841 سجل)
-- فك ربط **كل** بنود BoQ بدون استثناء (حتى اليدوية): `linked_rate_id = NULL`
-- تصفير **كل** بيانات التسعير في `boq_items` بدون استثناء:
-  - `unit_rate, total_price, materials, labor, equipment, logistics, risk, profit, confidence, source, override_type, override_at, override_by, override_reason, manual_overrides, notes` ← الكل NULL/فارغ
-  - `status = 'pending'`
-- ملاحظة: trigger `guard_manual_override` يسمح بهذا (لأنه يستثني الحالة `status='pending' AND override_type=NULL`)
+#### 3) قفل `unitRate = target_rate` حرفياً
+- في `priceFromApprovedRate`: حذف ضرب `locationFactor` على السعر.
+- السعر النهائي للبند = سعر المكتبة بالضبط (بدون أي تعديل لمدينة/مسافة/ضرب).
+- التوزيع الداخلي على materials/labor/equipment/logistics فقط يقسم نفس الرقم.
 
-#### الخطوة 2 — إزالة حصانة `approved_library` من محرك التسعير
-- في `src/lib/pricingEngine.ts` (سطور 1013، 1129، وأي موضع آخر): إزالة شرط `|| row.source === 'approved_library'`
-- بعد الخطوة 1 لن يبقى أي بند بمصدر قديم، لكن نضمن المستقبل
+### القاعدة الجديدة (لا استثناء)
+- ✅ السعر يُؤخذ من `rate_library.target_rate` كما هو.
+- ✅ لا يوجد بند يُسعَّر بدون مطابقة ≥75.
+- ✅ لا يوجد بند يأخذ سعراً مختلفاً عن سعر المكتبة المرتبط بها.
+- ❌ لا توجد قواعد تعدّل/تضرب/تخمّن السعر.
 
-#### الخطوة 3 — إعادة تسعير المشروع
-- تشغيل re-price سيطبّق Pipeline V4 على **كل** البنود
-- كل بند سيأخذ سعره من `rate_library.target_rate` الحالي مباشرة
-- مثال: حفر الأساسات سيُسعَّر 42 (المكتبة الحالية) بدل 54
-
-### الإثبات الذي سأقدّمه
-1. **قبل**: لقطة من DB تُظهر:
-   - `count(rate_sources)` = 841
-   - `count(boq_items where linked_rate_id IS NOT NULL)` = X
-   - `count(boq_items where override_type='manual')` = Y
-2. **بعد**: لقطة من DB تُظهر:
-   - `count(rate_sources)` = 0
-   - `count(boq_items where linked_rate_id IS NOT NULL)` = 0
-   - `count(boq_items where override_type='manual')` = 0
-   - كل البنود `status='pending'`, `unit_rate IS NULL`
-3. **بعد re-price**: لقطة لبند الحفر تُظهر `unit_rate = 42` مطابقاً لـ `target_rate` في المكتبة
-
-### الملفات المتأثرة
-
-| الملف | التغيير |
-|---|---|
-| migration جديدة | حذف rate_sources بالكامل + reset كل boq_items (بدون استثناء يدوي) |
-| `src/lib/pricingEngine.ts` | إزالة حصانة `source === 'approved_library'` من 3 مواضع |
-
-### ما سيبقى محفوظاً
-- ✅ سجلات `rate_library` الحالية (المكتبة نفسها) — **هي المرجع الوحيد**
-- ✅ `pricing_audit_log` و `price_change_log` (أرشيف تاريخي)
-- ✅ schema, RPCs, RLS, triggers — صفر تغيير
-- ✅ Pipeline V4 المطابقة كما هي
-
-### تحذير صريح
-بعد التنفيذ ستفقد:
-- ❌ كل الأسعار اليدوية القديمة (سيُعاد تسعيرها من المكتبة)
-- ❌ كل تاريخ rate_sources (841 سجل)
-- ❌ كل روابط boq_items القديمة
-
-⚠️ هذه عملية لا رجعة فيها. التسعير سيعتمد 100% على `rate_library.target_rate` الحالي.
-
+### للتحقق
+1. افتح المشروع → Re-price.
+2. أي بند ردم يجب أن يظهر `unit_rate = 40` بالضبط.
+3. أي بند بدون مطابقة في المكتبة يبقى pending (بدون سعر).
