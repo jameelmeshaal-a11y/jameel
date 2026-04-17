@@ -850,12 +850,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </div>
                   )}
                 </td>
-                {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>
                 <td className="text-center">
                   {isPriced && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>
