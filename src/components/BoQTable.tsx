@@ -759,12 +759,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
               <th className="w-10"></th>
-              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
-              <th className="pricing-col w-20 text-right">{t("labor")}</th>
-              <th className="pricing-col w-20 text-right">{t("equip")}</th>
-              <th className="pricing-col w-20 text-right">{t("logis")}</th>
-              <th className="pricing-col w-16 text-right">{t("risk")}</th>
-              <th className="pricing-col w-16 text-right">{t("profit")}</th>
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
