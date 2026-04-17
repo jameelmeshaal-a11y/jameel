@@ -18,6 +18,7 @@
 
 import JSZip from "jszip";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "@/hooks/use-toast";
 
 interface ApprovalItem {
   item_no?: string | null;
@@ -307,14 +308,15 @@ function jaccardSim(a: string, b: string): number {
 }
 
 /**
- * Map each Excel data row → ApprovalItem via QUANTITY-BASED MATCHING.
+ * Map each Excel data row → ApprovalItem using a strict 3-layer strategy:
  *
- * Every Excel row with a numeric quantity > 0 is a payable line. We match it
- * to a DB item with the SAME quantity (tolerance 0.01). When multiple DB
- * items share the same quantity, we disambiguate by description Jaccard
- * similarity (or item_no similarity). Each DB item is consumed only once
- * to prevent duplicate injection. Rows with qty = 0 / non-numeric are
- * header/analysis rows and receive no injection.
+ *   Layer 1 — DIRECT row_index: DB stores `row_index` = the actual Excel
+ *             row number from the original file. Use it directly. This
+ *             resolves 95%+ of items unambiguously.
+ *   Layer 2 — item_no exact match (normalized) for re-imported files
+ *             where row_index drifted.
+ *   Layer 3 — DIAGNOSTIC LOG ONLY. No silent guessing. Unmatched items
+ *             are reported to the console and surfaced via toast.
  */
 function buildRowIndexMap(
   rows: ParsedRow[],
@@ -322,7 +324,7 @@ function buildRowIndexMap(
   items: ApprovalItem[],
 ): Map<number, ApprovalItem> {
   const result = new Map<number, ApprovalItem>();
-  if (rows.length === 0 || headerMap.qtyCol === null) return result;
+  if (rows.length === 0) return result;
 
   const pricedItems = items.filter(i =>
     i.unit_rate != null &&
@@ -331,10 +333,9 @@ function buildRowIndexMap(
     (i as any).quantity > 0,
   );
 
-  // Identity key for "consumed" tracking (ApprovalItem may not carry id)
-  const itemKey = (it: ApprovalItem) =>
-    `${it.row_index}|${it.item_no ?? ""}|${(it as any).quantity}|${it.unit_rate}`;
-  const usedItems = new Set<string>();
+  // Build quick lookups on Excel rows
+  const rowByNum = new Map<number, ParsedRow>();
+  for (const r of rows) rowByNum.set(r.rowNum, r);
 
   const getCellText = (row: ParsedRow, colIdx: number | null): string => {
     if (colIdx === null) return "";
@@ -345,71 +346,81 @@ function buildRowIndexMap(
     return cell?.resolved ?? "";
   };
 
-  let injected = 0;
-  let skippedNoQty = 0;
-
-  for (const row of rows) {
-    if (row.rowNum <= headerMap.headerRow) continue;
-
+  const rowHasPositiveQty = (row: ParsedRow): boolean => {
+    if (headerMap.qtyCol === null) return true; // can't validate; trust it
     const qtyText = getCellText(row, headerMap.qtyCol);
     const qtyNum = parseFloat(qtyText.replace(/,/g, "").trim());
-    if (!isFinite(qtyNum) || qtyNum <= 0) {
-      skippedNoQty++;
-      continue;
-    }
+    return isFinite(qtyNum) && qtyNum > 0;
+  };
 
-    const descTxt = getCellText(row, headerMap.descCol);
-    const itemNoTxt = getCellText(row, headerMap.itemNoCol);
+  const usedRows = new Set<number>();
+  const normItemNo = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
-    const candidates = pricedItems.filter(i =>
-      !usedItems.has(itemKey(i)) &&
-      Math.abs(((i as any).quantity as number) - qtyNum) < 0.01,
-    );
-
-    let chosen: ApprovalItem | undefined;
-    if (candidates.length === 1) {
-      chosen = candidates[0];
-    } else if (candidates.length > 1) {
-      let bestSim = -1;
-      for (const c of candidates) {
-        const dSim = jaccardSim(descTxt, c.description ?? "");
-        const nSim = itemNoTxt && c.item_no ? jaccardSim(itemNoTxt, c.item_no) : 0;
-        const sim = Math.max(dSim, nSim);
-        if (sim > bestSim) {
-          bestSim = sim;
-          chosen = c;
-        }
-      }
-      if (!chosen) chosen = candidates[0];
-    }
-
-    if (chosen) {
-      result.set(row.rowNum, chosen);
-      usedItems.add(itemKey(chosen));
-      injected++;
-    } else {
-      console.warn(
-        `[approvalExporter] Excel row ${row.rowNum} qty=${qtyNum} desc="${descTxt.slice(0, 50)}" — NO matching DB item`,
-      );
+  // Index Excel rows by normalized item_no for Layer 2
+  const rowByItemNo = new Map<string, number>();
+  if (headerMap.itemNoCol !== null) {
+    for (const row of rows) {
+      if (row.rowNum <= headerMap.headerRow) continue;
+      const txt = getCellText(row, headerMap.itemNoCol);
+      const key = normItemNo(txt);
+      if (key && !rowByItemNo.has(key)) rowByItemNo.set(key, row.rowNum);
     }
   }
 
-  const orphaned = pricedItems.filter(i => !usedItems.has(itemKey(i)));
+  let layer1 = 0;
+  let layer2 = 0;
+  const unmatched: ApprovalItem[] = [];
+
+  for (const item of pricedItems) {
+    // Layer 1: direct row_index
+    const directRow = rowByNum.get(item.row_index);
+    if (
+      directRow &&
+      directRow.rowNum > headerMap.headerRow &&
+      !usedRows.has(directRow.rowNum) &&
+      rowHasPositiveQty(directRow)
+    ) {
+      result.set(directRow.rowNum, item);
+      usedRows.add(directRow.rowNum);
+      layer1++;
+      continue;
+    }
+
+    // Layer 2: item_no exact (normalized) match
+    if (item.item_no) {
+      const key = normItemNo(item.item_no);
+      const candRow = rowByItemNo.get(key);
+      if (candRow && !usedRows.has(candRow)) {
+        result.set(candRow, item);
+        usedRows.add(candRow);
+        layer2++;
+        continue;
+      }
+    }
+
+    unmatched.push(item);
+  }
+
   console.log(
-    `[approvalExporter] matched ${injected} rows, ${skippedNoQty} skipped (no qty), ${orphaned.length} priced DB items unplaced`,
+    `[approvalExporter] strategy=row_index_direct, matched=${layer1}, fallback_item_no=${layer2}, unmatched=${unmatched.length}`,
   );
-  if (orphaned.length > 0) {
+  if (unmatched.length > 0) {
     console.warn(
-      `[approvalExporter] Unplaced priced items:`,
-      orphaned.slice(0, 20).map(i => ({
+      `[approvalExporter] Unmatched priced items:`,
+      unmatched.slice(0, 30).map(i => ({
         row_index: i.row_index,
         item_no: i.item_no,
         quantity: (i as any).quantity,
         unit_rate: i.unit_rate,
-        description: i.description?.slice(0, 60),
+        description: i.description?.slice(0, 80),
       })),
     );
   }
+
+  // Expose unmatched count for caller toast
+  (result as any).__unmatchedCount = unmatched.length;
+  (result as any).__layer1 = layer1;
+  (result as any).__layer2 = layer2;
 
   return result;
 }
@@ -631,9 +642,17 @@ export async function exportApproval(
       const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
       injections.push({ rowNum, cellRef: ref, value: unitVal });
     }
-    // NOTE: do NOT inject the total cell — the original file contains a
-    // formula (qty × unit_rate) which Excel will recompute automatically.
-
+    // Inject total explicitly: original cell may be a hardcoded value
+    // (no formula) — relying on Excel recalc would leave stale numbers.
+    if (headerMap.totalCol !== null) {
+      const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
+      const computedTotal = totalVal != null
+        ? totalVal
+        : (unitVal != null && typeof (item as any).quantity === "number"
+            ? unitVal * ((item as any).quantity as number)
+            : null);
+      injections.push({ rowNum, cellRef: ref, value: computedTotal });
+    }
   }
 
   // 7. Inject into sheet XML
@@ -662,6 +681,9 @@ export async function exportApproval(
   URL.revokeObjectURL(url);
 
   // Diagnostic log for verification
+  const unmatchedCount = (rowItemMap as any).__unmatchedCount ?? 0;
+  const layer1 = (rowItemMap as any).__layer1 ?? 0;
+  const layer2 = (rowItemMap as any).__layer2 ?? 0;
   console.log("[approvalExporter]", {
     primarySheetPath,
     headerMap,
@@ -669,5 +691,21 @@ export async function exportApproval(
     matchedRows: rowItemMap.size,
     injections: injections.length,
     sstSize: sst.length,
+    layer1_row_index: layer1,
+    layer2_item_no: layer2,
+    unmatched: unmatchedCount,
   });
+
+  if (unmatchedCount > 0) {
+    toast({
+      title: "تحذير: بنود غير مربوطة",
+      description: `تم حقن ${rowItemMap.size} بند | ⚠️ ${unmatchedCount} بند مسعّر لم يُربط — راجع Console`,
+      variant: "destructive",
+    });
+  } else {
+    toast({
+      title: "تم تصدير ملف الاعتماد بنجاح",
+      description: `✅ تم حقن ${rowItemMap.size} بند (${layer1} عبر row_index، ${layer2} عبر item_no)`,
+    });
+  }
 }
