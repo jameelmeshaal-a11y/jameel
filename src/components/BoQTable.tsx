@@ -759,12 +759,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
               <th className="w-10"></th>
-              {!ownerMaterials && <th className="pricing-col w-20 text-right">{t("mat")}</th>}
-              <th className="pricing-col w-20 text-right">{t("labor")}</th>
-              <th className="pricing-col w-20 text-right">{t("equip")}</th>
-              <th className="pricing-col w-20 text-right">{t("logis")}</th>
-              <th className="pricing-col w-16 text-right">{t("risk")}</th>
-              <th className="pricing-col w-16 text-right">{t("profit")}</th>
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
               <th className="w-10"></th>
@@ -856,12 +850,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </div>
                   )}
                 </td>
-                {!ownerMaterials && <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.materials ? formatNumber(item.materials) : "—"}</td>}
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.labor ? formatNumber(item.labor) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.equipment ? formatNumber(item.equipment) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.logistics ? formatNumber(item.logistics) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.risk ? formatNumber(item.risk) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-[11px]">{isPriced && item.profit ? formatNumber(item.profit) : "—"}</td>
                 <td className="text-center">
                   {isPriced && item.confidence && (
                     <span className={`confidence-badge ${getConfidenceClass(item.confidence)}`}>
