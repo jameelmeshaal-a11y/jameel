@@ -1,51 +1,75 @@
 
 
-## Plan — Verify Etemad Export End-to-End
+## خطة الإصلاح — تصحيح ربط البنود بالصفوف
 
-**I am in read-only Plan mode**, so I cannot run the export, inspect the uploaded `برج_المراقبة_عسير.xlsx`, or fix any issues found. After you approve, I will switch to default mode and execute the verification + fix any issues discovered.
+### السبب الجذري المكتشف
 
-### Step 1 — Inspect the uploaded "previously exported" file
-Copy `user-uploads://برج_المراقبة_عسير.xlsx` to `/tmp/` and run a Python audit using `openpyxl` + raw `unzip`:
-- Sheet count (must = 1, no extra "تحليل الأسعار" sheet)
-- Detect injected unit_rate / total_price columns and sample 5 cells
-- Check `[Content_Types].xml`, `xl/_rels/workbook.xml.rels`, presence of `xl/calcChain.xml`
-- Validate XML well-formedness on `xl/worksheets/sheet1.xml` and `xl/sharedStrings.xml`
-- Run `recalculate_formulas.py` (LibreOffice) to detect repair-triggering errors
+من فحص قاعدة البيانات والكود، تبيّن أن:
 
-### Step 2 — Trigger a live export from the current project
-Use browser automation on `/projects/29dae45a-708e-4954-887d-28b3c45a3163`:
-- Open a BoQ that has both an `originalFilePath` and priced items
-- Click **«تصدير اعتماد»** button
-- Capture the downloaded file via the network/download interceptor and read console log `[approvalExporter]` (already exists at line 610 — shows `headerMap`, `matchedRows`, `injections`)
+**(1) عمود `item_no` في قاعدة البيانات يحتوي وصف البند بدلاً من رقم البند الحقيقي**
+- المتوقع: `02025002`, `03300004` (مثل ما يظهر في عمود "Division No." بالملف)
+- الموجود فعلياً: `"حفر وخنادق للأساسات والكمرات"`, `"القواعد"` (نص الوصف نفسه)
+- النتيجة: المسار رقم 1 (item_no exact match) **يفشل دائماً** للملفات الحالية لأن عمود الإكسل يحوي أرقاماً والقاموس يحوي نصوصاً.
 
-### Step 3 — Side-by-side diff
-Compare the freshly-exported file against the uploaded `برج_المراقبة_عسير.xlsx`:
-- Sheet structure identical (1 sheet, same name)
-- Same headers/columns preserved
-- unit_rate / total_price cells contain numbers (`t="n"`)
-- No `calcChain.xml`, no `t="shared"` formulas
-- Open both in LibreOffice headless and confirm zero recalc errors
+**(2) عدم تطابق منطق `row_index` بين القاعدة والمصدّر**
+- في DB: `row_index` = **رقم الصف الفعلي في إكسل** (11, 13, 16, 19, 26, 28, 30, 31, 32, 33, 35, 36, 37, 38, 39…)
+- في `approvalExporter.ts` السطور 331-351: يستخدم `dataIndex` = **عدّاد تسلسلي** بعد صف الترويسة (1, 2, 3, 4, 5…)
+- النتيجة: `byRowIndex.get(dataIndex)` يبحث عن المفتاح `1` بينما القاعدة تخزّن `11`. التطابق يحصل **فقط بالصدفة** عندما يقع رقم الصف الفعلي قريباً من ترتيبه التسلسلي (وهذا ما يفسّر لماذا بنود `03300004→03300011` حصلت على أسعار بينما `02025002, 03300005, 03300007` لم تحصل).
 
-### Step 4 — Fix any issues discovered
-Likely failure points based on code review:
-| Risk | Location | Fix if found |
-|---|---|---|
-| `xmlEscape` declared but unused → text values may not be escaped | `approvalExporter.ts:61` | Wire into injection or remove |
-| Self-closing `<row .../>` rows skipped by `rowRegex` (requires `</row>`) | `parseSheetRows:122` | Add self-closing pattern |
-| `cm`/`vm`/`ph` stripped but `<f>` formula NOT stripped from existing cell | `injectIntoRowXml:395-409` | Strip `<f>...</f>` from inner before rebuild |
-| Cell with `xml:space="preserve"` + leading space breaks regex | `parseSharedStrings` | Already handled; verify on real file |
-| `headerRow` heuristic may pick wrong row if "السعر" appears in description | `detectHeaderMap` | Add stricter "header band" detection (row must have ≥3 keyword hits) |
-| `boq_files.file_path` may be missing for older BoQs | `handleEtemadExport` | Already handled with toast |
+**(3) المسار الثالث (التشابه الوصفي) يفشل أيضاً** لأن وصف القاعدة يحوي نصاً موروثاً من الصف الأب ("خرسانة مسلحة مصبوبة في ال…") لا يطابق الوصف القصير في خلية الإكسل ("القواعد", "الكمرات").
 
-### Step 5 — Report
-Deliver:
-- Console log dump from live export
-- Excel-validation JSON from `recalculate_formulas.py`
-- Diff summary vs uploaded file
-- List of any code patches applied
+---
 
-### Files that may be touched (only if Step 4 finds issues)
-- `src/lib/export/approvalExporter.ts`
+### الإصلاحات المطلوبة في `src/lib/export/approvalExporter.ts`
 
-**Memory guarantees preserved**: zero changes to pricing engine, matching V4, RPCs, or schema. Export logic only.
+#### إصلاح 1 — مطابقة `row_index` بالصف الفعلي للإكسل (الإصلاح الجوهري)
+استبدال `dataIndex` المتزايد بالاعتماد على `row.rowNum` مباشرةً:
+
+```diff
+- let dataIndex = 0;
+  for (const row of rows) {
+    if (row.rowNum <= headerMap.headerRow) continue;
+-   dataIndex++;
+    ...
+-   if (!matched) matched = byRowIndex.get(dataIndex);
++   if (!matched) matched = byRowIndex.get(row.rowNum);
+  }
+```
+هذا وحده سيحل ~95% من الحالات لأن الـ parser يخزّن `row_index` كرقم الصف الفعلي للإكسل في الأصل.
+
+#### إصلاح 2 — مطابقة المحتوى النصي لخلية رقم البند ضد عدة حقول
+بما أن `item_no` في DB قد يحتوي وصفاً، نوسّع المسار 1 ليبحث في `item_no` و `description` معاً، ونطبّع المقارنة:
+
+```js
+// بناء lookup شامل: المفتاح = النص المطبّع لخلية رقم البند
+// نخزّن البند تحت كلٍّ من: item_no المطبّع، description المطبّع، أول 30 حرفاً
+```
+هكذا حتى لو احتوت خلية الإكسل `02025002` وقاعدتنا تحوي نص الوصف، نطابق الصف بشكل صحيح عبر الخلية الوصفية بدلاً من خلية رقم البند.
+
+#### إصلاح 3 — رفع الأولوية إلى `row.rowNum` ثم item_no/description
+بعد التصحيح يصبح الترتيب:
+1. **`row.rowNum === item.row_index`** (الأكثر دقة، يعمل لـ 95%+)
+2. **item_no/description normalized exact** (للحالات التي تغيّر فيها ترتيب الصفوف)
+3. **Jaccard similarity ≥ 0.7** (احتياطي أخير)
+
+#### إصلاح 4 — تسجيل تشخيصي مفصّل
+إضافة `console.warn` لأي بند في `items` لم يجد صفاً مطابقاً، مع عرض `row_index` والوصف، حتى نرى فوراً في الكونسول أي بنود سقطت من الحقن.
+
+---
+
+### الملف المعدَّل
+| الملف | التغيير |
+|---|---|
+| `src/lib/export/approvalExporter.ts` | تصحيح `buildRowIndexMap` (السطور 315-379) لاستخدام `row.rowNum` بدل `dataIndex` + توسيع lookup المسار الأول + إضافة تشخيصات |
+
+### ضمانات
+- ✅ صفر تغيير على pricing engine، matchingV3، RPCs، schema، أو منطق الحفظ
+- ✅ صفر تغيير على بنية الإكسل المُصدَّر — فقط منطق المطابقة بين القاعدة والصفوف
+- ✅ بعد التطبيق: جميع البنود ذات `status='approved'` ستحصل على حقن سعر الوحدة والإجمالي في صفوفها الفعلية
+- ✅ console.log الحالي سيُظهر `matchedRows` قريبة من `items.length` (بدلاً من ~30%)
+
+### كيفية التحقق بعد التنفيذ
+1. اضغط «تصدير اعتماد» للملف نفسه (برج المراقبة عسير)
+2. افتح Console — تأكد أن `matchedRows ≥ 130` من أصل 165
+3. افتح الملف الناتج في إكسل — كل بند مسعّر يجب أن يحوي `unit_rate` و `total_price` في الأعمدة G و I
 
