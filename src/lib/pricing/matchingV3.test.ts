@@ -444,14 +444,14 @@ const mockLibrary = [
 ] as any[];
 
 describe("findRateLibraryMatchV3", () => {
-  // ── Direct lookup ──
-  it("returns linked rate directly with 95% confidence", () => {
+  // ── linked_rate_id is a HINT (+5), not a hard 95 in V4 ──
+  it("linked_rate_id alone (no description match) returns null in V4", () => {
     const result = findRateLibraryMatchV3(
       "أي وصف", "", "عدد", "plumbing",
       mockLibrary, "lib-gate-valve-25",
     );
-    expect(result?.confidence).toBe(95);
-    expect(result?.item.id).toBe("lib-gate-valve-25");
+    // V4: linked_rate_id is only a hint; without description match it stays pending
+    expect(result).toBeNull();
   });
 
   // ── Anti-confusion: gate valve ≠ air vent ──
@@ -557,30 +557,42 @@ describe("findRateLibraryMatchV3", () => {
   });
 });
 
-// ─── V3.1 Stage A→E Tests ───────────────────────────────────────────────────
+// ─── V4 Stage 1 (item_no scoped) Tests ────────────────────────────────────
 
-describe("Stage A: item_no exact match", () => {
-  it("item_no exact match → 98% bypasses different category", () => {
-    // item_no = "MD-05" should match lib-door-md05 even if we pass wrong category
+describe("Stage 1: item_no Hard Override (scoped to same boq_file_id)", () => {
+  it("item_no ≥95% → 99 when candidate is in sameFileLibraryIds (and unit matches)", () => {
+    // Stage 2 unit gate runs first, so unit must match. Category gate is bypassed by Stage 1.
     const result = findRateLibraryMatchV3(
-      "بند عام غير مرتبط", "", "عدد", "plumbing", // wrong category
+      "بند مختلف الوصف", "", "عدد", "doors",
       mockLibrary, null, undefined, null,
       "MD-05", // item_no
+      undefined,
+      new Set(["lib-door-md05"]), // same-file scope
     );
     expect(result).not.toBeNull();
     expect(result?.item.id).toBe("lib-door-md05");
-    expect(result?.confidence).toBe(98);
+    expect(result?.confidence).toBe(99);
   });
 
-  it("item_no bypasses different description", () => {
+  it("item_no does NOT fire when candidate is NOT in sameFileLibraryIds (cross-file leakage prevented)", () => {
     const result = findRateLibraryMatchV3(
       "وصف مختلف تماماً لا علاقة له بالأبواب", "", "عدد", "doors",
       mockLibrary, null, undefined, null,
       "MD-14",
+      undefined,
+      new Set(), // empty: no same-file linked items
     );
-    expect(result).not.toBeNull();
-    expect(result?.item.id).toBe("lib-door-md14");
-    expect(result?.confidence).toBe(98);
+    // Without scope, Stage 1 doesn't fire; description doesn't reach 75 → null
+    expect(result).toBeNull();
+  });
+
+  it("item_no does NOT fire when sameFileLibraryIds is undefined (legacy callers)", () => {
+    const result = findRateLibraryMatchV3(
+      "وصف مختلف تماماً", "", "عدد", "doors",
+      mockLibrary, null, undefined, null,
+      "MD-14",
+    );
+    expect(result).toBeNull();
   });
 });
 
