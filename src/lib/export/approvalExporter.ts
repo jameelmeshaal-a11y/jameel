@@ -308,8 +308,9 @@ function jaccardSim(a: string, b: string): number {
 /**
  * Map each Excel data row → ApprovalItem.
  * Priority:
- *   1. item_no exact match (after trim)
- *   2. sequential row_index (1-based among data rows after header)
+ *   1. row.rowNum === item.row_index (physical Excel row — most accurate)
+ *   2. Normalized exact match on item_no OR description against the
+ *      item_no-cell text AND the description-cell text
  *   3. description Jaccard similarity ≥ 0.7 (last resort)
  */
 function buildRowIndexMap(
@@ -320,37 +321,54 @@ function buildRowIndexMap(
   const result = new Map<number, ApprovalItem>();
   if (rows.length === 0) return result;
 
+  const normKey = (s: string) => normalizeForCompare(s).replace(/\s+/g, " ").trim();
+
   // Build lookup tables
-  const byItemNo = new Map<string, ApprovalItem>();
   const byRowIndex = new Map<number, ApprovalItem>();
+  const byText = new Map<string, ApprovalItem>(); // normalized item_no OR description
   for (const item of items) {
-    if (item.item_no) byItemNo.set(item.item_no.trim(), item);
     if (item.row_index != null) byRowIndex.set(item.row_index, item);
+    if (item.item_no) {
+      const k = normKey(item.item_no);
+      if (k && !byText.has(k)) byText.set(k, item);
+    }
+    if (item.description) {
+      const k = normKey(item.description);
+      if (k && !byText.has(k)) byText.set(k, item);
+    }
   }
 
-  let dataIndex = 0;
+  const matchedItems = new Set<ApprovalItem>();
+
   for (const row of rows) {
     if (row.rowNum <= headerMap.headerRow) continue;
-    dataIndex++;
 
     let matched: ApprovalItem | undefined;
 
-    // Priority 1: item_no
-    if (headerMap.itemNoCol !== null) {
-      const cell = row.cells.find(c => {
-        const p = parseRef(c.ref);
-        return p && p.col === headerMap.itemNoCol;
-      });
-      if (cell?.resolved) {
-        const key = cell.resolved.trim();
-        if (key && byItemNo.has(key)) matched = byItemNo.get(key);
+    // Priority 1: physical Excel row number
+    matched = byRowIndex.get(row.rowNum);
+
+    // Priority 2: normalized exact text match against itemNo-cell or desc-cell
+    if (!matched) {
+      const candidateCells: string[] = [];
+      for (const colIdx of [headerMap.itemNoCol, headerMap.descCol]) {
+        if (colIdx === null) continue;
+        const cell = row.cells.find(c => {
+          const p = parseRef(c.ref);
+          return p && p.col === colIdx;
+        });
+        if (cell?.resolved) candidateCells.push(cell.resolved);
+      }
+      for (const txt of candidateCells) {
+        const k = normKey(txt);
+        if (k && byText.has(k)) {
+          matched = byText.get(k);
+          break;
+        }
       }
     }
 
-    // Priority 2: row_index
-    if (!matched) matched = byRowIndex.get(dataIndex);
-
-    // Priority 3: description similarity
+    // Priority 3: description Jaccard similarity ≥ 0.7
     if (!matched && headerMap.descCol !== null) {
       const cell = row.cells.find(c => {
         const p = parseRef(c.ref);
@@ -372,7 +390,23 @@ function buildRowIndexMap(
       }
     }
 
-    if (matched) result.set(row.rowNum, matched);
+    if (matched) {
+      result.set(row.rowNum, matched);
+      matchedItems.add(matched);
+    }
+  }
+
+  // Diagnostic: log items with no matched Excel row
+  const unmatched = items.filter(i => !matchedItems.has(i));
+  if (unmatched.length > 0) {
+    console.warn(
+      `[approvalExporter] ${unmatched.length} priced items did not match any Excel row:`,
+      unmatched.slice(0, 20).map(i => ({
+        row_index: i.row_index,
+        item_no: i.item_no,
+        description: i.description?.slice(0, 60),
+      })),
+    );
   }
 
   return result;
