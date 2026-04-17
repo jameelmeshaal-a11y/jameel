@@ -563,11 +563,11 @@ export async function runPricingEngine(
       continue;
     }
 
-    // 3. Manual override + approved_library protection
-    if (hasManualOverride(block.primaryRow) || (block.primaryRow as any).source === 'approved_library') {
+    // 3. Manual override protection ONLY (approved_library is no longer immune — current library is sole source of truth)
+    if (hasManualOverride(block.primaryRow)) {
       const overrideUpdate = {
         status: "approved",
-        notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي أو سعر معتمد من المكتبة 🔒",
+        notes: "تم تخطي إعادة التسعير — يوجد تعديل يدوي 🔒",
       };
       await supabase.from("boq_items").update(overrideUpdate).eq("id", block.primaryRow.id);
       onItemPriced?.(block.primaryRow.id, overrideUpdate);
@@ -914,9 +914,9 @@ export async function resetBoQPricing(boqFileId: string): Promise<number> {
   if (fetchErr) throw new Error(`Failed to fetch items for reset: ${fetchErr.message}`);
   if (!items || items.length === 0) return 0;
 
-  // Separate manual/approved_library items from regular items
-  const manualItems = items.filter(i => i.override_type === 'manual' || i.source === 'approved_library');
-  const regularItems = items.filter(i => i.override_type !== 'manual' && i.source !== 'approved_library');
+  // Separate manual items only — approved_library is no longer protected
+  const manualItems = items.filter(i => i.override_type === 'manual');
+  const regularItems = items.filter(i => i.override_type !== 'manual');
 
   if (regularItems.length > 0) {
     const regularIds = regularItems.map(i => i.id);
@@ -1009,8 +1009,8 @@ export async function repriceUnpricedItems(
     const row = unpricedRows[i];
     onProgress?.(i + 1, unpricedRows.length);
 
-    // Guard: skip manual overrides and approved_library items
-    if ((row as any).override_type === 'manual' || (row as any).source === 'approved_library') continue;
+    // Guard: skip manual overrides only — approved_library is no longer immune
+    if ((row as any).override_type === 'manual') continue;
 
     const description = row.description || "";
     const descriptionEn = row.description_en || "";
@@ -1125,8 +1125,8 @@ export async function repriceSingleItem(
 
   if (itemErr || !item) throw new Error("لم يتم العثور على البند");
 
-  // Guard: skip manual overrides and approved_library items
-  if ((item as any).override_type === 'manual' || (item as any).source === 'approved_library') {
+  // Guard: skip manual overrides only — approved_library is no longer immune
+  if ((item as any).override_type === 'manual') {
     return {
       success: false,
       unitRate: item.unit_rate,
