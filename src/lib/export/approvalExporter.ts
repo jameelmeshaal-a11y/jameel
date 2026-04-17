@@ -23,6 +23,7 @@ interface ApprovalItem {
   item_no?: string | null;
   description?: string | null;
   row_index: number;
+  quantity?: number | null;
   unit_rate: number | null;
   total_price: number | null;
   status: string;
