@@ -85,7 +85,7 @@ export default function RateLibraryPage() {
   };
 
   const handleExport = () => {
-    const exportData = items.map((r: any) => ({
+    const exportData = filteredItems.map((r: any) => ({
       "كود البند": r.item_code || "",
       "اسم البند": r.standard_name_ar,
       "الاسم الإنجليزي": r.standard_name_en,
@@ -124,7 +124,7 @@ export default function RateLibraryPage() {
             />
             {debouncedSearch && !isLoading && (
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                {items.length} نتيجة
+                {filteredItems.length} نتيجة
               </span>
             )}
           </div>
@@ -165,7 +165,7 @@ export default function RateLibraryPage() {
               </AlertDialogContent>
             </AlertDialog>
           )}
-          <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={items.length === 0}>
+          <Button variant="outline" size="sm" className="gap-2" onClick={handleExport} disabled={filteredItems.length === 0}>
             <Download className="w-4 h-4" /> تنزيل Excel
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setImportOpen(true)}>
@@ -191,7 +191,7 @@ export default function RateLibraryPage() {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
-        ) : items.length === 0 ? (
+        ) : filteredItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
               <BookOpen className="w-8 h-8 text-primary" />
@@ -215,7 +215,7 @@ export default function RateLibraryPage() {
                 <tr>
                   <th className="w-8">#</th>
                   <th>{t("code")}</th>
-                  <th>{t("description")}</th>
+                  <th className="max-w-[280px]">{t("description")}</th>
                   <th className="min-w-[160px]">{t("arabic")}</th>
                   <th>{t("unit")}</th>
                   <th>{t("category")}</th>
@@ -225,7 +225,7 @@ export default function RateLibraryPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((rate: any, idx: number) => {
+                {filteredItems.map((rate: any, idx: number) => {
                   const isEditing = editingId === rate.id;
                   const isApproved = !!rate.approved_at;
                   return (
@@ -237,10 +237,14 @@ export default function RateLibraryPage() {
                           <Input value={editValues.item_code} onChange={(e) => setEditValues({...editValues, item_code: e.target.value})} className="h-7 text-xs w-20" />
                         ) : rate.item_code || "—"}
                       </td>
-                      <td className="text-sm">
+                      <td className="text-sm max-w-[280px]">
                         {isEditing ? (
                           <Input value={editValues.standard_name_en} onChange={(e) => setEditValues({...editValues, standard_name_en: e.target.value})} className="h-7 text-xs" />
-                        ) : rate.standard_name_en || "—"}
+                        ) : (
+                          <span className="block truncate" title={rate.standard_name_en || ""}>
+                            {rate.standard_name_en || "—"}
+                          </span>
+                        )}
                       </td>
                       <td className="text-sm" dir="rtl">
                         {isEditing ? (
