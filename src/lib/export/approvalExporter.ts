@@ -246,41 +246,28 @@ function detectHeaderMap(rows: ParsedRow[]): HeaderMap {
       const text = cell.resolved;
       if (!text) continue;
 
-      if (descCol === null && matchesAny(text, DESC_KEYS)) descCol = parsed.col;
-      if (qtyCol === null && matchesAny(text, QTY_KEYS)) qtyCol = parsed.col;
-      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) unitRateCol = parsed.col;
-      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) totalCol = parsed.col;
-      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) itemNoCol = parsed.col;
+      // Check TOTAL before UNIT_RATE — total phrases are more specific
+      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) { totalCol = parsed.col; continue; }
+      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) { unitRateCol = parsed.col; continue; }
+      if (qtyCol === null && matchesAny(text, QTY_KEYS)) { qtyCol = parsed.col; continue; }
+      if (descCol === null && matchesAny(text, DESC_KEYS)) { descCol = parsed.col; continue; }
+      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) { itemNoCol = parsed.col; continue; }
     }
 
-    // Confirmed header: has description + at least qty or unit_rate
+    // Confirmed header: needs description AND (qty or unit_rate or total)
     if (descCol !== null && (qtyCol !== null || unitRateCol !== null || totalCol !== null)) {
-      return {
-        headerRow: row.rowNum,
-        itemNoCol,
-        descCol,
-        qtyCol,
-        unitRateCol,
-        totalCol,
-      };
+      return { headerRow: row.rowNum, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
     }
   }
 
-  // Fallback: minimalRowScan — find any row with "description" or "البيان" / "الوصف"
+  // Fallback: minimalRowScan — find any row with description keyword
   for (let i = 0; i < Math.min(rows.length, 50); i++) {
     const row = rows[i];
     for (const cell of row.cells) {
       const parsed = parseRef(cell.ref);
       if (!parsed) continue;
       if (matchesAny(cell.resolved, DESC_KEYS)) {
-        return {
-          headerRow: row.rowNum,
-          itemNoCol: null,
-          descCol: parsed.col,
-          qtyCol: null,
-          unitRateCol: null,
-          totalCol: null,
-        };
+        return { headerRow: row.rowNum, itemNoCol: null, descCol: parsed.col, qtyCol: null, unitRateCol: null, totalCol: null };
       }
     }
   }
