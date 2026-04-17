@@ -429,7 +429,7 @@ function injectIntoRowXml(
 
   // Cell doesn't exist — insert in correct column order
   if (value === null || value === undefined || isNaN(value)) return rowXml;
-  const newCell = `<c r="${cellRef}" t="n"><v>${value}</v></c>`;
+  const newCell = `<c r="${cellRef}"><v>${value}</v></c>`;
 
   // Find insertion point: find first existing cell with col > targetCol
   const allCellsRegex = /<c\b[^>]*\sr="([A-Z]+\d+)"/g;
