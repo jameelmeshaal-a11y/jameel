@@ -497,10 +497,12 @@ async function sanitizeWorkbook(zip: JSZip): Promise<void> {
   );
   for (const sf of sheetFiles) {
     let xml = await zip.file(sf)!.async("string");
-    // Remove shared formula attributes (they reference other cells we may have changed)
-    xml = xml.replace(/\s+t="shared"/g, "");
-    xml = xml.replace(/\s+si="\d+"/g, "");
-    xml = xml.replace(/\s+ref="[A-Z]+\d+:[A-Z]+\d+"/g, "");
+    // Strip shared formulas ONLY from <f> tags inside <c> cells.
+    // Pattern: <f t="shared" ref="A1:B2" si="0">...</f>  or  <f t="shared" si="0"/>
+    // We match the <f ...> open tag with t="shared" and remove the whole <f .../> block,
+    // including the optional formula body. This avoids affecting <mergeCell ref="..."/>.
+    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*\/>/g, "");
+    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*>[\s\S]*?<\/f>/g, "");
     zip.file(sf, xml);
   }
 
