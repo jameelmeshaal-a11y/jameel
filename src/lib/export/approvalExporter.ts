@@ -411,14 +411,19 @@ function injectIntoRowXml(
     attrs = attrs.replace(/\st="[^"]*"/g, "");
     // Strip cm, vm, ph attributes that may reference invalid metadata
     attrs = attrs.replace(/\scm="[^"]*"/g, "");
+    attrs = attrs.replace(/\svm="[^"]*"/g, "");
+    attrs = attrs.replace(/\sph="[^"]*"/g, "");
 
     if (value === null || value === undefined || isNaN(value)) {
-      // Empty cell — preserve style, no value
+      // Empty cell — preserve style, no value, no formula
       const newCell = `<c${attrs}/>`;
       return rowXml.replace(cellPattern, newCell);
     }
 
-    const newCell = `<c${attrs} t="n"><v>${value}</v></c>`;
+    // Inject as a number cell. NOTE: omit t="n" — the OOXML default cell type
+    // is numeric, and matching the original Lovable-exported file (which uses
+    // bare <c r="..." s="..."><v>123</v></c>) maximises Excel compatibility.
+    const newCell = `<c${attrs}><v>${value}</v></c>`;
     return rowXml.replace(cellPattern, newCell);
   }
 
