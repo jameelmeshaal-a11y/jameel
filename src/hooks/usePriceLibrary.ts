@@ -2,6 +2,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useEffect, useCallback } from "react";
 
+/**
+ * Generate normalized Arabic keywords from a name.
+ * - Strips diacritics, normalizes hamza/ta-marbuta/alif-maksura
+ * - Removes common Arabic prefixes (ال، وال، بال، لل، و، ب، ل، ف، ك)
+ * - Filters tokens shorter than 2 chars
+ */
+function generateKeywords(name: string): string[] {
+  if (!name) return [];
+  const stripped = name
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+  const stopPrefixes = /^(ال|وال|بال|لل|و|ب|ل|ف|ك)/;
+  const tokens = stripped
+    .split(/[\s,،.؛;/\\()\-–—]+/)
+    .map(t => t.replace(stopPrefixes, "").trim())
+    .filter(t => t.length >= 2);
+  return [...new Set(tokens)];
+}
+
 // Fetch all rate_library items with optional search/category filter
 export function usePriceLibrary(search: string = "", category: string = "all") {
   return useQuery({
@@ -49,7 +70,21 @@ export function useUpdatePriceItem() {
       newPrice?: number;
       userId?: string;
     }) => {
-      const { error } = await supabase.from("rate_library").update(updates).eq("id", id);
+      const enriched: any = { ...updates };
+      // Auto-regenerate keywords + merge new alias when standard_name_ar changes
+      if (updates.standard_name_ar) {
+        enriched.keywords = generateKeywords(updates.standard_name_ar);
+        const { data: existing } = await supabase
+          .from("rate_library")
+          .select("item_name_aliases, standard_name_ar")
+          .eq("id", id)
+          .single();
+        const currentAliases = (existing?.item_name_aliases || []) as string[];
+        const merged = new Set([...currentAliases, updates.standard_name_ar]);
+        if (existing?.standard_name_ar) merged.add(existing.standard_name_ar);
+        enriched.item_name_aliases = [...merged].filter(a => a && a.trim().length > 0);
+      }
+      const { error } = await supabase.from("rate_library").update(enriched).eq("id", id);
       if (error) throw error;
       // Log price change if price changed
       if (oldPrice !== undefined && newPrice !== undefined && oldPrice !== newPrice && userId) {
@@ -124,9 +159,16 @@ export function useAddPriceItem() {
       item_code?: string;
       item_name_aliases?: string[];
     }) => {
+      const keywords = generateKeywords(item.standard_name_ar);
+      const aliases = [...new Set([
+        item.standard_name_ar,
+        ...(item.item_name_aliases || []),
+      ])].filter(a => a && a.trim().length > 0);
       const { data, error } = await supabase.from("rate_library").insert({
         ...item,
         target_rate: item.base_rate,
+        keywords,
+        item_name_aliases: aliases,
       }).select("id").single();
       if (error) throw error;
       return data;

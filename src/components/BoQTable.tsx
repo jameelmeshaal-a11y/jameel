@@ -396,6 +396,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
       if (activeFilters.has("manual_override") && item.override_type !== "manual") return false;
       if (activeFilters.has("approved_library") && item.source !== "approved_library") return false;
       if (activeFilters.has("pending") && item.status !== "pending") return false;
+      // Hide analysis/descriptive rows (qty = 0 — non-priceable contributors)
+      if (activeFilters.has("hide_analysis") && (!item.quantity || item.quantity === 0)) return false;
       return true;
     });
 
@@ -702,6 +704,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
             { key: "manual_override", label: "🔒 يدوي معتمد", color: "bg-warning/10 text-warning border-warning/30" },
             { key: "approved_library", label: "✅ مكتبة معتمدة", color: "bg-success/10 text-success border-success/30" },
             { key: "pending", label: "⏳ pending", color: "bg-muted text-muted-foreground border-border" },
+            { key: "hide_analysis", label: "🙈 إخفاء بنود التحليل", color: "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600" },
           ].map(f => (
             <button
               key={f.key}

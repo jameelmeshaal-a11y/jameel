@@ -153,10 +153,12 @@ export function findRateLibraryMatchV3(
   itemNo?: string | null,
   historicalMap?: HistoricalMappingV3[],
 ): { item: RateLibraryItem; confidence: number } | null {
-  // Path A — Direct lookup (trusted, not scored)
+  // Path A — linked_rate_id is now a HINT (validated), not a hard override.
+  // We resolve the candidate but defer trust until conflict checks pass below.
+  let linkedHint: RateLibraryItem | null = null;
   if (linkedRateId) {
     const linked = rateLibrary.find((rate) => rate.id === linkedRateId);
-    if (linked) return { item: linked, confidence: 95 };
+    if (linked) linkedHint = linked;
   }
 
   // Enrich description with parent context if short
@@ -186,10 +188,16 @@ export function findRateLibraryMatchV3(
       candidate, useEnriched, itemNo, historicalMap,
     );
 
-    if (result.score > bestScore && result.score >= 50) {
-      bestScore = result.score;
+    // Apply linked_rate_id bonus (+5) ONLY if no conflict was triggered (score > 0)
+    let finalScore = result.score;
+    if (linkedHint && candidate.id === linkedHint.id && result.score > 0) {
+      finalScore = Math.min(99, result.score + 5);
+    }
+
+    if (finalScore > bestScore && finalScore >= 50) {
+      bestScore = finalScore;
       bestMatch = candidate;
-      bestNotes = result.notes;
+      bestNotes = result.notes + (finalScore !== result.score ? ` | 📎 linked-hint:+5` : "");
     }
   }
 
