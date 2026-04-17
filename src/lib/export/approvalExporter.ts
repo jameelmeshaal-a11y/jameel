@@ -23,6 +23,7 @@ interface ApprovalItem {
   item_no?: string | null;
   description?: string | null;
   row_index: number;
+  quantity?: number | null;
   unit_rate: number | null;
   total_price: number | null;
   status: string;
@@ -306,12 +307,14 @@ function jaccardSim(a: string, b: string): number {
 }
 
 /**
- * Map each Excel data row → ApprovalItem.
- * Priority:
- *   1. row.rowNum === item.row_index (physical Excel row — most accurate)
- *   2. Normalized exact match on item_no OR description against the
- *      item_no-cell text AND the description-cell text
- *   3. description Jaccard similarity ≥ 0.7 (last resort)
+ * Map each Excel data row → ApprovalItem via QUANTITY-BASED MATCHING.
+ *
+ * Every Excel row with a numeric quantity > 0 is a payable line. We match it
+ * to a DB item with the SAME quantity (tolerance 0.01). When multiple DB
+ * items share the same quantity, we disambiguate by description Jaccard
+ * similarity (or item_no similarity). Each DB item is consumed only once
+ * to prevent duplicate injection. Rows with qty = 0 / non-numeric are
+ * header/analysis rows and receive no injection.
  */
 function buildRowIndexMap(
   rows: ParsedRow[],
@@ -319,91 +322,90 @@ function buildRowIndexMap(
   items: ApprovalItem[],
 ): Map<number, ApprovalItem> {
   const result = new Map<number, ApprovalItem>();
-  if (rows.length === 0) return result;
+  if (rows.length === 0 || headerMap.qtyCol === null) return result;
 
-  const normKey = (s: string) => normalizeForCompare(s).replace(/\s+/g, " ").trim();
+  const pricedItems = items.filter(i =>
+    i.unit_rate != null &&
+    i.unit_rate > 0 &&
+    typeof (i as any).quantity === "number" &&
+    (i as any).quantity > 0,
+  );
 
-  // Build lookup tables
-  const byRowIndex = new Map<number, ApprovalItem>();
-  const byText = new Map<string, ApprovalItem>(); // normalized item_no OR description
-  for (const item of items) {
-    if (item.row_index != null) byRowIndex.set(item.row_index, item);
-    if (item.item_no) {
-      const k = normKey(item.item_no);
-      if (k && !byText.has(k)) byText.set(k, item);
-    }
-    if (item.description) {
-      const k = normKey(item.description);
-      if (k && !byText.has(k)) byText.set(k, item);
-    }
-  }
+  // Identity key for "consumed" tracking (ApprovalItem may not carry id)
+  const itemKey = (it: ApprovalItem) =>
+    `${it.row_index}|${it.item_no ?? ""}|${(it as any).quantity}|${it.unit_rate}`;
+  const usedItems = new Set<string>();
 
-  const matchedItems = new Set<ApprovalItem>();
+  const getCellText = (row: ParsedRow, colIdx: number | null): string => {
+    if (colIdx === null) return "";
+    const cell = row.cells.find(c => {
+      const p = parseRef(c.ref);
+      return p && p.col === colIdx;
+    });
+    return cell?.resolved ?? "";
+  };
+
+  let injected = 0;
+  let skippedNoQty = 0;
 
   for (const row of rows) {
     if (row.rowNum <= headerMap.headerRow) continue;
 
-    let matched: ApprovalItem | undefined;
-
-    // Priority 1: physical Excel row number
-    matched = byRowIndex.get(row.rowNum);
-
-    // Priority 2: normalized exact text match against itemNo-cell or desc-cell
-    if (!matched) {
-      const candidateCells: string[] = [];
-      for (const colIdx of [headerMap.itemNoCol, headerMap.descCol]) {
-        if (colIdx === null) continue;
-        const cell = row.cells.find(c => {
-          const p = parseRef(c.ref);
-          return p && p.col === colIdx;
-        });
-        if (cell?.resolved) candidateCells.push(cell.resolved);
-      }
-      for (const txt of candidateCells) {
-        const k = normKey(txt);
-        if (k && byText.has(k)) {
-          matched = byText.get(k);
-          break;
-        }
-      }
+    const qtyText = getCellText(row, headerMap.qtyCol);
+    const qtyNum = parseFloat(qtyText.replace(/,/g, "").trim());
+    if (!isFinite(qtyNum) || qtyNum <= 0) {
+      skippedNoQty++;
+      continue;
     }
 
-    // Priority 3: description Jaccard similarity ≥ 0.7
-    if (!matched && headerMap.descCol !== null) {
-      const cell = row.cells.find(c => {
-        const p = parseRef(c.ref);
-        return p && p.col === headerMap.descCol;
-      });
-      if (cell?.resolved) {
-        const desc = cell.resolved;
-        let bestSim = 0;
-        let bestItem: ApprovalItem | undefined;
-        for (const item of items) {
-          if (!item.description) continue;
-          const sim = jaccardSim(desc, item.description);
-          if (sim > bestSim) {
-            bestSim = sim;
-            bestItem = item;
-          }
+    const descTxt = getCellText(row, headerMap.descCol);
+    const itemNoTxt = getCellText(row, headerMap.itemNoCol);
+
+    const candidates = pricedItems.filter(i =>
+      !usedItems.has(itemKey(i)) &&
+      Math.abs(((i as any).quantity as number) - qtyNum) < 0.01,
+    );
+
+    let chosen: ApprovalItem | undefined;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else if (candidates.length > 1) {
+      let bestSim = -1;
+      for (const c of candidates) {
+        const dSim = jaccardSim(descTxt, c.description ?? "");
+        const nSim = itemNoTxt && c.item_no ? jaccardSim(itemNoTxt, c.item_no) : 0;
+        const sim = Math.max(dSim, nSim);
+        if (sim > bestSim) {
+          bestSim = sim;
+          chosen = c;
         }
-        if (bestSim >= 0.7) matched = bestItem;
       }
+      if (!chosen) chosen = candidates[0];
     }
 
-    if (matched) {
-      result.set(row.rowNum, matched);
-      matchedItems.add(matched);
+    if (chosen) {
+      result.set(row.rowNum, chosen);
+      usedItems.add(itemKey(chosen));
+      injected++;
+    } else {
+      console.warn(
+        `[approvalExporter] Excel row ${row.rowNum} qty=${qtyNum} desc="${descTxt.slice(0, 50)}" — NO matching DB item`,
+      );
     }
   }
 
-  // Diagnostic: log items with no matched Excel row
-  const unmatched = items.filter(i => !matchedItems.has(i));
-  if (unmatched.length > 0) {
+  const orphaned = pricedItems.filter(i => !usedItems.has(itemKey(i)));
+  console.log(
+    `[approvalExporter] matched ${injected} rows, ${skippedNoQty} skipped (no qty), ${orphaned.length} priced DB items unplaced`,
+  );
+  if (orphaned.length > 0) {
     console.warn(
-      `[approvalExporter] ${unmatched.length} priced items did not match any Excel row:`,
-      unmatched.slice(0, 20).map(i => ({
+      `[approvalExporter] Unplaced priced items:`,
+      orphaned.slice(0, 20).map(i => ({
         row_index: i.row_index,
         item_no: i.item_no,
+        quantity: (i as any).quantity,
+        unit_rate: i.unit_rate,
         description: i.description?.slice(0, 60),
       })),
     );
