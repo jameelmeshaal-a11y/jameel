@@ -102,6 +102,27 @@ interface HistoricalMapping {
   unit: string;
 }
 
+/**
+ * Build the set of rate_library IDs that already have a linked BoQ item in
+ * the SAME boq_file. Used to scope Stage 1 (item_no Hard Override → 99) so
+ * that an item_no from one file doesn't leak into another file's matches.
+ */
+async function buildSameFileLibraryIds(boqFileId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("boq_items")
+    .select("linked_rate_id")
+    .eq("boq_file_id", boqFileId)
+    .not("linked_rate_id", "is", null);
+  const ids = new Set<string>();
+  if (!error && data) {
+    for (const row of data) {
+      const id = (row as any).linked_rate_id;
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 // ─── Rate Library Matching ──────────────────────────────────────────────────
 
 function findRateLibraryMatch(
