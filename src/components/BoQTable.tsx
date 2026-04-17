@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBoQItems, useProject, useBoQFiles } from "@/hooks/useSupabase";
 import { exportBoQExcel } from "@/lib/boqParser";
 import { exportStyledBoQ } from "@/lib/boqExcelExport";
-import { exportEtemad } from "@/lib/export/etemadExporter";
+import { exportApproval } from "@/lib/export/approvalExporter";
 import { runPricingEngine, detectCategory, isPriceableItem, repriceUnpricedItems, resetBoQPricing, calculateBMSCost, repriceSingleItem, type OnItemPricedCallback, type BMSCalculationResult } from "@/lib/pricingEngine";
 import { formatNumber, formatCurrency } from "@/lib/mockData";
 import PriceBreakdownModal from "./PriceBreakdownModal";
@@ -269,7 +269,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         toast.error("لا يوجد ملف أصلي مرتبط بهذا الـ BoQ");
         return;
       }
-      await exportEtemad(boqFileId, items as any, boqFile.file_path, boqFile.name);
+      await exportApproval(boqFileId, items as any, boqFile.file_path, boqFile.name);
       toast.success("تم تصدير ملف الاعتماد بنجاح ✅");
     } catch (err: any) {
       toast.error(err.message || "فشل تصدير الاعتماد");

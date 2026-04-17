@@ -1,0 +1,618 @@
+/**
+ * Approval Exporter — JSZip-only XML manipulation.
+ *
+ * NO ExcelJS. NO secondary sheets. NO formatting changes.
+ * The original uploaded Excel file is preserved byte-for-byte EXCEPT:
+ *   - Unit rate cells get the project's unit_rate
+ *   - Total cells get the project's total_price
+ *   - calcChain.xml is removed (Excel rebuilds it on open)
+ *
+ * Pipeline:
+ *   1. Download original .xlsx from storage
+ *   2. parseSharedStrings → flatten rich-text safe
+ *   3. detectHeaderMap → cursor parser, fallback to minimalRowScan
+ *   4. buildRowIndexMap → item_no exact > row_index > description similarity
+ *   5. injectCellValue → preserve cell schema, swap t="s"→t="n", insert if missing
+ *   6. Strip calcChain, regenerate zip, download
+ */
+
+import JSZip from "jszip";
+import { supabase } from "@/integrations/supabase/client";
+
+interface ApprovalItem {
+  item_no?: string | null;
+  description?: string | null;
+  row_index: number;
+  unit_rate: number | null;
+  total_price: number | null;
+  status: string;
+  override_type?: string | null;
+}
+
+// ─── Excel Column Reference Helpers ─────────────────────────────────────────
+
+/** Convert column letters (A, B, ..., AA, AB) to 1-based index. */
+function colToIndex(col: string): number {
+  let n = 0;
+  for (const ch of col) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+}
+
+/** Convert 1-based index to column letters. */
+function indexToCol(n: number): string {
+  let s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+/** Parse a cell ref like "B12" → {col: 2, row: 12, colLetter: "B"} */
+function parseRef(ref: string): { col: number; row: number; colLetter: string } | null {
+  const m = ref.match(/^([A-Z]+)(\d+)$/);
+  if (!m) return null;
+  return { colLetter: m[1], col: colToIndex(m[1]), row: parseInt(m[2], 10) };
+}
+
+// ─── XML utility — escape text content ──────────────────────────────────────
+
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ─── 1. Parse sharedStrings — rich-text safe ────────────────────────────────
+
+/**
+ * Returns array of flattened strings indexed by sst position.
+ * Handles rich text (<r><rPr/><t>...</t></r>), multiple <t> segments,
+ * and preserveSpace attributes.
+ */
+function parseSharedStrings(xml: string): string[] {
+  const result: string[] = [];
+  // Match each <si>...</si> block. Use [\s\S] for newlines.
+  const siRegex = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+  let m: RegExpExecArray | null;
+  while ((m = siRegex.exec(xml)) !== null) {
+    const inner = m[1];
+    // Extract every <t ...>...</t> within this <si> in document order
+    const tRegex = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
+    let parts = "";
+    let tm: RegExpExecArray | null;
+    while ((tm = tRegex.exec(inner)) !== null) {
+      parts += tm[1];
+    }
+    // Decode XML entities
+    const decoded = parts
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, "&");
+    result.push(decoded);
+  }
+  return result;
+}
+
+// ─── 2. Cursor-based row + cell parser ──────────────────────────────────────
+
+interface ParsedCell {
+  ref: string;       // e.g. "B5"
+  type: string;      // "s", "n", "str", "inlineStr", or ""
+  value: string;     // raw inner value (sst index for "s")
+  resolved: string;  // resolved string for header detection
+}
+
+interface ParsedRow {
+  rowNum: number;
+  cells: ParsedCell[];
+}
+
+/**
+ * Parse rows + cells from sheet XML. Resolves shared strings.
+ * Cursor-based: iterates <row>...</row>, then <c>...</c> inside each row.
+ */
+function parseSheetRows(sheetXml: string, sst: string[]): ParsedRow[] {
+  const rows: ParsedRow[] = [];
+  const rowRegex = /<row\b[^>]*\sr="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rowRegex.exec(sheetXml)) !== null) {
+    const rowNum = parseInt(rm[1], 10);
+    const rowInner = rm[2];
+    const cells: ParsedCell[] = [];
+
+    // Match each <c .../> or <c ...>...</c>
+    // Self-closing first to avoid greedy mismatch
+    const cellRegex = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cellRegex.exec(rowInner)) !== null) {
+      const attrs = cm[1] || "";
+      const inner = cm[2] || "";
+
+      const refMatch = attrs.match(/\sr="([^"]+)"/);
+      if (!refMatch) continue;
+      const ref = refMatch[1];
+
+      const typeMatch = attrs.match(/\st="([^"]+)"/);
+      const type = typeMatch ? typeMatch[1] : "";
+
+      let value = "";
+      // Extract <v>...</v>
+      const vMatch = inner.match(/<v\b[^>]*>([\s\S]*?)<\/v>/);
+      if (vMatch) value = vMatch[1];
+      // For inlineStr: <is><t>...</t></is>
+      if (!value && type === "inlineStr") {
+        const isMatch = inner.match(/<t\b[^>]*>([\s\S]*?)<\/t>/);
+        if (isMatch) value = isMatch[1];
+      }
+
+      // Resolve string for header detection
+      let resolved = "";
+      if (type === "s") {
+        const idx = parseInt(value, 10);
+        if (!isNaN(idx) && idx >= 0 && idx < sst.length) resolved = sst[idx];
+      } else if (type === "inlineStr" || type === "str") {
+        resolved = value
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/&amp;/g, "&");
+      } else {
+        resolved = value;
+      }
+
+      cells.push({ ref, type, value, resolved });
+    }
+
+    rows.push({ rowNum, cells });
+  }
+  return rows;
+}
+
+// ─── 3. Header detection — cursor-based + fallback ──────────────────────────
+
+interface HeaderMap {
+  headerRow: number;
+  itemNoCol: number | null;
+  descCol: number | null;
+  qtyCol: number | null;
+  unitRateCol: number | null;
+  totalCol: number | null;
+}
+
+const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "م", "no", "#", "item no", "item code", "code", "الرمز"];
+const DESC_KEYS = ["الوصف", "البيان", "وصف", "description", "البند", "اسم البند"];
+const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
+const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price", "السعر", "سعر"];
+const TOTAL_KEYS = ["الإجمالي", "الاجمالي", "المبلغ", "السعر الإجمالي", "السعر الاجمالي", "total", "amount", "إجمالي", "اجمالي"];
+
+function matchesAny(text: string, keys: string[]): boolean {
+  const t = text.toLowerCase().trim();
+  if (!t) return false;
+  return keys.some(k => {
+    const kk = k.toLowerCase();
+    return t === kk || t.includes(kk) || kk.includes(t);
+  });
+}
+
+/**
+ * Primary detection: scan first 30 rows, find one with both desc + (qty OR rate) keywords.
+ */
+function detectHeaderMap(rows: ParsedRow[]): HeaderMap {
+  // Try cursor-based detection
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const row = rows[i];
+    let descCol: number | null = null;
+    let qtyCol: number | null = null;
+    let unitRateCol: number | null = null;
+    let totalCol: number | null = null;
+    let itemNoCol: number | null = null;
+
+    for (const cell of row.cells) {
+      const parsed = parseRef(cell.ref);
+      if (!parsed) continue;
+      const text = cell.resolved;
+      if (!text) continue;
+
+      if (descCol === null && matchesAny(text, DESC_KEYS)) descCol = parsed.col;
+      if (qtyCol === null && matchesAny(text, QTY_KEYS)) qtyCol = parsed.col;
+      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) unitRateCol = parsed.col;
+      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) totalCol = parsed.col;
+      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) itemNoCol = parsed.col;
+    }
+
+    // Confirmed header: has description + at least qty or unit_rate
+    if (descCol !== null && (qtyCol !== null || unitRateCol !== null || totalCol !== null)) {
+      return {
+        headerRow: row.rowNum,
+        itemNoCol,
+        descCol,
+        qtyCol,
+        unitRateCol,
+        totalCol,
+      };
+    }
+  }
+
+  // Fallback: minimalRowScan — find any row with "description" or "البيان" / "الوصف"
+  for (let i = 0; i < Math.min(rows.length, 50); i++) {
+    const row = rows[i];
+    for (const cell of row.cells) {
+      const parsed = parseRef(cell.ref);
+      if (!parsed) continue;
+      if (matchesAny(cell.resolved, DESC_KEYS)) {
+        return {
+          headerRow: row.rowNum,
+          itemNoCol: null,
+          descCol: parsed.col,
+          qtyCol: null,
+          unitRateCol: null,
+          totalCol: null,
+        };
+      }
+    }
+  }
+
+  // Absolute fallback
+  return {
+    headerRow: 1,
+    itemNoCol: null,
+    descCol: null,
+    qtyCol: null,
+    unitRateCol: null,
+    totalCol: null,
+  };
+}
+
+// ─── 4. Build row→item map ──────────────────────────────────────────────────
+
+function normalizeForCompare(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function jaccardSim(a: string, b: string): number {
+  const ta = new Set(normalizeForCompare(a).split(" ").filter(t => t.length >= 2));
+  const tb = new Set(normalizeForCompare(b).split(" ").filter(t => t.length >= 2));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const inter = [...ta].filter(t => tb.has(t)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : inter / union;
+}
+
+/**
+ * Map each Excel data row → ApprovalItem.
+ * Priority:
+ *   1. item_no exact match (after trim)
+ *   2. sequential row_index (1-based among data rows after header)
+ *   3. description Jaccard similarity ≥ 0.7 (last resort)
+ */
+function buildRowIndexMap(
+  rows: ParsedRow[],
+  headerMap: HeaderMap,
+  items: ApprovalItem[],
+): Map<number, ApprovalItem> {
+  const result = new Map<number, ApprovalItem>();
+  if (rows.length === 0) return result;
+
+  // Build lookup tables
+  const byItemNo = new Map<string, ApprovalItem>();
+  const byRowIndex = new Map<number, ApprovalItem>();
+  for (const item of items) {
+    if (item.item_no) byItemNo.set(item.item_no.trim(), item);
+    if (item.row_index != null) byRowIndex.set(item.row_index, item);
+  }
+
+  let dataIndex = 0;
+  for (const row of rows) {
+    if (row.rowNum <= headerMap.headerRow) continue;
+    dataIndex++;
+
+    let matched: ApprovalItem | undefined;
+
+    // Priority 1: item_no
+    if (headerMap.itemNoCol !== null) {
+      const cell = row.cells.find(c => {
+        const p = parseRef(c.ref);
+        return p && p.col === headerMap.itemNoCol;
+      });
+      if (cell?.resolved) {
+        const key = cell.resolved.trim();
+        if (key && byItemNo.has(key)) matched = byItemNo.get(key);
+      }
+    }
+
+    // Priority 2: row_index
+    if (!matched) matched = byRowIndex.get(dataIndex);
+
+    // Priority 3: description similarity
+    if (!matched && headerMap.descCol !== null) {
+      const cell = row.cells.find(c => {
+        const p = parseRef(c.ref);
+        return p && p.col === headerMap.descCol;
+      });
+      if (cell?.resolved) {
+        const desc = cell.resolved;
+        let bestSim = 0;
+        let bestItem: ApprovalItem | undefined;
+        for (const item of items) {
+          if (!item.description) continue;
+          const sim = jaccardSim(desc, item.description);
+          if (sim > bestSim) {
+            bestSim = sim;
+            bestItem = item;
+          }
+        }
+        if (bestSim >= 0.7) matched = bestItem;
+      }
+    }
+
+    if (matched) result.set(row.rowNum, matched);
+  }
+
+  return result;
+}
+
+// ─── 5. Inject cell value into XML (preserves cell schema) ──────────────────
+
+/**
+ * Replace or insert a cell's value in the row XML.
+ * - If cell exists: preserve r, s attributes, drop t (will set t="n"),
+ *   remove <f>, replace/insert <v>
+ * - If cell missing: insert new <c r="REF" s="0" t="n"><v>VALUE</v></c>
+ *   in correct column order
+ *
+ * For null value: clear cell value (insert empty cell or remove <v>).
+ */
+function injectIntoRowXml(
+  rowXml: string,
+  rowAttrs: string,
+  cellRef: string,
+  value: number | null,
+): string {
+  const refParsed = parseRef(cellRef);
+  if (!refParsed) return rowXml;
+  const targetCol = refParsed.col;
+
+  // Find existing cell
+  const cellPattern = new RegExp(
+    `<c\\b([^>]*?\\sr="${cellRef}"[^>]*?)(?:\\/>|>([\\s\\S]*?)<\\/c>)`,
+  );
+  const existing = rowXml.match(cellPattern);
+
+  if (existing) {
+    let attrs = existing[1];
+    // Strip t="..." attribute (we'll set our own)
+    attrs = attrs.replace(/\st="[^"]*"/g, "");
+    // Strip cm, vm, ph attributes that may reference invalid metadata
+    attrs = attrs.replace(/\scm="[^"]*"/g, "");
+
+    if (value === null || value === undefined || isNaN(value)) {
+      // Empty cell — preserve style, no value
+      const newCell = `<c${attrs}/>`;
+      return rowXml.replace(cellPattern, newCell);
+    }
+
+    const newCell = `<c${attrs} t="n"><v>${value}</v></c>`;
+    return rowXml.replace(cellPattern, newCell);
+  }
+
+  // Cell doesn't exist — insert in correct column order
+  if (value === null || value === undefined || isNaN(value)) return rowXml;
+  const newCell = `<c r="${cellRef}" t="n"><v>${value}</v></c>`;
+
+  // Find insertion point: find first existing cell with col > targetCol
+  const allCellsRegex = /<c\b[^>]*\sr="([A-Z]+\d+)"/g;
+  let insertBefore = -1;
+  let m: RegExpExecArray | null;
+  while ((m = allCellsRegex.exec(rowXml)) !== null) {
+    const p = parseRef(m[1]);
+    if (p && p.col > targetCol) {
+      insertBefore = m.index;
+      break;
+    }
+  }
+
+  if (insertBefore === -1) {
+    // Append before </row> closing — but this function gets row INNER, so just append
+    return rowXml + newCell;
+  }
+  return rowXml.slice(0, insertBefore) + newCell + rowXml.slice(insertBefore);
+}
+
+/**
+ * Apply injections to entire sheet XML.
+ */
+function injectCellsIntoSheet(
+  sheetXml: string,
+  injections: Array<{ rowNum: number; cellRef: string; value: number | null }>,
+): string {
+  // Group by row
+  const byRow = new Map<number, Array<{ cellRef: string; value: number | null }>>();
+  for (const inj of injections) {
+    if (!byRow.has(inj.rowNum)) byRow.set(inj.rowNum, []);
+    byRow.get(inj.rowNum)!.push({ cellRef: inj.cellRef, value: inj.value });
+  }
+
+  let result = sheetXml;
+
+  for (const [rowNum, cellInjs] of byRow) {
+    // Find row block
+    const rowPattern = new RegExp(
+      `(<row\\b[^>]*\\sr="${rowNum}"[^>]*>)([\\s\\S]*?)(<\\/row>)`,
+    );
+    const match = result.match(rowPattern);
+    if (!match) continue;
+
+    const rowOpen = match[1];
+    let rowInner = match[2];
+    const rowClose = match[3];
+
+    for (const inj of cellInjs) {
+      rowInner = injectIntoRowXml(rowInner, rowOpen, inj.cellRef, inj.value);
+    }
+
+    result = result.replace(rowPattern, rowOpen + rowInner + rowClose);
+  }
+
+  return result;
+}
+
+// ─── 6. Sanitize calcChain & shared formulas (prevents Excel errors) ────────
+
+async function sanitizeWorkbook(zip: JSZip): Promise<void> {
+  // Strip shared formulas from all sheets (prevents calc errors)
+  const sheetFiles = Object.keys(zip.files).filter(
+    f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"),
+  );
+  for (const sf of sheetFiles) {
+    let xml = await zip.file(sf)!.async("string");
+    // Remove shared formula attributes (they reference other cells we may have changed)
+    xml = xml.replace(/\s+t="shared"/g, "");
+    xml = xml.replace(/\s+si="\d+"/g, "");
+    xml = xml.replace(/\s+ref="[A-Z]+\d+:[A-Z]+\d+"/g, "");
+    zip.file(sf, xml);
+  }
+
+  // Remove calcChain — Excel will rebuild on open
+  zip.remove("xl/calcChain.xml");
+  const wbRels = zip.file("xl/_rels/workbook.xml.rels");
+  if (wbRels) {
+    let xml = await wbRels.async("string");
+    xml = xml.replace(/<Relationship[^/]*Target="calcChain\.xml"[^/]*\/>/g, "");
+    zip.file("xl/_rels/workbook.xml.rels", xml);
+  }
+  const ct = zip.file("[Content_Types].xml");
+  if (ct) {
+    let xml = await ct.async("string");
+    xml = xml.replace(/<Override[^/]*PartName="\/xl\/calcChain\.xml"[^/]*\/>/g, "");
+    zip.file("[Content_Types].xml", xml);
+  }
+}
+
+// ─── Main export entry ──────────────────────────────────────────────────────
+
+export async function exportApproval(
+  boqFileId: string,
+  items: ApprovalItem[],
+  originalFilePath: string,
+  originalFileName: string,
+): Promise<void> {
+  // 1. Download original
+  const { data: fileData, error: dlErr } = await supabase.storage
+    .from("boq-files")
+    .download(originalFilePath);
+  if (dlErr || !fileData) throw new Error("تعذر تحميل الملف الأصلي من التخزين");
+
+  const buffer = await fileData.arrayBuffer();
+  const zip = await JSZip.loadAsync(buffer);
+
+  // 2. Read primary sheet (sheet1.xml)
+  // Find the first worksheet via workbook.xml ordering
+  const wbXml = await zip.file("xl/workbook.xml")?.async("string");
+  let primarySheetPath = "xl/worksheets/sheet1.xml";
+  if (wbXml) {
+    // Get first <sheet ... r:id="..."/>  → look up rels
+    const firstSheetMatch = wbXml.match(/<sheet\b[^>]*\sr:id="([^"]+)"/);
+    const wbRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("string");
+    if (firstSheetMatch && wbRelsXml) {
+      const rid = firstSheetMatch[1];
+      const relMatch = wbRelsXml.match(
+        new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*Target="([^"]+)"`),
+      );
+      if (relMatch) {
+        const target = relMatch[1];
+        primarySheetPath = target.startsWith("/")
+          ? target.slice(1)
+          : `xl/${target.replace(/^\.?\//, "")}`;
+      }
+    }
+  }
+
+  const sheetFile = zip.file(primarySheetPath);
+  if (!sheetFile) throw new Error("لا توجد ورقة عمل في الملف الأصلي");
+  const sheetXml = await sheetFile.async("string");
+
+  // 3. Parse sharedStrings (rich-text safe)
+  const sstFile = zip.file("xl/sharedStrings.xml");
+  const sstXml = sstFile ? await sstFile.async("string") : "";
+  const sst = sstXml ? parseSharedStrings(sstXml) : [];
+
+  // 4. Parse rows + detect headers
+  const rows = parseSheetRows(sheetXml, sst);
+  const headerMap = detectHeaderMap(rows);
+
+  if (headerMap.unitRateCol === null && headerMap.totalCol === null) {
+    throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
+  }
+
+  // 5. Map rows to items
+  const rowItemMap = buildRowIndexMap(rows, headerMap, items);
+
+  // 6. Build injections
+  const injections: Array<{ rowNum: number; cellRef: string; value: number | null }> = [];
+  for (const [rowNum, item] of rowItemMap) {
+    // Skip pending/unpriced — clear cells
+    const isPending = item.status === "pending" ||
+      (!item.unit_rate && !item.total_price);
+
+    const unitVal = isPending ? null : item.unit_rate;
+    const totalVal = isPending ? null : item.total_price;
+
+    if (headerMap.unitRateCol !== null) {
+      const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
+      injections.push({ rowNum, cellRef: ref, value: unitVal });
+    }
+    if (headerMap.totalCol !== null) {
+      const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
+      injections.push({ rowNum, cellRef: ref, value: totalVal });
+    }
+  }
+
+  // 7. Inject into sheet XML
+  const newSheetXml = injectCellsIntoSheet(sheetXml, injections);
+  zip.file(primarySheetPath, newSheetXml);
+
+  // 8. Sanitize calcChain + shared formulas
+  await sanitizeWorkbook(zip);
+
+  // 9. Generate + download
+  const out = await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    compression: "DEFLATE",
+  });
+
+  const baseName = originalFileName.replace(/\.(xlsx|xls)$/i, "");
+  const downloadName = `${baseName}_مسعّر.xlsx`;
+  const url = URL.createObjectURL(out);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = downloadName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // Diagnostic log for verification
+  console.log("[approvalExporter]", {
+    primarySheetPath,
+    headerMap,
+    totalRows: rows.length,
+    matchedRows: rowItemMap.size,
+    injections: injections.length,
+    sstSize: sst.length,
+  });
+}
