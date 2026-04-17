@@ -681,6 +681,9 @@ export async function exportApproval(
   URL.revokeObjectURL(url);
 
   // Diagnostic log for verification
+  const unmatchedCount = (rowItemMap as any).__unmatchedCount ?? 0;
+  const layer1 = (rowItemMap as any).__layer1 ?? 0;
+  const layer2 = (rowItemMap as any).__layer2 ?? 0;
   console.log("[approvalExporter]", {
     primarySheetPath,
     headerMap,
@@ -688,5 +691,21 @@ export async function exportApproval(
     matchedRows: rowItemMap.size,
     injections: injections.length,
     sstSize: sst.length,
+    layer1_row_index: layer1,
+    layer2_item_no: layer2,
+    unmatched: unmatchedCount,
   });
+
+  if (unmatchedCount > 0) {
+    toast({
+      title: "تحذير: بنود غير مربوطة",
+      description: `تم حقن ${rowItemMap.size} بند | ⚠️ ${unmatchedCount} بند مسعّر لم يُربط — راجع Console`,
+      variant: "destructive",
+    });
+  } else {
+    toast({
+      title: "تم تصدير ملف الاعتماد بنجاح",
+      description: `✅ تم حقن ${rowItemMap.size} بند (${layer1} عبر row_index، ${layer2} عبر item_no)`,
+    });
+  }
 }
