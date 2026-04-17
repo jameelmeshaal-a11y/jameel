@@ -245,23 +245,23 @@ function scoreCandidate(
   const parts: string[] = [];
 
   // ════════════════════════════════════════════════════════════════════
-  // STAGE A: item_no exact match → 98 (bypasses ALL other stages)
+  // STAGE 1: item_no exact match (≥95%) → 99 (HARD OVERRIDE, scoped by caller)
+  // The caller passes itemNo=null when this candidate is NOT in the same
+  // boq_file's library set, preventing cross-file leakage.
   // ════════════════════════════════════════════════════════════════════
   if (itemNo && itemNo.trim().length > 0 && candidate.item_code && candidate.item_code.trim().length > 0) {
     const normalizedItemNo = itemNo.trim().toLowerCase();
     const normalizedCandCode = candidate.item_code.trim().toLowerCase();
-    // Check ≥95% similarity (for near-exact matches like "MD-05" vs "MD-05")
     if (normalizedItemNo === normalizedCandCode) {
-      parts.push(`⚡ item_no exact: ${itemNo} = ${candidate.item_code} → 98`);
-      return { score: 98, notes: parts.join(" | ") };
+      parts.push(`⚡ item_no exact: ${itemNo} = ${candidate.item_code} → 99`);
+      return { score: 99, notes: parts.join(" | ") };
     }
-    // Also check if one contains the other (e.g., "J2-MD-05" contains "MD-05")
     if (normalizedItemNo.includes(normalizedCandCode) || normalizedCandCode.includes(normalizedItemNo)) {
       const shorter = Math.min(normalizedItemNo.length, normalizedCandCode.length);
       const longer = Math.max(normalizedItemNo.length, normalizedCandCode.length);
       if (shorter / longer >= 0.95) {
-        parts.push(`⚡ item_no ~exact: ${itemNo} ≈ ${candidate.item_code} → 98`);
-        return { score: 98, notes: parts.join(" | ") };
+        parts.push(`⚡ item_no ~exact: ${itemNo} ≈ ${candidate.item_code} → 99`);
+        return { score: 99, notes: parts.join(" | ") };
       }
     }
   }
