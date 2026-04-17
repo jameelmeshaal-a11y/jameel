@@ -631,10 +631,9 @@ export async function exportApproval(
       const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
       injections.push({ rowNum, cellRef: ref, value: unitVal });
     }
-    if (headerMap.totalCol !== null) {
-      const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
-      injections.push({ rowNum, cellRef: ref, value: totalVal });
-    }
+    // NOTE: do NOT inject the total cell — the original file contains a
+    // formula (qty × unit_rate) which Excel will recompute automatically.
+
   }
 
   // 7. Inject into sheet XML
