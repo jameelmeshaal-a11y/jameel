@@ -1,81 +1,56 @@
 
 
-## خطة محدّثة — تنظيف ما قبل المطابقة + Pipeline صارم (مع التعديلات الثلاثة)
+## الحل النهائي الكامل — حذف شامل واعتماد المكتبة الحالية مرجعاً وحيداً
 
-### Migration 1 — تنظيف DB (مرة واحدة)
+### ما سأنفذه (3 خطوات متسلسلة)
 
-#### 1.A — فك ربط البنود غير المعتمدة يدوياً مع **الإبقاء على أسعار approved**
-```sql
-UPDATE public.boq_items
-SET linked_rate_id = NULL,
-    status = CASE WHEN status = 'approved' THEN 'stale_price' ELSE 'pending' END
-    -- unit_rate / total_price / materials / labor / equipment / logistics / risk / profit تبقى كما هي
-WHERE (override_type IS NULL OR override_type <> 'manual');
-```
-✅ بنود approved تحتفظ بأسعارها وتنتقل لـ `stale_price` (تظهر للمراجعة دون إعادة تسعير تلقائية)
-✅ بنود pending/أخرى تبقى pending مع فك الربط
+#### الخطوة 1 — حذف شامل لكل البيانات القديمة
+- حذف **كل** سجلات `rate_sources` نهائياً (841 سجل)
+- فك ربط **كل** بنود BoQ بدون استثناء (حتى اليدوية): `linked_rate_id = NULL`
+- تصفير **كل** بيانات التسعير في `boq_items` بدون استثناء:
+  - `unit_rate, total_price, materials, labor, equipment, logistics, risk, profit, confidence, source, override_type, override_at, override_by, override_reason, manual_overrides, notes` ← الكل NULL/فارغ
+  - `status = 'pending'`
+- ملاحظة: trigger `guard_manual_override` يسمح بهذا (لأنه يستثني الحالة `status='pending' AND override_type=NULL`)
 
-#### 1.B — حذف بنود مكتبة قديمة (بدون شرط زمني — فقط source_type)
-```sql
-DELETE FROM public.rate_sources
-WHERE rate_library_id IN (
-  SELECT id FROM public.rate_library
-  WHERE is_locked = false
-    AND source_type <> 'Approved'
-);
+#### الخطوة 2 — إزالة حصانة `approved_library` من محرك التسعير
+- في `src/lib/pricingEngine.ts` (سطور 1013، 1129، وأي موضع آخر): إزالة شرط `|| row.source === 'approved_library'`
+- بعد الخطوة 1 لن يبقى أي بند بمصدر قديم، لكن نضمن المستقبل
 
-DELETE FROM public.rate_library
-WHERE is_locked = false
-  AND source_type <> 'Approved'
-  AND id NOT IN (SELECT DISTINCT linked_rate_id FROM public.boq_items WHERE linked_rate_id IS NOT NULL);
-```
-✅ يحتفظ بكل ما هو `is_locked=true` أو `source_type='Approved'` أو مرتبط ببند BoQ حالي
+#### الخطوة 3 — إعادة تسعير المشروع
+- تشغيل re-price سيطبّق Pipeline V4 على **كل** البنود
+- كل بند سيأخذ سعره من `rate_library.target_rate` الحالي مباشرة
+- مثال: حفر الأساسات سيُسعَّر 42 (المكتبة الحالية) بدل 54
 
----
-
-### Pipeline المطابقة الصارم (4 مراحل — كل مرحلة gate)
-
-#### Stage 1 — `item_no` (مقيّد بـ boq_file_id)
-- البحث عن مطابقة `item_no` بنسبة ≥95% **داخل نفس `boq_file_id` فقط** (عبر بنود BoQ المعتمدة سابقاً في الملف نفسه أو library entries مرتبطة بـ rate_sources لنفس الملف).
-- ✅ يمنع تسريب رقم بند من ملف لآخر (أرقام البنود قد تتكرر بين ملفات مختلفة).
-- نجاح → confidence 99، وقف Pipeline.
-
-#### Stage 2 — Category + Unit (gate)
-- Filter pool: `categories_compatible(boq.category, lib.category) = true` AND `normalizeUnit(boq.unit) = normalizeUnit(lib.unit)`.
-- pool فارغ → no match (يبقى pending).
-
-#### Stage 3 — Description (normalized + synonyms + word_similarity ≥0.65)
-- على pool المرشّح من Stage 2.
-- normalize عربي + synonyms + Jaccard على keywords + `word_similarity` PG.
-- score ≥ 0.85 → match (confidence = round(score × 100))، وقف Pipeline.
-
-#### Stage 4 — Bundled strict (composite ≥75، لا fallback مفتوح)
-- composite = `0.4 × itemNoSim + 0.3 × jaccard + 0.3 × wordSimilarity` × 100.
-- ≥ 75 → match. أقل → pending.
-
----
+### الإثبات الذي سأقدّمه
+1. **قبل**: لقطة من DB تُظهر:
+   - `count(rate_sources)` = 841
+   - `count(boq_items where linked_rate_id IS NOT NULL)` = X
+   - `count(boq_items where override_type='manual')` = Y
+2. **بعد**: لقطة من DB تُظهر:
+   - `count(rate_sources)` = 0
+   - `count(boq_items where linked_rate_id IS NOT NULL)` = 0
+   - `count(boq_items where override_type='manual')` = 0
+   - كل البنود `status='pending'`, `unit_rate IS NULL`
+3. **بعد re-price**: لقطة لبند الحفر تُظهر `unit_rate = 42` مطابقاً لـ `target_rate` في المكتبة
 
 ### الملفات المتأثرة
 
 | الملف | التغيير |
 |---|---|
-| migration جديدة | تنظيف 1.A + 1.B بالصيغة المحدّثة |
-| `src/lib/pricing/matchingV3.ts` | Pipeline 4 مراحل، Stage 1 مقيّد بـ boq_file_id، عتبات 0.85 / 75 |
-| `supabase/functions/match-price-item/index.ts` | نفس Pipeline على الخادم، يقبل `boq_file_id` parameter |
-| `src/lib/pricing/priceMatchService.ts` | تمرير `boq_file_id` للـ Edge Function |
-| `mem://features/matching/v4-engine-core` | تحديث الذاكرة (Pipeline متسلسل + boq_file_id scope) |
+| migration جديدة | حذف rate_sources بالكامل + reset كل boq_items (بدون استثناء يدوي) |
+| `src/lib/pricingEngine.ts` | إزالة حصانة `source === 'approved_library'` من 3 مواضع |
 
-### ضمانات الحوكمة
+### ما سيبقى محفوظاً
+- ✅ سجلات `rate_library` الحالية (المكتبة نفسها) — **هي المرجع الوحيد**
+- ✅ `pricing_audit_log` و `price_change_log` (أرشيف تاريخي)
+- ✅ schema, RPCs, RLS, triggers — صفر تغيير
+- ✅ Pipeline V4 المطابقة كما هي
 
-- ✅ Manual overrides (`override_type='manual'`) لا تُمسّ (`guard_manual_override` + استثناء صريح)
-- ✅ بنود approved تحتفظ بأسعارها (تنتقل لـ `stale_price` للمراجعة فقط)
-- ✅ مكتبة `is_locked=true` أو `source_type='Approved'` محفوظة
-- ✅ `save_manual_price` و propagation و export (qty-based) و pricing engine: صفر تغيير
-- ✅ Stage 1 مقيّد بالملف يمنع cross-file leakage
+### تحذير صريح
+بعد التنفيذ ستفقد:
+- ❌ كل الأسعار اليدوية القديمة (سيُعاد تسعيرها من المكتبة)
+- ❌ كل تاريخ rate_sources (841 سجل)
+- ❌ كل روابط boq_items القديمة
 
-### التحقق بعد التنفيذ
-
-1. شغّل re-price على مشروع برج المراقبة
-2. console: `matchedAtStage1 / 2 / 3 / 4 / unmatched`
-3. تأكد بنود 🔒 لم تتغيّر، وبنود stale_price ظاهرة مع أسعارها القديمة للمراجعة
+⚠️ هذه عملية لا رجعة فيها. التسعير سيعتمد 100% على `rate_library.target_rate` الحالي.
 
