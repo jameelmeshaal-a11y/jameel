@@ -177,7 +177,7 @@ export default function RateLibraryPage() {
         </div>
 
         {/* Category chips - scrollable */}
-        <div className="mb-6 overflow-x-auto pb-1">
+        <div className="mb-3 overflow-x-auto pb-1">
           <div className="flex gap-1.5 min-w-max">
             {allCategories.map((c) => (
               <Button key={c} variant={category === c ? "default" : "outline"} size="sm" onClick={() => setCategory(c)} className="capitalize text-xs whitespace-nowrap">
@@ -185,6 +185,35 @@ export default function RateLibraryPage() {
               </Button>
             ))}
           </div>
+        </div>
+
+        {/* Secondary filters: item_code + unit */}
+        <div className="flex flex-wrap items-center gap-2 mb-6" dir="rtl">
+          <div className="relative w-48">
+            <Input
+              placeholder="رقم/كود البند"
+              value={codeFilter}
+              onChange={(e) => setCodeFilter(e.target.value)}
+              className="h-9 text-xs"
+              dir="rtl"
+            />
+          </div>
+          <select
+            value={unitFilter}
+            onChange={(e) => setUnitFilter(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+            dir="rtl"
+          >
+            <option value="all">كل الوحدات</option>
+            {units.map((u) => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
+          {(codeFilter || unitFilter !== "all") && (
+            <Button variant="ghost" size="sm" className="text-xs h-9" onClick={() => { setCodeFilter(""); setUnitFilter("all"); }}>
+              <X className="w-3 h-3 ml-1" /> مسح الفلاتر
+            </Button>
+          )}
         </div>
 
         {isLoading ? (
