@@ -42,7 +42,17 @@ export default function RateLibraryPage() {
   const addItem = useAddPriceItem();
   const bulkApprove = useBulkApprovePending();
 
-  const pendingCount = items.filter((i: any) => !i.approved_at).length;
+  // Apply client-side filters: item_code prefix and unit
+  const filteredItems = items.filter((it: any) => {
+    if (codeFilter && !((it.item_code || "").toLowerCase().includes(codeFilter.toLowerCase()))) return false;
+    if (unitFilter !== "all" && (it.unit || "").trim() !== unitFilter) return false;
+    return true;
+  });
+
+  // Distinct units for the unit filter dropdown
+  const units = Array.from(new Set(items.map((i: any) => (i.unit || "").trim()).filter(Boolean))).sort() as string[];
+
+  const pendingCount = filteredItems.filter((i: any) => !i.approved_at).length;
 
   const startEdit = (item: any) => {
     setEditingId(item.id);
