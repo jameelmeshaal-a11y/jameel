@@ -598,6 +598,7 @@ export async function runPricingEngine(
       (block.primaryRow as any).notes,
       (block.primaryRow as any).item_no,
       v3HistMap,
+      sameFileLibraryIds,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — only if V3 didn't find via Stage E
@@ -974,12 +975,13 @@ export async function repriceUnpricedItems(
   }
 
   // 2. Fetch library, location factors, sources, historical map in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
@@ -1026,7 +1028,7 @@ export async function repriceUnpricedItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       row.linked_rate_id, approvedRateIds, row.notes,
-      row.item_no, v3HistMap2,
+      row.item_no, v3HistMap2, sameFileLibraryIds,
     );
 
     // Historical fallback
@@ -1136,12 +1138,13 @@ export async function repriceSingleItem(
   }
 
   // 2. Fetch dependencies in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
@@ -1183,7 +1186,7 @@ export async function repriceSingleItem(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
-    item.item_no, v3HistMap3,
+    item.item_no, v3HistMap3, sameFileLibraryIds,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
