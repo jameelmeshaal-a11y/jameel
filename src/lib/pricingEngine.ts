@@ -343,7 +343,7 @@ function priceFromApprovedRate(
     materials, labor, equipment, logistics, risk, profit,
     unitRate, totalPrice,
     confidence: 95,
-    locationFactor: needsLocationAdj ? +locationFactor.toFixed(4) : 1.0,
+    locationFactor: 1.0,
   };
 }
 
