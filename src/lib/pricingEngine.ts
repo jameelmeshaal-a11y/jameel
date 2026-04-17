@@ -488,13 +488,14 @@ export async function runPricingEngine(
   onItemPriced?: OnItemPricedCallback,
 ): Promise<PricingResult> {
   // Fetch items, library, location factors, sources, file metadata, AND historical map in parallel
-  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   if (itemsResult.error) throw new Error(`Failed to load items: ${itemsResult.error.message}`);
