@@ -102,6 +102,27 @@ interface HistoricalMapping {
   unit: string;
 }
 
+/**
+ * Build the set of rate_library IDs that already have a linked BoQ item in
+ * the SAME boq_file. Used to scope Stage 1 (item_no Hard Override → 99) so
+ * that an item_no from one file doesn't leak into another file's matches.
+ */
+async function buildSameFileLibraryIds(boqFileId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("boq_items")
+    .select("linked_rate_id")
+    .eq("boq_file_id", boqFileId)
+    .not("linked_rate_id", "is", null);
+  const ids = new Set<string>();
+  if (!error && data) {
+    for (const row of data) {
+      const id = (row as any).linked_rate_id;
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 // ─── Rate Library Matching ──────────────────────────────────────────────────
 
 function findRateLibraryMatch(
@@ -115,13 +136,14 @@ function findRateLibraryMatch(
   notes?: string | null,
   itemNo?: string | null,
   historicalMapRef?: HistoricalMappingV3[],
+  sameFileLibraryIds?: Set<string>,
 ): { item: RateLibraryItem; confidence: number } | null {
   // ── V3 Feature Flag ──
   if (USE_MATCHING_V3) {
     return findRateLibraryMatchV3(
       description, descriptionEn, unit, category,
       rateLibrary, linkedRateId, approvedRateIds, notes,
-      itemNo, historicalMapRef,
+      itemNo, historicalMapRef, sameFileLibraryIds,
     );
   }
 
@@ -466,13 +488,14 @@ export async function runPricingEngine(
   onItemPriced?: OnItemPricedCallback,
 ): Promise<PricingResult> {
   // Fetch items, library, location factors, sources, file metadata, AND historical map in parallel
-  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [itemsResult, libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("boq_items").select("*").eq("boq_file_id", boqFileId).order("row_index", { ascending: true }),
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   if (itemsResult.error) throw new Error(`Failed to load items: ${itemsResult.error.message}`);
@@ -575,6 +598,7 @@ export async function runPricingEngine(
       (block.primaryRow as any).notes,
       (block.primaryRow as any).item_no,
       v3HistMap,
+      sameFileLibraryIds,
     );
 
     // 5b. Historical mapping fallback (Path A.5) — only if V3 didn't find via Stage E
@@ -951,12 +975,13 @@ export async function repriceUnpricedItems(
   }
 
   // 2. Fetch library, location factors, sources, historical map in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
@@ -1003,7 +1028,7 @@ export async function repriceUnpricedItems(
       description, descriptionEn, row.unit,
       detection.category, rateLibrary,
       row.linked_rate_id, approvedRateIds, row.notes,
-      row.item_no, v3HistMap2,
+      row.item_no, v3HistMap2, sameFileLibraryIds,
     );
 
     // Historical fallback
@@ -1113,12 +1138,13 @@ export async function repriceSingleItem(
   }
 
   // 2. Fetch dependencies in parallel
-  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap] = await Promise.all([
+  const [libraryResult, locationFactors, sourcesMap, boqFileResult, historicalMap, sameFileLibraryIds] = await Promise.all([
     supabase.from("rate_library").select("*"),
     fetchLocationFactors(),
     fetchAllSources(),
     supabase.from("boq_files").select("*").eq("id", boqFileId).single(),
     buildHistoricalMap(),
+    buildSameFileLibraryIds(boqFileId),
   ]);
 
   const rateLibrary = (libraryResult.data || []) as unknown as RateLibraryItem[];
@@ -1160,7 +1186,7 @@ export async function repriceSingleItem(
     description, descriptionEn, item.unit,
     detection.category, rateLibrary,
     item.linked_rate_id, approvedRateIds, item.notes,
-    item.item_no, v3HistMap3,
+    item.item_no, v3HistMap3, sameFileLibraryIds,
   );
 
   // ── BMS Detection: use points engine instead of library match ──
