@@ -19,6 +19,8 @@ export default function RateLibraryPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [codeFilter, setCodeFilter] = useState("");
+  const [unitFilter, setUnitFilter] = useState("all");
   const [importOpen, setImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
