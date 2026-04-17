@@ -1,81 +1,51 @@
 
 
-## خطة الإصلاح — تصدير اعتماد + المزايا الموثقة
+## Plan — Verify Etemad Export End-to-End
 
-### المرحلة 1: تشخيص الوضع الحالي (قبل أي تعديل)
+**I am in read-only Plan mode**, so I cannot run the export, inspect the uploaded `برج_المراقبة_عسير.xlsx`, or fix any issues found. After you approve, I will switch to default mode and execute the verification + fix any issues discovered.
 
-أحتاج التحقق من:
-1. هل `src/lib/boqOriginalExport.ts` موجود فعلاً؟ (الملف غير ظاهر في قائمة المشروع)
-2. الوضع الحالي لـ `src/lib/export/etemadExporter.ts` (تم إعادة كتابته في v4.0)
-3. هل RPC `save_manual_price` مُستخدم حالياً في `PriceBreakdownModal.tsx`؟
-4. الوضع الحالي لـ `pricingEngine.ts` بخصوص حماية البنود اليدوية
-5. الوضع الحالي لـ `matchingV3.ts` بخصوص `linked_rate_id`
+### Step 1 — Inspect the uploaded "previously exported" file
+Copy `user-uploads://برج_المراقبة_عسير.xlsx` to `/tmp/` and run a Python audit using `openpyxl` + raw `unzip`:
+- Sheet count (must = 1, no extra "تحليل الأسعار" sheet)
+- Detect injected unit_rate / total_price columns and sample 5 cells
+- Check `[Content_Types].xml`, `xl/_rels/workbook.xml.rels`, presence of `xl/calcChain.xml`
+- Validate XML well-formedness on `xl/worksheets/sheet1.xml` and `xl/sharedStrings.xml`
+- Run `recalculate_formulas.py` (LibreOffice) to detect repair-triggering errors
 
-**ملاحظة جوهرية**: المشروع يستخدم `etemadExporter.ts` (وليس `boqOriginalExport.ts`). لذا الحل الموثق في الملف لن ينطبق حرفياً — سنطبق نفس **المبدأ** على الملف الفعلي.
+### Step 2 — Trigger a live export from the current project
+Use browser automation on `/projects/29dae45a-708e-4954-887d-28b3c45a3163`:
+- Open a BoQ that has both an `originalFilePath` and priced items
+- Click **«تصدير اعتماد»** button
+- Capture the downloaded file via the network/download interceptor and read console log `[approvalExporter]` (already exists at line 610 — shows `headerMap`, `matchedRows`, `injections`)
 
----
+### Step 3 — Side-by-side diff
+Compare the freshly-exported file against the uploaded `برج_المراقبة_عسير.xlsx`:
+- Sheet structure identical (1 sheet, same name)
+- Same headers/columns preserved
+- unit_rate / total_price cells contain numbers (`t="n"`)
+- No `calcChain.xml`, no `t="shared"` formulas
+- Open both in LibreOffice headless and confirm zero recalc errors
 
-### المرحلة 2: الإصلاحات (بعد التشخيص)
+### Step 4 — Fix any issues discovered
+Likely failure points based on code review:
+| Risk | Location | Fix if found |
+|---|---|---|
+| `xmlEscape` declared but unused → text values may not be escaped | `approvalExporter.ts:61` | Wire into injection or remove |
+| Self-closing `<row .../>` rows skipped by `rowRegex` (requires `</row>`) | `parseSheetRows:122` | Add self-closing pattern |
+| `cm`/`vm`/`ph` stripped but `<f>` formula NOT stripped from existing cell | `injectIntoRowXml:395-409` | Strip `<f>...</f>` from inner before rebuild |
+| Cell with `xml:space="preserve"` + leading space breaks regex | `parseSharedStrings` | Already handled; verify on real file |
+| `headerRow` heuristic may pick wrong row if "السعر" appears in description | `detectHeaderMap` | Add stricter "header band" detection (row must have ≥3 keyword hits) |
+| `boq_files.file_path` may be missing for older BoQs | `handleEtemadExport` | Already handled with toast |
 
-#### (1) تصدير اعتماد — الحل الجذري الموثق
-- فحص `etemadExporter.ts` للتأكد من عدم إضافة شيت ثانٍ
-- التأكد أن المسار يحقن فقط في الشيت الأصلي
-- إذا كان هناك أي إضافة لشيت "تحليل الأسعار" → حذفها
-- التحقق من أن `injectCellValue` يعمل بشكل صحيح بعد sanitize
+### Step 5 — Report
+Deliver:
+- Console log dump from live export
+- Excel-validation JSON from `recalculate_formulas.py`
+- Diff summary vs uploaded file
+- List of any code patches applied
 
-#### (2) الحفظ الذري عبر RPC `save_manual_price`
-- استبدال أي `update boq_items` + `syncToRateLibrary` منفصلين بـ استدعاء RPC واحد
-- RPC موجود فعلاً في قاعدة البيانات (مؤكد من schema)
-- إزالة `syncToRateLibrary` من `handleSave`
+### Files that may be touched (only if Step 4 finds issues)
+- `src/lib/export/approvalExporter.ts`
 
-#### (3) حماية البنود اليدوية في `pricingEngine.ts`
-- إضافة guard صريح في `repriceSingleItem` و `repriceUnpricedItems`
-- تخطي أي بند بـ `override_type === 'manual'`
-
-#### (4) إخفاء بنود التحليل من جدول الكميات
-- ملاحظة: لا يوجد عمود `item_type` في `boq_items` (مؤكد من schema)
-- بدلاً من الفلترة بـ `item_type`، نستخدم `quantity === 0` + علامات وصفية كما هو معتمد في النظام
-- إضافة toggle UI فقط (الفلترة موجودة بالفعل عبر `BoQ Row Classification System`)
-
-#### (5) توليد keywords/aliases تلقائياً
-- إضافة `generateKeywords()` helper في `usePriceLibrary.ts`
-- استدعاء في `useAddPriceItem` و `useUpdatePriceItem`
-
-#### (6) إصلاح `matchingV3.ts` — `linked_rate_id` كـ hint
-- ملاحظة مهمة: يتعارض مع memory `item-no-hard-override` (≥95% = bypass)
-- التعديل المقترح: `linked_rate_id` يصبح bonus +5 فقط، **لكن** نحافظ على `item_no` Hard Override كما هو
-- إضافة فحص تعارض (concept/dimension/category) قبل الثقة في `linked_rate_id`
-
-#### (7) Migration — backfill keywords
-- SQL لملء `keywords` و `item_name_aliases` للبنود الحالية الفارغة
-
----
-
-### الملفات المعدّلة (متوقعة)
-
-| الملف | التغيير |
-|---|---|
-| `src/lib/export/etemadExporter.ts` | تحقق + تنظيف أي شيت إضافي |
-| `src/components/PriceBreakdownModal.tsx` | استبدال handleSave بـ RPC ذري |
-| `src/lib/pricingEngine.ts` | guard للبنود اليدوية |
-| `src/components/BoQTable.tsx` | toggle لإخفاء بنود التحليل |
-| `src/hooks/usePriceLibrary.ts` | توليد keywords/aliases |
-| `src/lib/pricing/matchingV3.ts` | linked_rate_id كـ hint + فحص تعارض |
-| Migration جديد | backfill keywords للبنود الحالية |
-
-### ضمانات الالتزام بالـ Memory
-- ✅ `item_no` Hard Override (≥95% = confidence 99) محفوظ
-- ✅ Category Hard Gate محفوظ
-- ✅ Hardened Propagation (word_similarity ≥0.65) محفوظ
-- ✅ Manual Approval Sync عبر RPC `save_manual_price` (موجود فعلاً)
-- ✅ Reset Governance — البنود اليدوية محمية
-- ✅ Zero AI Pricing + VAT excluded
-- ✅ صفر تغيير على schema الأساسي
-
-### ترتيب التنفيذ
-1. تشخيص etemadExporter + إصلاح التصدير (الأولوية القصوى)
-2. اختبار التصدير
-3. RPC ذري + حماية يدوية
-4. keywords + matchingV3 hint
-5. UI toggle + migration backfill
+**Memory guarantees preserved**: zero changes to pricing engine, matching V4, RPCs, or schema. Export logic only.
 
