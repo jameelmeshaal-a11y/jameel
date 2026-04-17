@@ -254,42 +254,8 @@ function findRateLibraryMatch(
     return { item: bestMatch, confidence: bestScore };
   }
 
-  // Path C — Approved-rate fallback (threshold raised to 50)
-  if (approvedRateIds && approvedRateIds.size > 0) {
-    const normalizedUnit_ = normalizeUnit(unit);
-
-    for (const candidate of rateLibrary) {
-      if (!approvedRateIds.has(candidate.id)) continue;
-      if (normalizeUnit(candidate.unit) !== normalizedUnit_) continue;
-
-      const textScore = Math.max(
-        textSimilarity(description, candidate.standard_name_ar || ""),
-        textSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
-      ) * 60;
-
-      const ngramScore = Math.max(
-        charNgramSimilarity(description, candidate.standard_name_ar || ""),
-        charNgramSimilarity(descriptionEn || "", candidate.standard_name_en || ""),
-      ) * 30;
-
-      const srcTokens = tokenize(description + " " + (descriptionEn || ""));
-      const candTokens = tokenize((candidate.standard_name_ar || "") + " " + (candidate.standard_name_en || ""));
-      const overlapCount = srcTokens.filter(t => candTokens.includes(t)).length;
-      const kwScore = Math.min(25, overlapCount * 5);
-
-      const score = Math.min(Math.max(textScore, ngramScore) + kwScore, 55);
-
-      if (score >= 50 && score > bestScore) {
-        bestScore = score;
-        bestMatch = candidate;
-      }
-    }
-
-    if (bestMatch) {
-      return { item: bestMatch, confidence: Math.min(bestScore, 55) };
-    }
-  }
-
+  // Path C REMOVED — no loose approved-rate fallback. Items below threshold stay pending.
+  // Library is the SOLE source of truth: no match ≥75 → no price.
   return null;
 }
 
@@ -310,10 +276,9 @@ function priceFromApprovedRate(
   projectCity: string,
   category?: ItemCategory,
 ): Omit<PricedResult, "category" | "explanation" | "priceFlag"> {
-  // Only apply location factor if cities differ
-  const needsLocationAdj = baseCity && projectCity &&
-    baseCity.toLowerCase().trim() !== projectCity.toLowerCase().trim();
-  const adjustedRate = needsLocationAdj ? +(approvedRate * locationFactor).toFixed(2) : approvedRate;
+  // GOVERNANCE: unitRate MUST equal the library target_rate EXACTLY.
+  // No location factor multiplier, no city adjustment — library price is final.
+  const adjustedRate = approvedRate;
 
   // Check if the library has real cost breakdown percentages (excluding risk/profit)
   const costPctSum = libraryItem.materials_pct + libraryItem.labor_pct +
