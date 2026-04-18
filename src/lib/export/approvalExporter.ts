@@ -190,7 +190,7 @@ interface HeaderMap {
 
 // Header keyword sets — TOTAL keys are checked BEFORE unit-rate keys
 // to avoid "السعر الإجمالي" being mis-detected as unit rate.
-const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code"];
+const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code", "#", "no", "no.", "serial", "serial no"];
 const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
 const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
 // MUST contain "وحدة"/"وحده"/"unit" + price/سعر/rate. Exclude bare "السعر" (matches total too).
@@ -298,6 +298,24 @@ function normalizeForCompare(s: string): string {
     .trim();
 }
 
+function digitsToAscii(s: string): string {
+  return s
+    .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
+    .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776));
+}
+
+function normalizeItemNo(s: string | null | undefined): string {
+  return digitsToAscii(String(s ?? ""))
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 function jaccardSim(a: string, b: string): number {
   const ta = new Set(normalizeForCompare(a).split(" ").filter(t => t.length >= 2));
   const tb = new Set(normalizeForCompare(b).split(" ").filter(t => t.length >= 2));
@@ -318,28 +336,19 @@ function jaccardSim(a: string, b: string): number {
  *   Layer 3 — DIAGNOSTIC LOG ONLY. No silent guessing. Unmatched items
  *             are reported to the console and surfaced via toast.
  */
-function buildRowIndexMap(
+function inferItemNoCol(
   rows: ParsedRow[],
   headerMap: HeaderMap,
   items: ApprovalItem[],
-): Map<number, ApprovalItem> {
-  const result = new Map<number, ApprovalItem>();
-  if (rows.length === 0) return result;
-
-  // ✅ FIX (WO-2026-04-18-INJECT): inject ANY priced item regardless of status.
-  // Previously stale_price / pending items with valid unit_rate were excluded → 42% gap.
-  // Only "descriptive" rows (no quantity) are skipped.
-  const pricedItems = items.filter(i =>
-    i.unit_rate != null &&
-    i.unit_rate > 0 &&
-    typeof (i as any).quantity === "number" &&
-    (i as any).quantity > 0 &&
-    i.status !== "descriptive",
+): { col: number | null; matches: number } {
+  const pricedItemNos = new Set(
+    items
+      .map(item => normalizeItemNo(item.item_no))
+      .filter(Boolean),
   );
-
-  // Build quick lookups on Excel rows
-  const rowByNum = new Map<number, ParsedRow>();
-  for (const r of rows) rowByNum.set(r.rowNum, r);
+  if (pricedItemNos.size === 0) {
+    return { col: headerMap.itemNoCol, matches: 0 };
+  }
 
   const getCellText = (row: ParsedRow, colIdx: number | null): string => {
     if (colIdx === null) return "";
@@ -357,56 +366,99 @@ function buildRowIndexMap(
     return isFinite(qtyNum) && qtyNum > 0;
   };
 
-  const usedRows = new Set<number>();
-  const normItemNo = (s: string) => s.replace(/\s+/g, "").toLowerCase();
-
-  // Index Excel rows by normalized item_no for Layer 2
-  const rowByItemNo = new Map<string, number>();
-  if (headerMap.itemNoCol !== null) {
-    for (const row of rows) {
-      if (row.rowNum <= headerMap.headerRow) continue;
-      const txt = getCellText(row, headerMap.itemNoCol);
-      const key = normItemNo(txt);
-      if (key && !rowByItemNo.has(key)) rowByItemNo.set(key, row.rowNum);
+  const candidateScores = new Map<number, number>();
+  for (const row of rows) {
+    if (row.rowNum <= headerMap.headerRow || !rowHasPositiveQty(row)) continue;
+    for (const cell of row.cells) {
+      const parsed = parseRef(cell.ref);
+      if (!parsed) continue;
+      if (headerMap.descCol !== null && parsed.col >= headerMap.descCol) continue;
+      const key = normalizeItemNo(cell.resolved);
+      if (!key || !pricedItemNos.has(key)) continue;
+      candidateScores.set(parsed.col, (candidateScores.get(parsed.col) ?? 0) + 1);
     }
   }
 
-  let layer1 = 0;
-  let layer2 = 0;
+  let bestCol = headerMap.itemNoCol;
+  let bestMatches = bestCol ? candidateScores.get(bestCol) ?? 0 : 0;
+  for (const [col, matches] of candidateScores) {
+    if (matches > bestMatches) {
+      bestCol = col;
+      bestMatches = matches;
+    }
+  }
+
+  return { col: bestCol, matches: bestMatches };
+}
+
+function buildRowIndexMap(
+  rows: ParsedRow[],
+  headerMap: HeaderMap,
+  items: ApprovalItem[],
+): Map<number, ApprovalItem> {
+  const result = new Map<number, ApprovalItem>();
+  if (rows.length === 0) return result;
+
+  const pricedItems = items.filter(i =>
+    i.unit_rate != null &&
+    i.unit_rate > 0 &&
+    typeof (i as any).quantity === "number" &&
+    (i as any).quantity > 0 &&
+    i.status !== "descriptive",
+  );
+
+  const getCellText = (row: ParsedRow, colIdx: number | null): string => {
+    if (colIdx === null) return "";
+    const cell = row.cells.find(c => {
+      const p = parseRef(c.ref);
+      return p && p.col === colIdx;
+    });
+    return cell?.resolved ?? "";
+  };
+
+  const rowHasPositiveQty = (row: ParsedRow): boolean => {
+    if (headerMap.qtyCol === null) return true;
+    const qtyText = getCellText(row, headerMap.qtyCol);
+    const qtyNum = parseFloat(qtyText.replace(/,/g, "").trim());
+    return isFinite(qtyNum) && qtyNum > 0;
+  };
+
+  const itemNoDetection = inferItemNoCol(rows, headerMap, pricedItems);
+  const itemNoCol = itemNoDetection.col;
+  const rowQueuesByItemNo = new Map<string, number[]>();
+  let duplicateExcelItemNos = 0;
+
+  if (itemNoCol !== null) {
+    for (const row of rows) {
+      if (row.rowNum <= headerMap.headerRow || !rowHasPositiveQty(row)) continue;
+      const key = normalizeItemNo(getCellText(row, itemNoCol));
+      if (!key) continue;
+      const queue = rowQueuesByItemNo.get(key) ?? [];
+      if (queue.length > 0) duplicateExcelItemNos++;
+      queue.push(row.rowNum);
+      rowQueuesByItemNo.set(key, queue);
+    }
+  }
+
   const unmatched: ApprovalItem[] = [];
 
   for (const item of pricedItems) {
-    // Layer 1: direct row_index
-    const directRow = rowByNum.get(item.row_index);
-    if (
-      directRow &&
-      directRow.rowNum > headerMap.headerRow &&
-      !usedRows.has(directRow.rowNum) &&
-      rowHasPositiveQty(directRow)
-    ) {
-      result.set(directRow.rowNum, item);
-      usedRows.add(directRow.rowNum);
-      layer1++;
+    const key = normalizeItemNo(item.item_no);
+    if (!key) {
+      unmatched.push(item);
       continue;
     }
-
-    // Layer 2: item_no exact (normalized) match
-    if (item.item_no) {
-      const key = normItemNo(item.item_no);
-      const candRow = rowByItemNo.get(key);
-      if (candRow && !usedRows.has(candRow)) {
-        result.set(candRow, item);
-        usedRows.add(candRow);
-        layer2++;
-        continue;
-      }
+    const queue = rowQueuesByItemNo.get(key);
+    const matchedRow = queue?.shift();
+    if (matchedRow) {
+      result.set(matchedRow, item);
+      continue;
     }
-
     unmatched.push(item);
   }
 
   console.log(
-    `[approvalExporter] strategy=row_index_direct, matched=${layer1}, fallback_item_no=${layer2}, unmatched=${unmatched.length}`,
+    `[approvalExporter] strategy=item_no_exact_only, item_no_col=${itemNoCol ?? "none"}, detected_matches=${itemNoDetection.matches}, matched=${result.size}, unmatched=${unmatched.length}`,
   );
   if (unmatched.length > 0) {
     console.warn(
@@ -423,8 +475,12 @@ function buildRowIndexMap(
 
   // Expose unmatched count for caller toast
   (result as any).__unmatchedCount = unmatched.length;
-  (result as any).__layer1 = layer1;
-  (result as any).__layer2 = layer2;
+  (result as any).__layer1 = 0;
+  (result as any).__layer2 = result.size;
+  (result as any).__itemNoCol = itemNoCol;
+  (result as any).__itemNoMatches = itemNoDetection.matches;
+  (result as any).__duplicateExcelItemNos = duplicateExcelItemNos;
+  (result as any).__missingItemNos = unmatched.slice(0, 30).map(i => i.item_no).filter(Boolean);
 
   return result;
 }
@@ -590,40 +646,62 @@ export async function exportApproval(
   const buffer = await fileData.arrayBuffer();
   const zip = await JSZip.loadAsync(buffer);
 
-  // 2. Read primary sheet (sheet1.xml)
-  // Find the first worksheet via workbook.xml ordering
+  // 2. Read worksheets and choose the best matching original BoQ sheet
   const wbXml = await zip.file("xl/workbook.xml")?.async("string");
   let primarySheetPath = "xl/worksheets/sheet1.xml";
+  const sheetPaths: string[] = [];
   if (wbXml) {
-    // Get first <sheet ... r:id="..."/>  → look up rels
-    const firstSheetMatch = wbXml.match(/<sheet\b[^>]*\sr:id="([^"]+)"/);
     const wbRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("string");
-    if (firstSheetMatch && wbRelsXml) {
-      const rid = firstSheetMatch[1];
-      const relMatch = wbRelsXml.match(
+    const sheetRegex = /<sheet\b[^>]*\sr:id="([^"]+)"[^>]*\/?/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = sheetRegex.exec(wbXml)) !== null) {
+      const rid = sm[1];
+      const relMatch = wbRelsXml?.match(
         new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*Target="([^"]+)"`),
       );
       if (relMatch) {
         const target = relMatch[1];
-        primarySheetPath = target.startsWith("/")
-          ? target.slice(1)
-          : `xl/${target.replace(/^\.?\//, "")}`;
+        sheetPaths.push(
+          target.startsWith("/")
+            ? target.slice(1)
+            : `xl/${target.replace(/^\.?\//, "")}`,
+        );
       }
     }
   }
-
-  const sheetFile = zip.file(primarySheetPath);
-  if (!sheetFile) throw new Error("لا توجد ورقة عمل في الملف الأصلي");
-  const sheetXml = await sheetFile.async("string");
+  if (sheetPaths.length === 0) sheetPaths.push(primarySheetPath);
 
   // 3. Parse sharedStrings (rich-text safe)
   const sstFile = zip.file("xl/sharedStrings.xml");
   const sstXml = sstFile ? await sstFile.async("string") : "";
   const sst = sstXml ? parseSharedStrings(sstXml) : [];
 
-  // 4. Parse rows + detect headers
-  const rows = parseSheetRows(sheetXml, sst);
-  const headerMap = detectHeaderMap(rows);
+  // 4. Parse all worksheets, then choose the one with the strongest item_no coverage
+  let sheetXml = "";
+  let rows: ParsedRow[] = [];
+  let headerMap: HeaderMap = { headerRow: 1, itemNoCol: null, descCol: null, qtyCol: null, unitRateCol: null, totalCol: null };
+  let bestCoverage = -1;
+
+  for (const candidatePath of sheetPaths) {
+    const candidateFile = zip.file(candidatePath);
+    if (!candidateFile) continue;
+    const candidateXml = await candidateFile.async("string");
+    const candidateRows = parseSheetRows(candidateXml, sst);
+    const candidateHeaderMap = detectHeaderMap(candidateRows);
+    const candidateItemNo = inferItemNoCol(candidateRows, candidateHeaderMap, items);
+    const hasPriceCols = candidateHeaderMap.unitRateCol !== null || candidateHeaderMap.totalCol !== null;
+    const coverage = (hasPriceCols ? 100000 : 0) + candidateItemNo.matches;
+
+    if (coverage > bestCoverage) {
+      bestCoverage = coverage;
+      primarySheetPath = candidatePath;
+      sheetXml = candidateXml;
+      rows = candidateRows;
+      headerMap = candidateHeaderMap;
+    }
+  }
+
+  if (!sheetXml) throw new Error("لا توجد ورقة عمل صالحة في الملف الأصلي");
 
   if (headerMap.unitRateCol === null && headerMap.totalCol === null) {
     throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
@@ -635,6 +713,13 @@ export async function exportApproval(
   // 6. Build injections
   const injections: Array<{ rowNum: number; cellRef: string; value: number | null }> = [];
   let injectedSum = 0;
+  const expectedPricedItems = items.filter(i =>
+    i.unit_rate != null &&
+    i.unit_rate > 0 &&
+    typeof (i as any).quantity === "number" &&
+    (i as any).quantity > 0 &&
+    i.status !== "descriptive",
+  );
   for (const [rowNum, item] of rowItemMap) {
     // ✅ FIX (WO-2026-04-18-INJECT): inject any item with valid unit_rate,
     // regardless of status. Only clear cells when truly unpriced.
@@ -656,20 +741,37 @@ export async function exportApproval(
       const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
       injections.push({ rowNum, cellRef: ref, value: totalVal });
     }
-    if (totalVal != null) injectedSum += totalVal;
+    if (totalVal != null) injectedSum += roundCurrency(totalVal);
   }
 
-  // ✅ FIX (WO-2026-04-18-INJECT): validate exported total vs system total.
-  const systemTotal = items.reduce((s, i) => {
+  const systemTotal = roundCurrency(items.reduce((s, i) => {
     const q = typeof (i as any).quantity === "number" ? (i as any).quantity : 0;
     if (q > 0 && i.unit_rate != null && i.unit_rate > 0) {
       return s + (i.total_price != null && i.total_price > 0 ? i.total_price : i.unit_rate * q);
     }
     return s;
-  }, 0);
-  const variance = systemTotal > 0 ? Math.abs(systemTotal - injectedSum) / systemTotal : 0;
-  if (variance > 0.005) {
-    console.error("[approvalExporter] TOTAL MISMATCH", { systemTotal, injectedSum, variance });
+  }, 0));
+  injectedSum = roundCurrency(injectedSum);
+  const unmatchedCount = (rowItemMap as any).__unmatchedCount ?? 0;
+  const missingItemNos = (rowItemMap as any).__missingItemNos ?? [];
+  const varianceAmount = roundCurrency(Math.abs(systemTotal - injectedSum));
+  const variance = systemTotal > 0 ? varianceAmount / systemTotal : 0;
+  if (unmatchedCount > 0 || varianceAmount > 0.01 || rowItemMap.size !== expectedPricedItems.length) {
+    console.error("[approvalExporter] TOTAL MISMATCH", {
+      primarySheetPath,
+      headerMap,
+      systemTotal,
+      injectedSum,
+      variance,
+      unmatchedCount,
+      expectedPricedItems: expectedPricedItems.length,
+      matchedRows: rowItemMap.size,
+      missingItemNos,
+    });
+    throw new Error(
+      `فشل تصدير الاعتماد: تمت مطابقة ${rowItemMap.size}/${expectedPricedItems.length} فقط — الإجمالي ${systemTotal.toLocaleString("ar-SA")} ر.س مقابل ${injectedSum.toLocaleString("ar-SA")} ر.س` +
+      (missingItemNos.length ? ` — البنود غير المربوطة: ${missingItemNos.join(", ")}` : "")
+    );
   }
 
   // 7. Inject into sheet XML
@@ -698,9 +800,10 @@ export async function exportApproval(
   URL.revokeObjectURL(url);
 
   // Diagnostic log for verification
-  const unmatchedCount = (rowItemMap as any).__unmatchedCount ?? 0;
   const layer1 = (rowItemMap as any).__layer1 ?? 0;
   const layer2 = (rowItemMap as any).__layer2 ?? 0;
+  const itemNoCol = (rowItemMap as any).__itemNoCol ?? null;
+  const itemNoMatches = (rowItemMap as any).__itemNoMatches ?? 0;
   console.log("[approvalExporter]", {
     primarySheetPath,
     headerMap,
@@ -710,6 +813,8 @@ export async function exportApproval(
     sstSize: sst.length,
     layer1_row_index: layer1,
     layer2_item_no: layer2,
+    itemNoCol,
+    itemNoMatches,
     unmatched: unmatchedCount,
     systemTotal,
     injectedSum,
@@ -718,22 +823,8 @@ export async function exportApproval(
 
   const fmt = (n: number) => n.toLocaleString("ar-SA", { maximumFractionDigits: 0 });
 
-  if (variance > 0.005) {
-    toast({
-      title: "⚠️ انحراف في الإجمالي",
-      description: `النظام: ${fmt(systemTotal)} ر.س | الملف: ${fmt(injectedSum)} ر.س | فرق ${(variance * 100).toFixed(1)}% | غير مربوط: ${unmatchedCount}`,
-      variant: "destructive",
-    });
-  } else if (unmatchedCount > 0) {
-    toast({
-      title: "تحذير: بنود غير مربوطة",
-      description: `حُقن ${rowItemMap.size} بند | ${unmatchedCount} غير مربوط | الإجمالي ${fmt(injectedSum)} ر.س`,
-      variant: "destructive",
-    });
-  } else {
-    toast({
-      title: "تم تصدير ملف الاعتماد بنجاح",
-      description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س (مطابق للنظام)`,
-    });
-  }
+  toast({
+    title: "تم تصدير ملف الاعتماد بنجاح",
+    description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الشيت ${primarySheetPath.split("/").pop()}`,
+  });
 }
