@@ -748,20 +748,23 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <table className="boq-table">
           <thead>
             <tr>
+              {/* ترتيب مطابق لجدول الكميات الأصلي في الإكسل */}
               <th className="w-8">#</th>
               {items.some(i => i.section_no && i.section_no !== "") && <th className="protected-col w-20">رقم القسم</th>}
               <th className="protected-col">{t("itemNo")}</th>
               <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
-              <th className="w-16 text-center">المطابقة</th>
               <th className="protected-col w-16">{t("unit")}</th>
               <th className="protected-col w-24 text-right">{t("qty")}</th>
-              <th className="pricing-col w-28">الفئة</th>
               <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
               <th className="pricing-col w-28 text-right">{t("total")}</th>
-              <th className="w-10"></th>
+              {/* أعمدة تحليلية — تبقى ظاهرة */}
+              <th className="pricing-col w-28">الفئة</th>
+              <th className="w-16 text-center">المطابقة</th>
               <th className="w-20 text-center">{t("conf")}</th>
               <th className="w-12 text-center">{t("status")}</th>
-              <th className="w-10"></th>
+              {/* أزرار التحكم */}
+              <th className="w-10" title="تعديل"></th>
+              <th className="w-10" title="إعادة تسعير"></th>
             </tr>
           </thead>
           <tbody>
