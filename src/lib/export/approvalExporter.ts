@@ -634,29 +634,42 @@ export async function exportApproval(
 
   // 6. Build injections
   const injections: Array<{ rowNum: number; cellRef: string; value: number | null }> = [];
+  let injectedSum = 0;
   for (const [rowNum, item] of rowItemMap) {
-    // Skip pending/unpriced — clear cells
-    const isPending = item.status === "pending" ||
-      (!item.unit_rate && !item.total_price);
-
-    const unitVal = isPending ? null : item.unit_rate;
-    const totalVal = isPending ? null : item.total_price;
+    // ✅ FIX (WO-2026-04-18-INJECT): inject any item with valid unit_rate,
+    // regardless of status. Only clear cells when truly unpriced.
+    const hasPrice = item.unit_rate != null && item.unit_rate > 0;
+    const unitVal = hasPrice ? item.unit_rate : null;
+    const totalVal = hasPrice
+      ? (item.total_price != null && item.total_price > 0
+          ? item.total_price
+          : (typeof (item as any).quantity === "number"
+              ? item.unit_rate! * ((item as any).quantity as number)
+              : null))
+      : null;
 
     if (headerMap.unitRateCol !== null) {
       const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
       injections.push({ rowNum, cellRef: ref, value: unitVal });
     }
-    // Inject total explicitly: original cell may be a hardcoded value
-    // (no formula) — relying on Excel recalc would leave stale numbers.
     if (headerMap.totalCol !== null) {
       const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
-      const computedTotal = totalVal != null
-        ? totalVal
-        : (unitVal != null && typeof (item as any).quantity === "number"
-            ? unitVal * ((item as any).quantity as number)
-            : null);
-      injections.push({ rowNum, cellRef: ref, value: computedTotal });
+      injections.push({ rowNum, cellRef: ref, value: totalVal });
     }
+    if (totalVal != null) injectedSum += totalVal;
+  }
+
+  // ✅ FIX (WO-2026-04-18-INJECT): validate exported total vs system total.
+  const systemTotal = items.reduce((s, i) => {
+    const q = typeof (i as any).quantity === "number" ? (i as any).quantity : 0;
+    if (q > 0 && i.unit_rate != null && i.unit_rate > 0) {
+      return s + (i.total_price != null && i.total_price > 0 ? i.total_price : i.unit_rate * q);
+    }
+    return s;
+  }, 0);
+  const variance = systemTotal > 0 ? Math.abs(systemTotal - injectedSum) / systemTotal : 0;
+  if (variance > 0.005) {
+    console.error("[approvalExporter] TOTAL MISMATCH", { systemTotal, injectedSum, variance });
   }
 
   // 7. Inject into sheet XML
