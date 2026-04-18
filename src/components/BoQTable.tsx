@@ -789,21 +789,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
                   )}
                 </td>
-                <td className="text-center">
-                  {isPriced && (
-                    item.linked_rate_id && item.source === "library-high" ? (
-                      <span title="موجود في المكتبة — معتمد">✅</span>
-                    ) : item.linked_rate_id && item.source === "library-medium" ? (
-                      <span title="اقتراح — يحتاج مراجعة">🟡</span>
-                    ) : item.source === "no_match" || item.status === "unmatched" ? (
-                      <span title="غير موجود في المكتبة — أدخل السعر يدوياً">🔴</span>
-                    ) : item.unit_rate && item.unit_rate > 0 ? (
-                      <span title="مسعّر">🟢</span>
-                    ) : (
-                      <span title="غير مسعّر">🔴</span>
-                    )
-                  )}
-                </td>
                 <td className="protected-col text-center text-xs" dir="rtl">
                   {editingUnitId === item.id ? (
                     <Input
@@ -835,6 +820,8 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   )}
                 </td>
                 <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
+                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
+                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="pricing-col">
                   {isPriced && (
                     <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
@@ -842,15 +829,19 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </Badge>
                   )}
                 </td>
-                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
                 <td className="text-center">
                   {isPriced && (
-                    <div className="flex items-center justify-center gap-0.5">
-                      <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)} title="عرض التفاصيل">
-                        <Eye className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                    item.linked_rate_id && item.source === "library-high" ? (
+                      <span title="موجود في المكتبة — معتمد">✅</span>
+                    ) : item.linked_rate_id && item.source === "library-medium" ? (
+                      <span title="اقتراح — يحتاج مراجعة">🟡</span>
+                    ) : item.source === "no_match" || item.status === "unmatched" ? (
+                      <span title="غير موجود في المكتبة — أدخل السعر يدوياً">🔴</span>
+                    ) : item.unit_rate && item.unit_rate > 0 ? (
+                      <span title="مسعّر">🟢</span>
+                    ) : (
+                      <span title="غير مسعّر">🔴</span>
+                    )
                   )}
                 </td>
                 <td className="text-center">
@@ -876,6 +867,13 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                       {getStatusIcon(item.status)}
                     </div>
                   ) : <span className="text-[10px] text-muted-foreground">—</span>}
+                </td>
+                <td className="text-center">
+                  {isPriced && (
+                    <Button variant="ghost" size="icon" className="w-7 h-7 text-foreground" onClick={() => setSelectedItem(item)} title="عرض / تعديل التفاصيل">
+                      <Eye className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                 </td>
                 <td>
                   <div className="flex items-center gap-0.5">
