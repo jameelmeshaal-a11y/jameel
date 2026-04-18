@@ -7,7 +7,7 @@ import AppLayout from "@/components/AppLayout";
 import { formatNumber } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem, useBulkApprovePending } from "@/hooks/usePriceLibrary";
+import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem, useBulkApprovePending, usePriceLibraryStats } from "@/hooks/usePriceLibrary";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import PriceLibraryImportDialog from "@/components/PriceLibraryImportDialog";
 import { toast } from "sonner";
