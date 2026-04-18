@@ -18,6 +18,7 @@ import QAHealthPage from "./pages/QAHealthPage";
 import LoginPage from "./pages/LoginPage";
 import AdminDashboard from "./pages/AdminDashboard";
 import ProjectReportPage from "./pages/ProjectReportPage";
+import PriceSyncAuditPage from "./pages/PriceSyncAuditPage";
 import NotFound from "./pages/NotFound";
 import DebugPanel from "./components/DebugPanel";
 
@@ -40,6 +41,7 @@ const App = () => (
               <Route path="/project-report" element={<ProtectedRoute><ProjectReportPage /></ProtectedRoute>} />
               <Route path="/projects/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
               <Route path="/rate-library" element={<ProtectedRoute><RateLibraryPage /></ProtectedRoute>} />
+              <Route path="/price-sync-audit" element={<ProtectedRoute><PriceSyncAuditPage /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/validation" element={<ProtectedRoute><ValidationPage /></ProtectedRoute>} />
               <Route path="/qa-center" element={<ProtectedRoute><QACenterPage /></ProtectedRoute>} />
