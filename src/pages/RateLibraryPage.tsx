@@ -7,7 +7,7 @@ import AppLayout from "@/components/AppLayout";
 import { formatNumber } from "@/lib/mockData";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem, useBulkApprovePending } from "@/hooks/usePriceLibrary";
+import { usePriceLibrary, usePriceLibraryCategories, useUpdatePriceItem, useApprovePriceItem, useDeletePriceItem, useAddPriceItem, useBulkApprovePending, usePriceLibraryStats } from "@/hooks/usePriceLibrary";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import PriceLibraryImportDialog from "@/components/PriceLibraryImportDialog";
 import { toast } from "sonner";
@@ -41,6 +41,7 @@ export default function RateLibraryPage() {
   const deleteItem = useDeletePriceItem();
   const addItem = useAddPriceItem();
   const bulkApprove = useBulkApprovePending();
+  const { data: stats } = usePriceLibraryStats();
 
   // Apply client-side filters: item_code prefix and unit
   const filteredItems = items.filter((it: any) => {
@@ -130,7 +131,26 @@ export default function RateLibraryPage() {
           </div>
         </div>
 
-        {/* Action buttons row */}
+        {/* Library statistics cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" dir="rtl">
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground mb-1">إجمالي البنود في المكتبة</p>
+            <p className="text-2xl font-bold text-foreground">{formatNumber(stats?.total ?? 0)}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground mb-1">بنود جديدة (آخر 24 ساعة)</p>
+            <p className="text-2xl font-bold text-primary">{formatNumber(stats?.last24h ?? 0)}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground mb-1">بنود جديدة (آخر 7 أيام)</p>
+            <p className="text-2xl font-bold text-foreground">{formatNumber(stats?.last7d ?? 0)}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground mb-1">بنود معلقة (بانتظار الاعتماد)</p>
+            <p className="text-2xl font-bold text-amber-600">{formatNumber(stats?.pending ?? 0)}</p>
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 mb-4">
           {pendingCount > 0 && (
             <AlertDialog>
