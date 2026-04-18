@@ -15,6 +15,7 @@ import {
   Shield,
   LogOut,
   BarChart3,
+  ShieldAlert,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ export default function AppSidebar() {
     { to: "/projects", icon: FolderOpen, label: t("projects") },
     { to: "/project-report", icon: BarChart3, label: isRTL ? "تقرير الملخص" : "Summary Report" },
     { to: "/rate-library", icon: BookOpen, label: t("rateLibrary") },
+    { to: "/price-sync-audit", icon: ShieldAlert, label: isRTL ? "تشخيص الأسعار" : "Price Sync Audit" },
     { to: "/settings", icon: Settings, label: t("settings") },
     { to: "/validation", icon: ShieldCheck, label: isRTL ? "التحقق" : "Validation" },
     { to: "/qa-center", icon: FlaskConical, label: isRTL ? "مركز QA" : "QA Center" },
