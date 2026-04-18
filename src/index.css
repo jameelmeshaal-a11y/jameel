@@ -142,22 +142,51 @@
   }
 
   .boq-table {
-    @apply w-full text-sm;
+    @apply w-full text-sm border-collapse;
   }
 
   .boq-table th {
-    @apply sticky top-0 z-10 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider border-b-2;
-    background: hsl(var(--background));
-    color: hsl(var(--muted-foreground));
+    @apply sticky top-0 z-10 px-3 py-3 text-center text-xs font-semibold border;
+    background: hsl(210 40% 96%);
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--border));
   }
 
   .boq-table td {
-    @apply px-3 py-2.5 border-b;
+    @apply px-3 py-2.5 border align-middle;
+    border-color: hsl(var(--border));
   }
 
   .boq-table tr:hover td {
     background: hsl(var(--accent) / 0.5);
   }
+
+  /* Excel-like green section header band (descriptive rows) */
+  .boq-section-band td {
+    background: hsl(140 60% 88%) !important;
+    color: hsl(140 60% 18%);
+    font-weight: 700;
+    text-align: center;
+    border-color: hsl(140 50% 60%);
+  }
+
+  /* Excel-like sub-section gray band */
+  .boq-subsection-band td {
+    background: hsl(210 16% 88%) !important;
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    text-align: right;
+    border-color: hsl(var(--border));
+  }
+
+  /* Excel-style project title block */
+  .boq-title-block {
+    @apply rounded-t-lg border border-b-0 px-6 py-4 text-center;
+    background: hsl(210 80% 96%);
+    border-color: hsl(var(--border));
+  }
+  .boq-title-block h2 { @apply text-base font-bold mb-1; color: hsl(var(--foreground)); }
+  .boq-title-block p  { @apply text-sm; color: hsl(var(--foreground)); }
 
   .protected-col {
     background: hsl(var(--muted) / 0.4);

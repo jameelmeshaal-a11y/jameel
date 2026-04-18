@@ -744,25 +744,31 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         <span className="flex items-center gap-1"><BadgeCheck className="w-3 h-3 text-success" /> مكتبة معتمدة</span>
       </div>
 
-      <div className="border rounded-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
-        <table className="boq-table">
+      {/* Excel-like title block (project + BoQ name) */}
+      {hasItems && (
+        <div className="boq-title-block" dir="rtl">
+          {project?.name && <h2>{project.name}</h2>}
+          <p>{boqFileName}</p>
+        </div>
+      )}
+
+      <div className="border rounded-b-lg overflow-auto max-h-[65vh] scrollbar-thin bg-card">
+        <table className="boq-table" dir="rtl">
           <thead>
             <tr>
-              {/* ترتيب مطابق لجدول الكميات الأصلي في الإكسل */}
-              <th className="w-8">#</th>
-              {items.some(i => i.section_no && i.section_no !== "") && <th className="protected-col w-20">رقم القسم</th>}
-              <th className="protected-col">{t("itemNo")}</th>
-              <th className="protected-col min-w-[280px]">{t("description")} (وصف البند)</th>
-              <th className="protected-col w-16">{t("unit")}</th>
-              <th className="protected-col w-24 text-right">{t("qty")}</th>
-              <th className="pricing-col w-24 text-right">{t("unitRate")}</th>
-              <th className="pricing-col w-28 text-right">{t("total")}</th>
-              {/* أعمدة تحليلية — تبقى ظاهرة */}
-              <th className="pricing-col w-28">الفئة</th>
-              <th className="w-16 text-center">المطابقة</th>
-              <th className="w-20 text-center">{t("conf")}</th>
-              <th className="w-12 text-center">{t("status")}</th>
-              {/* أزرار التحكم */}
+              {/* RTL natural order — يطابق الإكسل الأصلي (يقرأ من اليمين لليسار) */}
+              <th className="w-10">#</th>
+              <th className="protected-col w-24">رقم البند<div className="text-[10px] font-normal text-muted-foreground">Division No.</div></th>
+              <th className="protected-col min-w-[320px]">وصف البند<div className="text-[10px] font-normal text-muted-foreground">Item Description</div></th>
+              <th className="protected-col w-16">الوحدة<div className="text-[10px] font-normal text-muted-foreground">Unit</div></th>
+              <th className="protected-col w-24">الكمية<div className="text-[10px] font-normal text-muted-foreground">QTY</div></th>
+              <th className="pricing-col w-28">سعر الوحدة<div className="text-[10px] font-normal text-muted-foreground">Unit Price</div></th>
+              <th className="pricing-col w-32">السعر الإجمالي<div className="text-[10px] font-normal text-muted-foreground">Total Amount</div></th>
+              {/* أعمدة تحليلية إضافية — تظهر في النظام فقط (لا تؤثر على التصدير) */}
+              <th className="w-28">الفئة</th>
+              <th className="w-16">المطابقة</th>
+              <th className="w-16">الثقة</th>
+              <th className="w-16">الحالة</th>
               <th className="w-10" title="تعديل"></th>
               <th className="w-10" title="إعادة تسعير"></th>
             </tr>
@@ -775,15 +781,24 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
               const hasWarnings = rowClassification.warnings && rowClassification.warnings.length > 0;
               const detected = isPriced ? detectCategory(item.description, item.description_en) : null;
               const catLabel = detected?.category.replace(/_/g, " ") || "";
+
+              // Render descriptive rows as Excel-like full-width section bands
+              if (isDescriptive) {
+                return (
+                  <tr key={item.id} className="boq-section-band">
+                    <td className="text-center font-mono text-xs">{item.item_no || "—"}</td>
+                    <td colSpan={12} dir="rtl">{item.description}</td>
+                  </tr>
+                );
+              }
+
               return (
-              <tr key={item.id} className={`group ${!isPriced ? "opacity-50 bg-muted/30" : ""}`}>
-                <td className="text-muted-foreground">{index + 1}</td>
-                {items.some(i => i.section_no && i.section_no !== "") && <td className="protected-col font-mono text-xs">{item.section_no}</td>}
-                <td className="protected-col font-mono text-xs">{item.item_no}</td>
+              <tr key={item.id} className="group">
+                <td className="text-center text-muted-foreground">{index + 1}</td>
+                <td className="protected-col font-mono text-xs text-center">{item.item_no}</td>
                 <td className="protected-col" dir="rtl">
                   <div className="text-sm leading-relaxed">{item.description}</div>
                   {item.description_en && <div className="text-[11px] text-muted-foreground mt-0.5">{item.description_en}</div>}
-                  {isDescriptive && <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">وصف / Description</Badge>}
                   {hasWarnings && <Badge variant="secondary" className="text-[9px] mt-1">Needs Review</Badge>}
                   {item.status === "unmatched" && (
                     <div className="text-[10px] mt-1 text-destructive font-medium">🔴 غير موجود في المكتبة — أدخل السعر يدوياً</div>
@@ -819,10 +834,10 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                     </span>
                   )}
                 </td>
-                <td className="protected-col text-right font-mono text-xs">{formatNumber(item.quantity, 0)}</td>
-                <td className="pricing-col text-right font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate) : "—"}</td>
-                <td className="pricing-col text-right font-mono text-xs font-semibold">{isPriced && item.total_price ? formatCurrency(item.total_price) : "—"}</td>
-                <td className="pricing-col">
+                <td className="protected-col text-center font-mono text-xs">{formatNumber(item.quantity, 2)}</td>
+                <td className="pricing-col text-center font-mono text-xs font-medium">{isPriced && item.unit_rate ? formatNumber(item.unit_rate, 2) : "—"}</td>
+                <td className="pricing-col text-center font-mono text-xs font-semibold">{isPriced && item.total_price ? formatNumber(item.total_price, 2) : "0.00"}</td>
+                <td className="text-center">
                   {isPriced && (
                     <Badge variant="secondary" className="text-[10px] font-normal capitalize whitespace-nowrap">
                       {catLabel}
@@ -876,7 +891,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                   )}
                 </td>
                 <td>
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex items-center justify-center gap-0.5">
                     {isPriced && !isArchived && (
                       <Button
                         variant="ghost" size="icon"
@@ -888,7 +903,6 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                           try {
                             const result = await repriceSingleItem(boqFileId, item.id, cities);
                             if (result.success) {
-                              // Immediately update cache with the new price
                               qc.setQueryData(["boq-items", boqFileId], (old: any[] | undefined) => {
                                 if (!old) return old;
                                 return old.map(row => row.id === item.id ? {
@@ -904,11 +918,9 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
                             } else {
                               toast.warning("🔴 لم يتم العثور على تطابق في المكتبة");
                             }
-                            // Refetch to get full server state
                             await qc.refetchQueries({ queryKey: ["boq-items", boqFileId] });
                             await qc.refetchQueries({ queryKey: ["projects", projectId] });
                             qc.invalidateQueries({ queryKey: ["projects"] });
-                            // Recalculate BMS after refetch completes
                             const latestItems = qc.getQueryData<any[]>(["boq-items", boqFileId]) || items;
                             const bms = calculateBMSCost({ items: latestItems });
                             setBmsResult(bms.hasBMSItems ? bms : null);
