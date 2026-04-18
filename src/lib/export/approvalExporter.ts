@@ -711,18 +711,29 @@ export async function exportApproval(
     layer1_row_index: layer1,
     layer2_item_no: layer2,
     unmatched: unmatchedCount,
+    systemTotal,
+    injectedSum,
+    variancePct: (variance * 100).toFixed(2) + "%",
   });
 
-  if (unmatchedCount > 0) {
+  const fmt = (n: number) => n.toLocaleString("ar-SA", { maximumFractionDigits: 0 });
+
+  if (variance > 0.005) {
+    toast({
+      title: "⚠️ انحراف في الإجمالي",
+      description: `النظام: ${fmt(systemTotal)} ر.س | الملف: ${fmt(injectedSum)} ر.س | فرق ${(variance * 100).toFixed(1)}% | غير مربوط: ${unmatchedCount}`,
+      variant: "destructive",
+    });
+  } else if (unmatchedCount > 0) {
     toast({
       title: "تحذير: بنود غير مربوطة",
-      description: `تم حقن ${rowItemMap.size} بند | ⚠️ ${unmatchedCount} بند مسعّر لم يُربط — راجع Console`,
+      description: `حُقن ${rowItemMap.size} بند | ${unmatchedCount} غير مربوط | الإجمالي ${fmt(injectedSum)} ر.س`,
       variant: "destructive",
     });
   } else {
     toast({
       title: "تم تصدير ملف الاعتماد بنجاح",
-      description: `✅ تم حقن ${rowItemMap.size} بند (${layer1} عبر row_index، ${layer2} عبر item_no)`,
+      description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س (مطابق للنظام)`,
     });
   }
 }
