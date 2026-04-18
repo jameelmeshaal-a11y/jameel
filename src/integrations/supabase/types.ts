@@ -745,6 +745,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bulk_merge_duplicates: { Args: { p_user_id?: string }; Returns: Json }
       categories_compatible: {
         Args: { cat_a: string; cat_b: string }
         Returns: boolean
@@ -754,6 +755,39 @@ export type Database = {
         Returns: string
       }
       extract_sub_item: { Args: { full_desc: string }; Returns: string }
+      find_duplicate_library_items: {
+        Args: never
+        Returns: {
+          dup_count: number
+          normalized_name: string
+          unit: string
+          variants: Json
+        }[]
+      }
+      find_price_drift: {
+        Args: never
+        Returns: {
+          boq_file_id: string
+          boq_file_name: string
+          current_unit_rate: number
+          description: string
+          item_id: string
+          item_no: string
+          library_name: string
+          library_target_rate: number
+          linked_rate_id: string
+          variance: number
+        }[]
+      }
+      force_resync_rate: {
+        Args: {
+          p_merge_duplicates?: boolean
+          p_new_price: number
+          p_rate_id: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
