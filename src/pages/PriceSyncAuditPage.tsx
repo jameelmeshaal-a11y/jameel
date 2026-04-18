@@ -12,12 +12,25 @@ import { toast } from "sonner";
 
 export default function PriceSyncAuditPage() {
   const { user } = useAuth();
-  const { data: duplicates = [], isLoading: dupLoading, refetch: refetchDup } = useDuplicateLibraryItems();
-  const { data: drift = [], isLoading: drLoading, refetch: refetchDr } = usePriceDrift();
+  const qc = useQueryClient();
+  const { data: duplicates = [], isLoading: dupLoading, isFetching: dupFetching, refetch: refetchDup } = useDuplicateLibraryItems();
+  const { data: drift = [], isLoading: drLoading, isFetching: drFetching, refetch: refetchDr } = usePriceDrift();
   const bulkMerge = useBulkMergeDuplicates();
   const resyncRate = useForceResyncRate();
   const [resyncTarget, setResyncTarget] = useState<{ id: string; name: string; price: number } | null>(null);
   const [newPrice, setNewPrice] = useState<string>("");
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+
+  const handleHardRefresh = async () => {
+    // Force invalidation + remove cached data + refetch from server
+    await qc.invalidateQueries({ queryKey: ["price-sync-duplicates"] });
+    await qc.invalidateQueries({ queryKey: ["price-sync-drift"] });
+    qc.removeQueries({ queryKey: ["price-sync-duplicates"] });
+    qc.removeQueries({ queryKey: ["price-sync-drift"] });
+    const [a, b] = await Promise.all([refetchDup(), refetchDr()]);
+    setLastChecked(new Date());
+    toast.success(`✅ تم التحديث — ${a.data?.length || 0} مكرر، ${b.data?.length || 0} غير متزامن`);
+  };
 
   const handleBulkMerge = async () => {
     if (!confirm(`سيتم دمج ${duplicates.length} مجموعة بنود مكررة. هل أنت متأكد؟`)) return;
