@@ -326,11 +326,15 @@ function buildRowIndexMap(
   const result = new Map<number, ApprovalItem>();
   if (rows.length === 0) return result;
 
+  // ✅ FIX (WO-2026-04-18-INJECT): inject ANY priced item regardless of status.
+  // Previously stale_price / pending items with valid unit_rate were excluded → 42% gap.
+  // Only "descriptive" rows (no quantity) are skipped.
   const pricedItems = items.filter(i =>
     i.unit_rate != null &&
     i.unit_rate > 0 &&
     typeof (i as any).quantity === "number" &&
-    (i as any).quantity > 0,
+    (i as any).quantity > 0 &&
+    i.status !== "descriptive",
   );
 
   // Build quick lookups on Excel rows
@@ -630,29 +634,42 @@ export async function exportApproval(
 
   // 6. Build injections
   const injections: Array<{ rowNum: number; cellRef: string; value: number | null }> = [];
+  let injectedSum = 0;
   for (const [rowNum, item] of rowItemMap) {
-    // Skip pending/unpriced — clear cells
-    const isPending = item.status === "pending" ||
-      (!item.unit_rate && !item.total_price);
-
-    const unitVal = isPending ? null : item.unit_rate;
-    const totalVal = isPending ? null : item.total_price;
+    // ✅ FIX (WO-2026-04-18-INJECT): inject any item with valid unit_rate,
+    // regardless of status. Only clear cells when truly unpriced.
+    const hasPrice = item.unit_rate != null && item.unit_rate > 0;
+    const unitVal = hasPrice ? item.unit_rate : null;
+    const totalVal = hasPrice
+      ? (item.total_price != null && item.total_price > 0
+          ? item.total_price
+          : (typeof (item as any).quantity === "number"
+              ? item.unit_rate! * ((item as any).quantity as number)
+              : null))
+      : null;
 
     if (headerMap.unitRateCol !== null) {
       const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
       injections.push({ rowNum, cellRef: ref, value: unitVal });
     }
-    // Inject total explicitly: original cell may be a hardcoded value
-    // (no formula) — relying on Excel recalc would leave stale numbers.
     if (headerMap.totalCol !== null) {
       const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
-      const computedTotal = totalVal != null
-        ? totalVal
-        : (unitVal != null && typeof (item as any).quantity === "number"
-            ? unitVal * ((item as any).quantity as number)
-            : null);
-      injections.push({ rowNum, cellRef: ref, value: computedTotal });
+      injections.push({ rowNum, cellRef: ref, value: totalVal });
     }
+    if (totalVal != null) injectedSum += totalVal;
+  }
+
+  // ✅ FIX (WO-2026-04-18-INJECT): validate exported total vs system total.
+  const systemTotal = items.reduce((s, i) => {
+    const q = typeof (i as any).quantity === "number" ? (i as any).quantity : 0;
+    if (q > 0 && i.unit_rate != null && i.unit_rate > 0) {
+      return s + (i.total_price != null && i.total_price > 0 ? i.total_price : i.unit_rate * q);
+    }
+    return s;
+  }, 0);
+  const variance = systemTotal > 0 ? Math.abs(systemTotal - injectedSum) / systemTotal : 0;
+  if (variance > 0.005) {
+    console.error("[approvalExporter] TOTAL MISMATCH", { systemTotal, injectedSum, variance });
   }
 
   // 7. Inject into sheet XML
@@ -694,18 +711,29 @@ export async function exportApproval(
     layer1_row_index: layer1,
     layer2_item_no: layer2,
     unmatched: unmatchedCount,
+    systemTotal,
+    injectedSum,
+    variancePct: (variance * 100).toFixed(2) + "%",
   });
 
-  if (unmatchedCount > 0) {
+  const fmt = (n: number) => n.toLocaleString("ar-SA", { maximumFractionDigits: 0 });
+
+  if (variance > 0.005) {
+    toast({
+      title: "⚠️ انحراف في الإجمالي",
+      description: `النظام: ${fmt(systemTotal)} ر.س | الملف: ${fmt(injectedSum)} ر.س | فرق ${(variance * 100).toFixed(1)}% | غير مربوط: ${unmatchedCount}`,
+      variant: "destructive",
+    });
+  } else if (unmatchedCount > 0) {
     toast({
       title: "تحذير: بنود غير مربوطة",
-      description: `تم حقن ${rowItemMap.size} بند | ⚠️ ${unmatchedCount} بند مسعّر لم يُربط — راجع Console`,
+      description: `حُقن ${rowItemMap.size} بند | ${unmatchedCount} غير مربوط | الإجمالي ${fmt(injectedSum)} ر.س`,
       variant: "destructive",
     });
   } else {
     toast({
       title: "تم تصدير ملف الاعتماد بنجاح",
-      description: `✅ تم حقن ${rowItemMap.size} بند (${layer1} عبر row_index، ${layer2} عبر item_no)`,
+      description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س (مطابق للنظام)`,
     });
   }
 }
