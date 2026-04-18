@@ -38,6 +38,8 @@ export function useDuplicateLibraryItems() {
       return (data || []) as DuplicateGroup[];
     },
     refetchOnWindowFocus: true,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 
@@ -50,6 +52,8 @@ export function usePriceDrift() {
       return (data || []) as DriftItem[];
     },
     refetchOnWindowFocus: true,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 

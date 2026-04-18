@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import AppLayout from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,12 +12,25 @@ import { toast } from "sonner";
 
 export default function PriceSyncAuditPage() {
   const { user } = useAuth();
-  const { data: duplicates = [], isLoading: dupLoading, refetch: refetchDup } = useDuplicateLibraryItems();
-  const { data: drift = [], isLoading: drLoading, refetch: refetchDr } = usePriceDrift();
+  const qc = useQueryClient();
+  const { data: duplicates = [], isLoading: dupLoading, isFetching: dupFetching, refetch: refetchDup } = useDuplicateLibraryItems();
+  const { data: drift = [], isLoading: drLoading, isFetching: drFetching, refetch: refetchDr } = usePriceDrift();
   const bulkMerge = useBulkMergeDuplicates();
   const resyncRate = useForceResyncRate();
   const [resyncTarget, setResyncTarget] = useState<{ id: string; name: string; price: number } | null>(null);
   const [newPrice, setNewPrice] = useState<string>("");
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+
+  const handleHardRefresh = async () => {
+    // Force invalidation + remove cached data + refetch from server
+    await qc.invalidateQueries({ queryKey: ["price-sync-duplicates"] });
+    await qc.invalidateQueries({ queryKey: ["price-sync-drift"] });
+    qc.removeQueries({ queryKey: ["price-sync-duplicates"] });
+    qc.removeQueries({ queryKey: ["price-sync-drift"] });
+    const [a, b] = await Promise.all([refetchDup(), refetchDr()]);
+    setLastChecked(new Date());
+    toast.success(`✅ تم التحديث — ${a.data?.length || 0} مكرر، ${b.data?.length || 0} غير متزامن`);
+  };
 
   const handleBulkMerge = async () => {
     if (!confirm(`سيتم دمج ${duplicates.length} مجموعة بنود مكررة. هل أنت متأكد؟`)) return;
@@ -55,9 +69,21 @@ export default function PriceSyncAuditPage() {
               تحديد البنود المكررة والأسعار غير المتزامنة بين المكتبة وجداول الكميات، مع أداة إصلاح قسرية.
             </p>
           </div>
-          <Button onClick={() => { refetchDup(); refetchDr(); }} variant="outline">
-            <RefreshCw className="h-4 w-4 ml-2" /> تحديث الفحص
-          </Button>
+          <div className="flex items-center gap-3">
+            {lastChecked && (
+              <span className="text-xs text-muted-foreground">
+                آخر فحص: {lastChecked.toLocaleTimeString("ar-SA")}
+              </span>
+            )}
+            <Button onClick={handleHardRefresh} variant="outline" disabled={dupFetching || drFetching}>
+              {(dupFetching || drFetching) ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 ml-2" />
+              )}
+              تحديث الفحص الآن
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
