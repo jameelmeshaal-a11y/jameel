@@ -40,6 +40,34 @@ export function usePriceLibrary(search: string = "", category: string = "all") {
   });
 }
 
+// Fetch library statistics: total, recently added (24h), this week (7d)
+export function usePriceLibraryStats() {
+  return useQuery({
+    queryKey: ["price-library-stats"],
+    queryFn: async () => {
+      const now = Date.now();
+      const day = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+      const week = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      const [totalRes, dayRes, weekRes, pendingRes] = await Promise.all([
+        supabase.from("rate_library").select("id", { count: "exact", head: true }),
+        supabase.from("rate_library").select("id", { count: "exact", head: true }).gte("created_at", day),
+        supabase.from("rate_library").select("id", { count: "exact", head: true }).gte("created_at", week),
+        supabase.from("rate_library").select("id", { count: "exact", head: true }).is("approved_at", null),
+      ]);
+
+      return {
+        total: totalRes.count || 0,
+        last24h: dayRes.count || 0,
+        last7d: weekRes.count || 0,
+        pending: pendingRes.count || 0,
+      };
+    },
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+  });
+}
+
 // Fetch distinct categories
 export function usePriceLibraryCategories() {
   return useQuery({
