@@ -41,6 +41,7 @@ export default function RateLibraryPage() {
   const deleteItem = useDeletePriceItem();
   const addItem = useAddPriceItem();
   const bulkApprove = useBulkApprovePending();
+  const { data: stats } = usePriceLibraryStats();
 
   // Apply client-side filters: item_code prefix and unit
   const filteredItems = items.filter((it: any) => {
