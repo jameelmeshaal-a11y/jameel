@@ -69,9 +69,21 @@ export default function PriceSyncAuditPage() {
               تحديد البنود المكررة والأسعار غير المتزامنة بين المكتبة وجداول الكميات، مع أداة إصلاح قسرية.
             </p>
           </div>
-          <Button onClick={() => { refetchDup(); refetchDr(); }} variant="outline">
-            <RefreshCw className="h-4 w-4 ml-2" /> تحديث الفحص
-          </Button>
+          <div className="flex items-center gap-3">
+            {lastChecked && (
+              <span className="text-xs text-muted-foreground">
+                آخر فحص: {lastChecked.toLocaleTimeString("ar-SA")}
+              </span>
+            )}
+            <Button onClick={handleHardRefresh} variant="outline" disabled={dupFetching || drFetching}>
+              {(dupFetching || drFetching) ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 ml-2" />
+              )}
+              تحديث الفحص الآن
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
