@@ -326,11 +326,15 @@ function buildRowIndexMap(
   const result = new Map<number, ApprovalItem>();
   if (rows.length === 0) return result;
 
+  // ✅ FIX (WO-2026-04-18-INJECT): inject ANY priced item regardless of status.
+  // Previously stale_price / pending items with valid unit_rate were excluded → 42% gap.
+  // Only "descriptive" rows (no quantity) are skipped.
   const pricedItems = items.filter(i =>
     i.unit_rate != null &&
     i.unit_rate > 0 &&
     typeof (i as any).quantity === "number" &&
-    (i as any).quantity > 0,
+    (i as any).quantity > 0 &&
+    i.status !== "descriptive",
   );
 
   // Build quick lookups on Excel rows
