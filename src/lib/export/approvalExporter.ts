@@ -1,22 +1,20 @@
 /**
- * Approval Exporter — JSZip-only XML manipulation.
- *
- * NO ExcelJS. NO secondary sheets. NO formatting changes.
- * The original uploaded Excel file is preserved byte-for-byte EXCEPT:
- *   - Unit rate cells get the project's unit_rate
- *   - Total cells get the project's total_price
- *   - calcChain.xml is removed (Excel rebuilds it on open)
+ * Approval Exporter — ExcelJS-based.
  *
  * Pipeline:
- *   1. Download original .xlsx from storage
- *   2. parseSharedStrings → flatten rich-text safe
- *   3. detectHeaderMap → cursor parser, fallback to minimalRowScan
- *   4. buildRowIndexMap → item_no exact > row_index > description similarity
- *   5. injectCellValue → preserve cell schema, swap t="s"→t="n", insert if missing
- *   6. Strip calcChain, regenerate zip, download
+ *   1. Download original .xlsx from Supabase Storage
+ *   2. Load with ExcelJS (preserves formatting, merged cells, styles)
+ *   3. Pick the worksheet with the strongest item_no coverage
+ *   4. Detect header columns (Arabic-aware) — fallback to fixed COL (C/G/I, row 8)
+ *   5. Build item_no → row map with normalization (NBSP, Arabic digits, spaces)
+ *   6. Inject unit_rate + total_price; remove other sheets
+ *   7. Validate exported total ≈ system total (±0.5%)
+ *   8. Download to user
+ *
+ * Same signature as before — no caller changes needed.
  */
 
-import JSZip from "jszip";
+import ExcelJS from "exceljs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 
@@ -31,264 +29,21 @@ interface ApprovalItem {
   override_type?: string | null;
 }
 
-// ─── Excel Column Reference Helpers ─────────────────────────────────────────
+// ─── Fixed-column fallback (Etemad standard layout) ────────────────────────
+// Used ONLY when auto-detection fails entirely.
+const COL_FALLBACK = {
+  ITEM_NO: 3,      // C
+  DESC: 4,         // D
+  QTY: 6,          // F
+  UNIT_PRICE: 7,   // G
+  TOTAL: 9,        // I
+  HEADER_ROW: 7,   // data starts at row 8
+};
 
-/** Convert column letters (A, B, ..., AA, AB) to 1-based index. */
-function colToIndex(col: string): number {
-  let n = 0;
-  for (const ch of col) n = n * 26 + (ch.charCodeAt(0) - 64);
-  return n;
-}
+// ─── Normalization helpers ─────────────────────────────────────────────────
 
-/** Convert 1-based index to column letters. */
-function indexToCol(n: number): string {
-  let s = "";
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    s = String.fromCharCode(65 + r) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
-}
-
-/** Parse a cell ref like "B12" → {col: 2, row: 12, colLetter: "B"} */
-function parseRef(ref: string): { col: number; row: number; colLetter: string } | null {
-  const m = ref.match(/^([A-Z]+)(\d+)$/);
-  if (!m) return null;
-  return { colLetter: m[1], col: colToIndex(m[1]), row: parseInt(m[2], 10) };
-}
-
-// ─── XML utility — escape text content ──────────────────────────────────────
-
-function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-// ─── 1. Parse sharedStrings — rich-text safe ────────────────────────────────
-
-/**
- * Returns array of flattened strings indexed by sst position.
- * Handles rich text (<r><rPr/><t>...</t></r>), multiple <t> segments,
- * and preserveSpace attributes.
- */
-function parseSharedStrings(xml: string): string[] {
-  const result: string[] = [];
-  // Match each <si>...</si> block. Use [\s\S] for newlines.
-  const siRegex = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
-  let m: RegExpExecArray | null;
-  while ((m = siRegex.exec(xml)) !== null) {
-    const inner = m[1];
-    // Extract every <t ...>...</t> within this <si> in document order
-    const tRegex = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
-    let parts = "";
-    let tm: RegExpExecArray | null;
-    while ((tm = tRegex.exec(inner)) !== null) {
-      parts += tm[1];
-    }
-    // Decode XML entities
-    const decoded = parts
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'")
-      .replace(/&amp;/g, "&");
-    result.push(decoded);
-  }
-  return result;
-}
-
-// ─── 2. Cursor-based row + cell parser ──────────────────────────────────────
-
-interface ParsedCell {
-  ref: string;       // e.g. "B5"
-  type: string;      // "s", "n", "str", "inlineStr", or ""
-  value: string;     // raw inner value (sst index for "s")
-  resolved: string;  // resolved string for header detection
-}
-
-interface ParsedRow {
-  rowNum: number;
-  cells: ParsedCell[];
-}
-
-/**
- * Parse rows + cells from sheet XML. Resolves shared strings.
- * Cursor-based: iterates <row>...</row>, then <c>...</c> inside each row.
- */
-function parseSheetRows(sheetXml: string, sst: string[]): ParsedRow[] {
-  const rows: ParsedRow[] = [];
-  const rowRegex = /<row\b[^>]*\sr="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
-  let rm: RegExpExecArray | null;
-  while ((rm = rowRegex.exec(sheetXml)) !== null) {
-    const rowNum = parseInt(rm[1], 10);
-    const rowInner = rm[2];
-    const cells: ParsedCell[] = [];
-
-    // Match each <c .../> or <c ...>...</c>
-    // Self-closing first to avoid greedy mismatch
-    const cellRegex = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
-    let cm: RegExpExecArray | null;
-    while ((cm = cellRegex.exec(rowInner)) !== null) {
-      const attrs = cm[1] || "";
-      const inner = cm[2] || "";
-
-      const refMatch = attrs.match(/\sr="([^"]+)"/);
-      if (!refMatch) continue;
-      const ref = refMatch[1];
-
-      const typeMatch = attrs.match(/\st="([^"]+)"/);
-      const type = typeMatch ? typeMatch[1] : "";
-
-      let value = "";
-      // Extract <v>...</v>
-      const vMatch = inner.match(/<v\b[^>]*>([\s\S]*?)<\/v>/);
-      if (vMatch) value = vMatch[1];
-      // For inlineStr: <is><t>...</t></is>
-      if (!value && type === "inlineStr") {
-        const isMatch = inner.match(/<t\b[^>]*>([\s\S]*?)<\/t>/);
-        if (isMatch) value = isMatch[1];
-      }
-
-      // Resolve string for header detection
-      let resolved = "";
-      if (type === "s") {
-        const idx = parseInt(value, 10);
-        if (!isNaN(idx) && idx >= 0 && idx < sst.length) resolved = sst[idx];
-      } else if (type === "inlineStr" || type === "str") {
-        resolved = value
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&amp;/g, "&");
-      } else {
-        resolved = value;
-      }
-
-      cells.push({ ref, type, value, resolved });
-    }
-
-    rows.push({ rowNum, cells });
-  }
-  return rows;
-}
-
-// ─── 3. Header detection — cursor-based + fallback ──────────────────────────
-
-interface HeaderMap {
-  headerRow: number;
-  itemNoCol: number | null;
-  descCol: number | null;
-  qtyCol: number | null;
-  unitRateCol: number | null;
-  totalCol: number | null;
-}
-
-// Header keyword sets — TOTAL keys are checked BEFORE unit-rate keys
-// to avoid "السعر الإجمالي" being mis-detected as unit rate.
-const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code", "#", "no", "no.", "serial", "serial no"];
-const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
-const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
-// MUST contain "وحدة"/"وحده"/"unit" + price/سعر/rate. Exclude bare "السعر" (matches total too).
-const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price"];
-// Specific total phrases — checked first.
-const TOTAL_KEYS = ["السعر الإجمالي", "السعر الاجمالي", "السعر الكلي", "إجمالي السعر", "اجمالي السعر", "total amount", "total price", "المبلغ الإجمالي", "المبلغ الاجمالي"];
-
-/** Normalize Arabic text for comparison (strip diacritics, unify alef/ya/ta-marbuta). */
 function normHeader(s: string): string {
-  return s
-    .replace(/[\u064B-\u065F\u0670]/g, "")
-    .replace(/[إأآٱ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Strict match: cell text must EQUAL one of the keys (after normalization),
- * OR the cell text must START WITH the key followed by a space/end
- * (e.g. cell "وصف البند   Item Description" matches key "وصف البند").
- * No backwards substring matches — that caused "الوحدة" to match "سعر الوحدة".
- */
-function matchesAny(text: string, keys: string[]): boolean {
-  const t = normHeader(text);
-  if (!t) return false;
-  return keys.some(k => {
-    const kk = normHeader(k);
-    if (!kk) return false;
-    if (t === kk) return true;
-    // Allow key as a whole-word prefix or contained whole phrase in cell text
-    if (t.startsWith(kk + " ") || t.endsWith(" " + kk) || t.includes(" " + kk + " ")) return true;
-    return false;
-  });
-}
-
-/**
- * Primary detection: scan first 30 rows, find one with both desc + (qty OR rate) keywords.
- */
-function detectHeaderMap(rows: ParsedRow[]): HeaderMap {
-  // Try cursor-based detection
-  for (let i = 0; i < Math.min(rows.length, 30); i++) {
-    const row = rows[i];
-    let descCol: number | null = null;
-    let qtyCol: number | null = null;
-    let unitRateCol: number | null = null;
-    let totalCol: number | null = null;
-    let itemNoCol: number | null = null;
-
-    for (const cell of row.cells) {
-      const parsed = parseRef(cell.ref);
-      if (!parsed) continue;
-      const text = cell.resolved;
-      if (!text) continue;
-
-      // Check TOTAL before UNIT_RATE — total phrases are more specific
-      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) { totalCol = parsed.col; continue; }
-      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) { unitRateCol = parsed.col; continue; }
-      if (qtyCol === null && matchesAny(text, QTY_KEYS)) { qtyCol = parsed.col; continue; }
-      if (descCol === null && matchesAny(text, DESC_KEYS)) { descCol = parsed.col; continue; }
-      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) { itemNoCol = parsed.col; continue; }
-    }
-
-    // Confirmed header: needs description AND (qty or unit_rate or total)
-    if (descCol !== null && (qtyCol !== null || unitRateCol !== null || totalCol !== null)) {
-      return { headerRow: row.rowNum, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
-    }
-  }
-
-  // Fallback: minimalRowScan — find any row with description keyword
-  for (let i = 0; i < Math.min(rows.length, 50); i++) {
-    const row = rows[i];
-    for (const cell of row.cells) {
-      const parsed = parseRef(cell.ref);
-      if (!parsed) continue;
-      if (matchesAny(cell.resolved, DESC_KEYS)) {
-        return { headerRow: row.rowNum, itemNoCol: null, descCol: parsed.col, qtyCol: null, unitRateCol: null, totalCol: null };
-      }
-    }
-  }
-
-  // Absolute fallback
-  return {
-    headerRow: 1,
-    itemNoCol: null,
-    descCol: null,
-    qtyCol: null,
-    unitRateCol: null,
-    totalCol: null,
-  };
-}
-
-// ─── 4. Build row→item map ──────────────────────────────────────────────────
-
-function normalizeForCompare(s: string): string {
-  return s
+  return String(s ?? "")
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/[إأآٱ]/g, "ا")
     .replace(/ة/g, "ه")
@@ -299,7 +54,7 @@ function normalizeForCompare(s: string): string {
 }
 
 function digitsToAscii(s: string): string {
-  return s
+  return String(s ?? "")
     .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
     .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776));
 }
@@ -312,324 +67,171 @@ function normalizeItemNo(s: string | null | undefined): string {
     .toLowerCase();
 }
 
-function roundCurrency(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+function roundCurrency(v: number): number {
+  return Math.round((v + Number.EPSILON) * 100) / 100;
 }
 
-function jaccardSim(a: string, b: string): number {
-  const ta = new Set(normalizeForCompare(a).split(" ").filter(t => t.length >= 2));
-  const tb = new Set(normalizeForCompare(b).split(" ").filter(t => t.length >= 2));
-  if (ta.size === 0 || tb.size === 0) return 0;
-  const inter = [...ta].filter(t => tb.has(t)).length;
-  const union = new Set([...ta, ...tb]).size;
-  return union === 0 ? 0 : inter / union;
-}
-
-/**
- * Map each Excel data row → ApprovalItem using a strict 3-layer strategy:
- *
- *   Layer 1 — DIRECT row_index: DB stores `row_index` = the actual Excel
- *             row number from the original file. Use it directly. This
- *             resolves 95%+ of items unambiguously.
- *   Layer 2 — item_no exact match (normalized) for re-imported files
- *             where row_index drifted.
- *   Layer 3 — DIAGNOSTIC LOG ONLY. No silent guessing. Unmatched items
- *             are reported to the console and surfaced via toast.
- */
-function inferItemNoCol(
-  rows: ParsedRow[],
-  headerMap: HeaderMap,
-  items: ApprovalItem[],
-): { col: number | null; matches: number } {
-  const pricedItemNos = new Set(
-    items
-      .map(item => normalizeItemNo(item.item_no))
-      .filter(Boolean),
-  );
-  if (pricedItemNos.size === 0) {
-    return { col: headerMap.itemNoCol, matches: 0 };
+function cellText(cell: ExcelJS.Cell): string {
+  const v = cell.value;
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "object") {
+    if ("richText" in v && Array.isArray((v as any).richText)) {
+      return (v as any).richText.map((r: any) => r.text ?? "").join("");
+    }
+    if ("text" in v) return String((v as any).text ?? "");
+    if ("result" in v) return String((v as any).result ?? "");
+    if ("formula" in v) return String((v as any).formula ?? "");
   }
+  return String(v);
+}
 
-  const getCellText = (row: ParsedRow, colIdx: number | null): string => {
-    if (colIdx === null) return "";
-    const cell = row.cells.find(c => {
-      const p = parseRef(c.ref);
-      return p && p.col === colIdx;
+// ─── Header keyword sets ───────────────────────────────────────────────────
+
+const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code", "#", "no", "no.", "serial"];
+const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
+const QTY_KEYS = ["الكمية", "الكميه", "qty", "quantity", "كمية"];
+const UNIT_RATE_KEYS = ["سعر الوحدة", "سعر الوحده", "unit rate", "unit price"];
+const TOTAL_KEYS = ["السعر الإجمالي", "السعر الاجمالي", "السعر الكلي", "إجمالي السعر", "اجمالي السعر", "total amount", "total price", "المبلغ الإجمالي", "المبلغ الاجمالي"];
+
+function matchesAny(text: string, keys: string[]): boolean {
+  const t = normHeader(text);
+  if (!t) return false;
+  return keys.some(k => {
+    const kk = normHeader(k);
+    if (!kk) return false;
+    if (t === kk) return true;
+    if (t.startsWith(kk + " ") || t.endsWith(" " + kk) || t.includes(" " + kk + " ")) return true;
+    return false;
+  });
+}
+
+interface HeaderMap {
+  headerRow: number;
+  itemNoCol: number | null;
+  descCol: number | null;
+  qtyCol: number | null;
+  unitRateCol: number | null;
+  totalCol: number | null;
+}
+
+function detectHeaderMap(ws: ExcelJS.Worksheet): HeaderMap {
+  const maxScan = Math.min(ws.actualRowCount || ws.rowCount || 30, 30);
+  for (let r = 1; r <= maxScan; r++) {
+    const row = ws.getRow(r);
+    let descCol: number | null = null;
+    let qtyCol: number | null = null;
+    let unitRateCol: number | null = null;
+    let totalCol: number | null = null;
+    let itemNoCol: number | null = null;
+
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      const text = cellText(cell);
+      if (!text) return;
+      // TOTAL before UNIT_RATE (more specific)
+      if (totalCol === null && matchesAny(text, TOTAL_KEYS)) { totalCol = colNumber; return; }
+      if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) { unitRateCol = colNumber; return; }
+      if (qtyCol === null && matchesAny(text, QTY_KEYS)) { qtyCol = colNumber; return; }
+      if (descCol === null && matchesAny(text, DESC_KEYS)) { descCol = colNumber; return; }
+      if (itemNoCol === null && matchesAny(text, ITEM_NO_KEYS)) { itemNoCol = colNumber; return; }
     });
-    return cell?.resolved ?? "";
-  };
 
-  const rowHasPositiveQty = (row: ParsedRow): boolean => {
-    if (headerMap.qtyCol === null) return true; // can't validate; trust it
-    const qtyText = getCellText(row, headerMap.qtyCol);
-    const qtyNum = parseFloat(qtyText.replace(/,/g, "").trim());
-    return isFinite(qtyNum) && qtyNum > 0;
-  };
-
-  const candidateScores = new Map<number, number>();
-  for (const row of rows) {
-    if (row.rowNum <= headerMap.headerRow || !rowHasPositiveQty(row)) continue;
-    for (const cell of row.cells) {
-      const parsed = parseRef(cell.ref);
-      if (!parsed) continue;
-      if (headerMap.descCol !== null && parsed.col >= headerMap.descCol) continue;
-      const key = normalizeItemNo(cell.resolved);
-      if (!key || !pricedItemNos.has(key)) continue;
-      candidateScores.set(parsed.col, (candidateScores.get(parsed.col) ?? 0) + 1);
+    if (descCol !== null && (qtyCol !== null || unitRateCol !== null || totalCol !== null)) {
+      return { headerRow: r, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
     }
   }
+  return { headerRow: 0, itemNoCol: null, descCol: null, qtyCol: null, unitRateCol: null, totalCol: null };
+}
 
-  let bestCol = headerMap.itemNoCol;
-  let bestMatches = bestCol ? candidateScores.get(bestCol) ?? 0 : 0;
-  for (const [col, matches] of candidateScores) {
-    if (matches > bestMatches) {
-      bestCol = col;
-      bestMatches = matches;
+/** Apply COL fallback when auto-detect produces nothing usable. */
+function applyFallback(hm: HeaderMap): HeaderMap {
+  if (hm.descCol !== null && (hm.unitRateCol !== null || hm.totalCol !== null)) return hm;
+  return {
+    headerRow: COL_FALLBACK.HEADER_ROW,
+    itemNoCol: hm.itemNoCol ?? COL_FALLBACK.ITEM_NO,
+    descCol: hm.descCol ?? COL_FALLBACK.DESC,
+    qtyCol: hm.qtyCol ?? COL_FALLBACK.QTY,
+    unitRateCol: hm.unitRateCol ?? COL_FALLBACK.UNIT_PRICE,
+    totalCol: hm.totalCol ?? COL_FALLBACK.TOTAL,
+  };
+}
+
+// ─── Item-no column inference (in case header detect picked wrong column) ──
+
+function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalItem[]): { col: number | null; matches: number } {
+  const pricedItemNos = new Set(items.map(i => normalizeItemNo(i.item_no)).filter(Boolean));
+  if (pricedItemNos.size === 0) return { col: hm.itemNoCol, matches: 0 };
+
+  const scores = new Map<number, number>();
+  const lastRow = ws.actualRowCount || ws.rowCount || 0;
+  for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    // Quantity gate
+    if (hm.qtyCol !== null) {
+      const qtyText = cellText(row.getCell(hm.qtyCol));
+      const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
+      if (!isFinite(qtyNum) || qtyNum <= 0) continue;
     }
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      if (hm.descCol !== null && colNumber >= hm.descCol) return;
+      const key = normalizeItemNo(cellText(cell));
+      if (!key || !pricedItemNos.has(key)) return;
+      scores.set(colNumber, (scores.get(colNumber) ?? 0) + 1);
+    });
   }
 
+  let bestCol = hm.itemNoCol;
+  let bestMatches = bestCol ? scores.get(bestCol) ?? 0 : 0;
+  for (const [col, m] of scores) {
+    if (m > bestMatches) { bestCol = col; bestMatches = m; }
+  }
   return { col: bestCol, matches: bestMatches };
 }
 
-function buildRowIndexMap(
-  rows: ParsedRow[],
-  headerMap: HeaderMap,
-  items: ApprovalItem[],
-): Map<number, ApprovalItem> {
-  const result = new Map<number, ApprovalItem>();
-  if (rows.length === 0) return result;
+// ─── Row → Item map ────────────────────────────────────────────────────────
 
-  const pricedItems = items.filter(i =>
-    i.unit_rate != null &&
-    i.unit_rate > 0 &&
-    typeof (i as any).quantity === "number" &&
-    (i as any).quantity > 0 &&
-    i.status !== "descriptive",
-  );
+function buildRowItemMap(
+  ws: ExcelJS.Worksheet,
+  hm: HeaderMap,
+  pricedItems: ApprovalItem[],
+): { map: Map<number, ApprovalItem>; unmatched: ApprovalItem[]; itemNoCol: number | null } {
+  const map = new Map<number, ApprovalItem>();
+  const unmatched: ApprovalItem[] = [];
+  const detection = inferItemNoCol(ws, hm, pricedItems);
+  const itemNoCol = detection.col;
 
-  const getCellText = (row: ParsedRow, colIdx: number | null): string => {
-    if (colIdx === null) return "";
-    const cell = row.cells.find(c => {
-      const p = parseRef(c.ref);
-      return p && p.col === colIdx;
-    });
-    return cell?.resolved ?? "";
-  };
-
-  const rowHasPositiveQty = (row: ParsedRow): boolean => {
-    if (headerMap.qtyCol === null) return true;
-    const qtyText = getCellText(row, headerMap.qtyCol);
-    const qtyNum = parseFloat(qtyText.replace(/,/g, "").trim());
-    return isFinite(qtyNum) && qtyNum > 0;
-  };
-
-  const itemNoDetection = inferItemNoCol(rows, headerMap, pricedItems);
-  const itemNoCol = itemNoDetection.col;
-  const rowQueuesByItemNo = new Map<string, number[]>();
-  let duplicateExcelItemNos = 0;
-
+  const queues = new Map<string, number[]>();
   if (itemNoCol !== null) {
-    for (const row of rows) {
-      if (row.rowNum <= headerMap.headerRow || !rowHasPositiveQty(row)) continue;
-      const key = normalizeItemNo(getCellText(row, itemNoCol));
+    const lastRow = ws.actualRowCount || ws.rowCount || 0;
+    for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
+      const row = ws.getRow(r);
+      if (hm.qtyCol !== null) {
+        const qtyText = cellText(row.getCell(hm.qtyCol));
+        const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
+        if (!isFinite(qtyNum) || qtyNum <= 0) continue;
+      }
+      const key = normalizeItemNo(cellText(row.getCell(itemNoCol)));
       if (!key) continue;
-      const queue = rowQueuesByItemNo.get(key) ?? [];
-      if (queue.length > 0) duplicateExcelItemNos++;
-      queue.push(row.rowNum);
-      rowQueuesByItemNo.set(key, queue);
+      const q = queues.get(key) ?? [];
+      q.push(r);
+      queues.set(key, q);
     }
   }
-
-  const unmatched: ApprovalItem[] = [];
 
   for (const item of pricedItems) {
     const key = normalizeItemNo(item.item_no);
-    if (!key) {
-      unmatched.push(item);
-      continue;
-    }
-    const queue = rowQueuesByItemNo.get(key);
-    const matchedRow = queue?.shift();
-    if (matchedRow) {
-      result.set(matchedRow, item);
-      continue;
-    }
-    unmatched.push(item);
+    if (!key) { unmatched.push(item); continue; }
+    const q = queues.get(key);
+    const matchedRow = q?.shift();
+    if (matchedRow) map.set(matchedRow, item);
+    else unmatched.push(item);
   }
 
-  console.log(
-    `[approvalExporter] strategy=item_no_exact_only, item_no_col=${itemNoCol ?? "none"}, detected_matches=${itemNoDetection.matches}, matched=${result.size}, unmatched=${unmatched.length}`,
-  );
-  if (unmatched.length > 0) {
-    console.warn(
-      `[approvalExporter] Unmatched priced items:`,
-      unmatched.slice(0, 30).map(i => ({
-        row_index: i.row_index,
-        item_no: i.item_no,
-        quantity: (i as any).quantity,
-        unit_rate: i.unit_rate,
-        description: i.description?.slice(0, 80),
-      })),
-    );
-  }
-
-  // Expose unmatched count for caller toast
-  (result as any).__unmatchedCount = unmatched.length;
-  (result as any).__layer1 = 0;
-  (result as any).__layer2 = result.size;
-  (result as any).__itemNoCol = itemNoCol;
-  (result as any).__itemNoMatches = itemNoDetection.matches;
-  (result as any).__duplicateExcelItemNos = duplicateExcelItemNos;
-  (result as any).__missingItemNos = unmatched.slice(0, 30).map(i => i.item_no).filter(Boolean);
-
-  return result;
+  return { map, unmatched, itemNoCol };
 }
 
-// ─── 5. Inject cell value into XML (preserves cell schema) ──────────────────
-
-/**
- * Replace or insert a cell's value in the row XML.
- * - If cell exists: preserve r, s attributes, drop t (will set t="n"),
- *   remove <f>, replace/insert <v>
- * - If cell missing: insert new <c r="REF" s="0" t="n"><v>VALUE</v></c>
- *   in correct column order
- *
- * For null value: clear cell value (insert empty cell or remove <v>).
- */
-function injectIntoRowXml(
-  rowXml: string,
-  rowAttrs: string,
-  cellRef: string,
-  value: number | null,
-): string {
-  const refParsed = parseRef(cellRef);
-  if (!refParsed) return rowXml;
-  const targetCol = refParsed.col;
-
-  // Find existing cell
-  const cellPattern = new RegExp(
-    `<c\\b([^>]*?\\sr="${cellRef}"[^>]*?)(?:\\/>|>([\\s\\S]*?)<\\/c>)`,
-  );
-  const existing = rowXml.match(cellPattern);
-
-  if (existing) {
-    let attrs = existing[1];
-    // Strip t="..." attribute (we'll set our own)
-    attrs = attrs.replace(/\st="[^"]*"/g, "");
-    // Strip cm, vm, ph attributes that may reference invalid metadata
-    attrs = attrs.replace(/\scm="[^"]*"/g, "");
-    attrs = attrs.replace(/\svm="[^"]*"/g, "");
-    attrs = attrs.replace(/\sph="[^"]*"/g, "");
-
-    if (value === null || value === undefined || isNaN(value)) {
-      // Empty cell — preserve style, no value, no formula
-      const newCell = `<c${attrs}/>`;
-      return rowXml.replace(cellPattern, newCell);
-    }
-
-    // Inject as a number cell. NOTE: omit t="n" — the OOXML default cell type
-    // is numeric, and matching the original Lovable-exported file (which uses
-    // bare <c r="..." s="..."><v>123</v></c>) maximises Excel compatibility.
-    const newCell = `<c${attrs}><v>${value}</v></c>`;
-    return rowXml.replace(cellPattern, newCell);
-  }
-
-  // Cell doesn't exist — insert in correct column order
-  if (value === null || value === undefined || isNaN(value)) return rowXml;
-  const newCell = `<c r="${cellRef}"><v>${value}</v></c>`;
-
-  // Find insertion point: find first existing cell with col > targetCol
-  const allCellsRegex = /<c\b[^>]*\sr="([A-Z]+\d+)"/g;
-  let insertBefore = -1;
-  let m: RegExpExecArray | null;
-  while ((m = allCellsRegex.exec(rowXml)) !== null) {
-    const p = parseRef(m[1]);
-    if (p && p.col > targetCol) {
-      insertBefore = m.index;
-      break;
-    }
-  }
-
-  if (insertBefore === -1) {
-    // Append before </row> closing — but this function gets row INNER, so just append
-    return rowXml + newCell;
-  }
-  return rowXml.slice(0, insertBefore) + newCell + rowXml.slice(insertBefore);
-}
-
-/**
- * Apply injections to entire sheet XML.
- */
-function injectCellsIntoSheet(
-  sheetXml: string,
-  injections: Array<{ rowNum: number; cellRef: string; value: number | null }>,
-): string {
-  // Group by row
-  const byRow = new Map<number, Array<{ cellRef: string; value: number | null }>>();
-  for (const inj of injections) {
-    if (!byRow.has(inj.rowNum)) byRow.set(inj.rowNum, []);
-    byRow.get(inj.rowNum)!.push({ cellRef: inj.cellRef, value: inj.value });
-  }
-
-  let result = sheetXml;
-
-  for (const [rowNum, cellInjs] of byRow) {
-    // Find row block
-    const rowPattern = new RegExp(
-      `(<row\\b[^>]*\\sr="${rowNum}"[^>]*>)([\\s\\S]*?)(<\\/row>)`,
-    );
-    const match = result.match(rowPattern);
-    if (!match) continue;
-
-    const rowOpen = match[1];
-    let rowInner = match[2];
-    const rowClose = match[3];
-
-    for (const inj of cellInjs) {
-      rowInner = injectIntoRowXml(rowInner, rowOpen, inj.cellRef, inj.value);
-    }
-
-    result = result.replace(rowPattern, rowOpen + rowInner + rowClose);
-  }
-
-  return result;
-}
-
-// ─── 6. Sanitize calcChain & shared formulas (prevents Excel errors) ────────
-
-async function sanitizeWorkbook(zip: JSZip): Promise<void> {
-  // Strip shared formulas from all sheets (prevents calc errors)
-  const sheetFiles = Object.keys(zip.files).filter(
-    f => f.startsWith("xl/worksheets/sheet") && f.endsWith(".xml"),
-  );
-  for (const sf of sheetFiles) {
-    let xml = await zip.file(sf)!.async("string");
-    // Strip shared formulas ONLY from <f> tags inside <c> cells.
-    // Pattern: <f t="shared" ref="A1:B2" si="0">...</f>  or  <f t="shared" si="0"/>
-    // We match the <f ...> open tag with t="shared" and remove the whole <f .../> block,
-    // including the optional formula body. This avoids affecting <mergeCell ref="..."/>.
-    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*\/>/g, "");
-    xml = xml.replace(/<f\b[^>]*\st="shared"[^>]*>[\s\S]*?<\/f>/g, "");
-    zip.file(sf, xml);
-  }
-
-  // Remove calcChain — Excel will rebuild on open
-  zip.remove("xl/calcChain.xml");
-  const wbRels = zip.file("xl/_rels/workbook.xml.rels");
-  if (wbRels) {
-    let xml = await wbRels.async("string");
-    xml = xml.replace(/<Relationship[^/]*Target="calcChain\.xml"[^/]*\/>/g, "");
-    zip.file("xl/_rels/workbook.xml.rels", xml);
-  }
-  const ct = zip.file("[Content_Types].xml");
-  if (ct) {
-    let xml = await ct.async("string");
-    xml = xml.replace(/<Override[^/]*PartName="\/xl\/calcChain\.xml"[^/]*\/>/g, "");
-    zip.file("[Content_Types].xml", xml);
-  }
-}
-
-// ─── Main export entry ──────────────────────────────────────────────────────
+// ─── Main export ───────────────────────────────────────────────────────────
 
 export async function exportApproval(
   boqFileId: string,
@@ -637,160 +239,134 @@ export async function exportApproval(
   originalFilePath: string,
   originalFileName: string,
 ): Promise<void> {
-  // 1. Download original
+  // 1. Download
   const { data: fileData, error: dlErr } = await supabase.storage
     .from("boq-files")
     .download(originalFilePath);
   if (dlErr || !fileData) throw new Error("تعذر تحميل الملف الأصلي من التخزين");
 
   const buffer = await fileData.arrayBuffer();
-  const zip = await JSZip.loadAsync(buffer);
 
-  // 2. Read worksheets and choose the best matching original BoQ sheet
-  const wbXml = await zip.file("xl/workbook.xml")?.async("string");
-  let primarySheetPath = "xl/worksheets/sheet1.xml";
-  const sheetPaths: string[] = [];
-  if (wbXml) {
-    const wbRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("string");
-    const sheetRegex = /<sheet\b[^>]*\sr:id="([^"]+)"[^>]*\/?/g;
-    let sm: RegExpExecArray | null;
-    while ((sm = sheetRegex.exec(wbXml)) !== null) {
-      const rid = sm[1];
-      const relMatch = wbRelsXml?.match(
-        new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*Target="([^"]+)"`),
-      );
-      if (relMatch) {
-        const target = relMatch[1];
-        sheetPaths.push(
-          target.startsWith("/")
-            ? target.slice(1)
-            : `xl/${target.replace(/^\.?\//, "")}`,
-        );
-      }
+  // 2. Load with ExcelJS
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+
+  // 3. Filter priced items
+  const pricedItems = items.filter(i =>
+    i.unit_rate != null &&
+    i.unit_rate > 0 &&
+    typeof i.quantity === "number" &&
+    i.quantity > 0 &&
+    i.status !== "descriptive",
+  );
+
+  // 4. Pick best worksheet (highest item_no coverage + has price columns)
+  let bestWs: ExcelJS.Worksheet | null = null;
+  let bestHm: HeaderMap | null = null;
+  let bestScore = -1;
+
+  wb.eachSheet(ws => {
+    const hmRaw = detectHeaderMap(ws);
+    const hm = applyFallback(hmRaw);
+    const det = inferItemNoCol(ws, hm, pricedItems);
+    const hasPrice = hm.unitRateCol !== null || hm.totalCol !== null;
+    const score = (hasPrice ? 100000 : 0) + det.matches;
+    if (score > bestScore) {
+      bestScore = score;
+      bestWs = ws;
+      bestHm = hm;
     }
-  }
-  if (sheetPaths.length === 0) sheetPaths.push(primarySheetPath);
+  });
 
-  // 3. Parse sharedStrings (rich-text safe)
-  const sstFile = zip.file("xl/sharedStrings.xml");
-  const sstXml = sstFile ? await sstFile.async("string") : "";
-  const sst = sstXml ? parseSharedStrings(sstXml) : [];
-
-  // 4. Parse all worksheets, then choose the one with the strongest item_no coverage
-  let sheetXml = "";
-  let rows: ParsedRow[] = [];
-  let headerMap: HeaderMap = { headerRow: 1, itemNoCol: null, descCol: null, qtyCol: null, unitRateCol: null, totalCol: null };
-  let bestCoverage = -1;
-
-  for (const candidatePath of sheetPaths) {
-    const candidateFile = zip.file(candidatePath);
-    if (!candidateFile) continue;
-    const candidateXml = await candidateFile.async("string");
-    const candidateRows = parseSheetRows(candidateXml, sst);
-    const candidateHeaderMap = detectHeaderMap(candidateRows);
-    const candidateItemNo = inferItemNoCol(candidateRows, candidateHeaderMap, items);
-    const hasPriceCols = candidateHeaderMap.unitRateCol !== null || candidateHeaderMap.totalCol !== null;
-    const coverage = (hasPriceCols ? 100000 : 0) + candidateItemNo.matches;
-
-    if (coverage > bestCoverage) {
-      bestCoverage = coverage;
-      primarySheetPath = candidatePath;
-      sheetXml = candidateXml;
-      rows = candidateRows;
-      headerMap = candidateHeaderMap;
-    }
-  }
-
-  if (!sheetXml) throw new Error("لا توجد ورقة عمل صالحة في الملف الأصلي");
-
-  if (headerMap.unitRateCol === null && headerMap.totalCol === null) {
+  if (!bestWs || !bestHm) throw new Error("لا توجد ورقة عمل صالحة في الملف الأصلي");
+  if (bestHm.unitRateCol === null && bestHm.totalCol === null) {
     throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
   }
 
-  // 5. Map rows to items
-  const rowItemMap = buildRowIndexMap(rows, headerMap, items);
+  const ws = bestWs as ExcelJS.Worksheet;
+  const hm = bestHm as HeaderMap;
+  const detectionUsed = bestScore >= 100000 ? "auto" : "fallback";
 
-  // 6. Build injections
-  const injections: Array<{ rowNum: number; cellRef: string; value: number | null }> = [];
+  // 5. Build map
+  const { map: rowItemMap, unmatched, itemNoCol } = buildRowItemMap(ws, hm, pricedItems);
+
+  // 6. Inject + DEBUG log
   let injectedSum = 0;
-  const expectedPricedItems = items.filter(i =>
-    i.unit_rate != null &&
-    i.unit_rate > 0 &&
-    typeof (i as any).quantity === "number" &&
-    (i as any).quantity > 0 &&
-    i.status !== "descriptive",
-  );
+  const injectedItemNos: string[] = [];
   for (const [rowNum, item] of rowItemMap) {
-    // ✅ FIX (WO-2026-04-18-INJECT): inject any item with valid unit_rate,
-    // regardless of status. Only clear cells when truly unpriced.
-    const hasPrice = item.unit_rate != null && item.unit_rate > 0;
-    const unitVal = hasPrice ? item.unit_rate : null;
-    const totalVal = hasPrice
-      ? (item.total_price != null && item.total_price > 0
-          ? item.total_price
-          : (typeof (item as any).quantity === "number"
-              ? item.unit_rate! * ((item as any).quantity as number)
-              : null))
-      : null;
+    const row = ws.getRow(rowNum);
+    if (hm.unitRateCol !== null) {
+      row.getCell(hm.unitRateCol).value = item.unit_rate;
+    }
+    const qty = (item.quantity ?? 0) as number;
+    const totalVal = (item.total_price != null && item.total_price > 0)
+      ? item.total_price
+      : (item.unit_rate! * qty);
+    if (hm.totalCol !== null) {
+      row.getCell(hm.totalCol).value = totalVal;
+    }
+    row.commit();
+    injectedSum += totalVal;
+    injectedItemNos.push(String(item.item_no ?? "?"));
+  }
+  injectedSum = roundCurrency(injectedSum);
 
-    if (headerMap.unitRateCol !== null) {
-      const ref = `${indexToCol(headerMap.unitRateCol)}${rowNum}`;
-      injections.push({ rowNum, cellRef: ref, value: unitVal });
-    }
-    if (headerMap.totalCol !== null) {
-      const ref = `${indexToCol(headerMap.totalCol)}${rowNum}`;
-      injections.push({ rowNum, cellRef: ref, value: totalVal });
-    }
-    if (totalVal != null) injectedSum += roundCurrency(totalVal);
+  // DEBUG: log every injected item_no (per user request — verify 102 missing now covered)
+  console.debug("[approvalExporter] INJECTED item_no list", {
+    count: injectedItemNos.length,
+    item_nos: injectedItemNos,
+  });
+
+  // 7. Remove all other worksheets — keep only the chosen one
+  const keepName = ws.name;
+  const toRemove: string[] = [];
+  wb.eachSheet(sheet => { if (sheet.name !== keepName) toRemove.push(sheet.name); });
+  for (const n of toRemove) {
+    const s = wb.getWorksheet(n);
+    if (s) wb.removeWorksheet(s.id);
   }
 
+  // 8. Validate
   const systemTotal = roundCurrency(items.reduce((s, i) => {
-    const q = typeof (i as any).quantity === "number" ? (i as any).quantity : 0;
+    const q = typeof i.quantity === "number" ? i.quantity : 0;
     if (q > 0 && i.unit_rate != null && i.unit_rate > 0) {
       return s + (i.total_price != null && i.total_price > 0 ? i.total_price : i.unit_rate * q);
     }
     return s;
   }, 0));
-  injectedSum = roundCurrency(injectedSum);
-  const unmatchedCount = (rowItemMap as any).__unmatchedCount ?? 0;
-  const missingItemNos = (rowItemMap as any).__missingItemNos ?? [];
   const varianceAmount = roundCurrency(Math.abs(systemTotal - injectedSum));
-  const variance = systemTotal > 0 ? varianceAmount / systemTotal : 0;
-  if (unmatchedCount > 0 || varianceAmount > 0.01 || rowItemMap.size !== expectedPricedItems.length) {
-    console.error("[approvalExporter] TOTAL MISMATCH", {
-      primarySheetPath,
-      headerMap,
-      systemTotal,
-      injectedSum,
-      variance,
-      unmatchedCount,
-      expectedPricedItems: expectedPricedItems.length,
-      matchedRows: rowItemMap.size,
-      missingItemNos,
-    });
+  const variancePct = systemTotal > 0 ? (varianceAmount / systemTotal) : 0;
+
+  console.log("[approvalExporter] REPORT", {
+    detectionUsed,
+    sheet: keepName,
+    headerMap: hm,
+    itemNoCol,
+    expectedPriced: pricedItems.length,
+    injected: rowItemMap.size,
+    missing_in_excel: unmatched.map(i => i.item_no),
+    systemTotal,
+    exportedTotal: injectedSum,
+    variancePct: (variancePct * 100).toFixed(3) + "%",
+    warning: variancePct > 0.005 ? "VARIANCE > 0.5%" : null,
+  });
+
+  // Hard fail if variance too high or items unmatched
+  if (unmatched.length > 0 || variancePct > 0.005) {
     throw new Error(
-      `فشل تصدير الاعتماد: تمت مطابقة ${rowItemMap.size}/${expectedPricedItems.length} فقط — الإجمالي ${systemTotal.toLocaleString("ar-SA")} ر.س مقابل ${injectedSum.toLocaleString("ar-SA")} ر.س` +
-      (missingItemNos.length ? ` — البنود غير المربوطة: ${missingItemNos.join(", ")}` : "")
+      `فشل تصدير الاعتماد: مطابقة ${rowItemMap.size}/${pricedItems.length} — الإجمالي ${systemTotal.toLocaleString("ar-SA")} ر.س مقابل ${injectedSum.toLocaleString("ar-SA")} ر.س (انحراف ${(variancePct * 100).toFixed(2)}%)` +
+      (unmatched.length ? ` — غير مربوط: ${unmatched.slice(0, 10).map(i => i.item_no).join(", ")}` : "")
     );
   }
 
-  // 7. Inject into sheet XML
-  const newSheetXml = injectCellsIntoSheet(sheetXml, injections);
-  zip.file(primarySheetPath, newSheetXml);
-
-  // 8. Sanitize calcChain + shared formulas
-  await sanitizeWorkbook(zip);
-
   // 9. Generate + download
-  const out = await zip.generateAsync({
-    type: "blob",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    compression: "DEFLATE",
+  const outBuffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([outBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
-
   const baseName = originalFileName.replace(/\.(xlsx|xls)$/i, "");
   const downloadName = `${baseName}_مسعّر.xlsx`;
-  const url = URL.createObjectURL(out);
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = downloadName;
@@ -799,32 +375,9 @@ export async function exportApproval(
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
-  // Diagnostic log for verification
-  const layer1 = (rowItemMap as any).__layer1 ?? 0;
-  const layer2 = (rowItemMap as any).__layer2 ?? 0;
-  const itemNoCol = (rowItemMap as any).__itemNoCol ?? null;
-  const itemNoMatches = (rowItemMap as any).__itemNoMatches ?? 0;
-  console.log("[approvalExporter]", {
-    primarySheetPath,
-    headerMap,
-    totalRows: rows.length,
-    matchedRows: rowItemMap.size,
-    injections: injections.length,
-    sstSize: sst.length,
-    layer1_row_index: layer1,
-    layer2_item_no: layer2,
-    itemNoCol,
-    itemNoMatches,
-    unmatched: unmatchedCount,
-    systemTotal,
-    injectedSum,
-    variancePct: (variance * 100).toFixed(2) + "%",
-  });
-
   const fmt = (n: number) => n.toLocaleString("ar-SA", { maximumFractionDigits: 0 });
-
   toast({
     title: "تم تصدير ملف الاعتماد بنجاح",
-    description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الشيت ${primarySheetPath.split("/").pop()}`,
+    description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الورقة: ${keepName}`,
   });
 }
