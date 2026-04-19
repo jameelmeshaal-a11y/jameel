@@ -371,8 +371,8 @@ export async function exportApproval(
   const hm = bestHm as HeaderMap;
   const detectionUsed = bestScore >= 100000 ? "auto" : "fallback";
 
-  // 5. Build map
-  const { map: rowItemMap, unmatched, itemNoCol } = buildRowItemMap(ws, hm, pricedItems);
+  // 5. Build map (item_no exact → desc exact → desc contains)
+  const { map: rowItemMap, unmatched, itemNoCol, matchModes } = buildRowItemMap(ws, hm, pricedItems);
 
   // 6. Inject + DEBUG log
   let injectedSum = 0;
