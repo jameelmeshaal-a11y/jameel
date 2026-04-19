@@ -101,6 +101,50 @@ export function areCategoriesCompatible(catA: string, catB: string): boolean {
   return true;
 }
 
+// ─── Spec-aware Hard Gates (V4.2) ──────────────────────────────────────────
+
+/**
+ * Extract wall/element thickness in mm from Arabic/English text.
+ * Matches: "بسمك 200 مم", "200mm", "thickness 150mm", "سمك 100"
+ * Returns the FIRST thickness found (typically the most relevant — wall body).
+ */
+export function extractThickness(text: string): number | null {
+  if (!text) return null;
+  const t = String(text).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
+  // Patterns covering Arabic and English
+  const patterns = [
+    /(?:بسمك|سمك|سماكة|thickness|thick)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم|mil)?/i,
+    /(\d{2,4})\s*(?:مم|mm|ملم)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (isFinite(n) && n >= 20 && n <= 2000) return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * Detect fire-rating in description.
+ * Returns 0 (none), or rating in minutes (60, 90, 120, 180, 240).
+ */
+export function extractFireRating(text: string): number {
+  if (!text) return 0;
+  const t = String(text).toLowerCase().replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
+  const hasFireKeyword = /(مقاوم.*حريق|fire[\s-]?rated?|fire[\s-]?resist|مقاومة\s*للحريق)/i.test(t);
+  if (!hasFireKeyword) return 0;
+  // Extract minutes
+  const mm = t.match(/(\d{2,3})\s*(?:دقيقة|دقائق|min|minute|m)\b/i);
+  if (mm) {
+    const n = parseInt(mm[1], 10);
+    if ([30, 45, 60, 90, 120, 180, 240].includes(n)) return n;
+  }
+  // Has fire keyword but no minutes — treat as generic fire-rated (use sentinel 1)
+  return 1;
+}
+
 // ─── extractCleanSegment ────────────────────────────────────────────────────
 
 /**
