@@ -101,6 +101,49 @@ export function areCategoriesCompatible(catA: string, catB: string): boolean {
   return true;
 }
 
+// ─── Spec-aware Hard Gates (V4.2) ──────────────────────────────────────────
+
+/**
+ * Extract wall/element thickness in mm from Arabic/English text.
+ * Matches: "بسمك 200 مم", "200mm", "thickness 150mm", "سمك 100"
+ * Returns the FIRST thickness found (typically the most relevant — wall body).
+ */
+export function extractThickness(text: string): number | null {
+  if (!text) return null;
+  const t = String(text).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
+  // Patterns covering Arabic and English
+  const patterns = [
+    /(?:بسمك|سمك|سماكة|thickness|thick)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم|mil)?/i,
+    /(\d{2,4})\s*(?:مم|mm|ملم)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (isFinite(n) && n >= 20 && n <= 2000) return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * Detect fire-rating in description.
+ * Returns 0 (none), or rating in minutes (60, 90, 120, 180, 240).
+ */
+export function extractFireRating(text: string): number {
+  if (!text) return 0;
+  const t = String(text).toLowerCase().replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
+  const hasFireKeyword = /(مقاوم.{0,10}حريق|fire[\s-]?rated?|fire[\s-]?resist|مقاومة\s*للحريق)/i.test(t);
+  if (!hasFireKeyword) return 0;
+  // Extract minutes — Arabic word boundary doesn't work, use lookahead/start
+  const mm = t.match(/(\d{2,3})\s*(?:دقيقة|دقائق|دقيقه|min(?:ute)?s?|m(?=in))/i);
+  if (mm) {
+    const n = parseInt(mm[1], 10);
+    if ([30, 45, 60, 90, 120, 180, 240].includes(n)) return n;
+  }
+  return 1;
+}
+
 // ─── extractCleanSegment ────────────────────────────────────────────────────
 
 /**
@@ -277,6 +320,53 @@ function scoreCandidate(
     parts.push(`⛔ category-gate: ${category} ↔ ${candidate.category}`);
     return { score: 0, notes: parts.join(" | ") };
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STAGE B.1: SPEC GATES (V4.2) — thickness + fire-rating
+  // Prevents "wall 100mm", "wall 200mm", "wall 200mm fire-60", "wall 200mm fire-120"
+  // from all matching the same candidate (most common cause of identical pricing
+  // across distinct items).
+  // ════════════════════════════════════════════════════════════════════
+  const candFullSpec =
+    (candidate.standard_name_ar || "") + " " +
+    (candidate.standard_name_en || "") + " " +
+    (candidate.item_description || "") + " " +
+    (candidate.item_name_aliases || []).join(" ");
+
+  // Fire-rating — HARD BLOCK on mismatch
+  const boqFire = extractFireRating(description + " " + (descriptionEn || ""));
+  const candFire = extractFireRating(candFullSpec);
+  // If either side flags fire, both must agree (or both have specific minutes that match)
+  if (boqFire > 0 || candFire > 0) {
+    if (boqFire !== candFire) {
+      // Allow generic-flag (1) to match any specific rating only when the other is 0
+      // i.e. enforce: presence-of-fire must match
+      const boqHasFire = boqFire > 0;
+      const candHasFire = candFire > 0;
+      if (boqHasFire !== candHasFire) {
+        parts.push(`⛔ fire-gate: BoQ=${boqFire} vs Lib=${candFire}`);
+        return { score: 0, notes: parts.join(" | ") };
+      }
+      // Both have fire flag, but specific minutes differ → also block
+      if (boqFire > 1 && candFire > 1 && boqFire !== candFire) {
+        parts.push(`⛔ fire-min-gate: ${boqFire}min ≠ ${candFire}min`);
+        return { score: 0, notes: parts.join(" | ") };
+      }
+    }
+  }
+
+  // Thickness — HARD PENALTY (-40) on mismatch
+  // Prevents wall 100mm matching wall 200mm at same score
+  const boqThk = extractThickness(description + " " + (descriptionEn || ""));
+  const candThk = extractThickness(candFullSpec);
+  let thicknessPenalty = 0;
+  if (boqThk !== null && candThk !== null && boqThk !== candThk) {
+    thicknessPenalty = -40;
+    parts.push(`⚠ thickness-mismatch: ${boqThk}mm≠${candThk}mm (-40)`);
+  } else if (boqThk !== null && candThk !== null && boqThk === candThk) {
+    parts.push(`✓ thickness-match: ${boqThk}mm`);
+  }
+
 
   // ════════════════════════════════════════════════════════════════════
   // STAGE C: extractCleanSegment + text similarity
@@ -473,6 +563,9 @@ function scoreCandidate(
       }
     }
   }
+
+  // Apply spec-aware penalties (V4.2 — thickness mismatch)
+  score += thicknessPenalty;
 
   // Cap at 99
   score = Math.min(score, 99);

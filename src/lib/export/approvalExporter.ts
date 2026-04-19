@@ -67,6 +67,20 @@ function normalizeItemNo(s: string | null | undefined): string {
     .toLowerCase();
 }
 
+/** Aggressive description normalization for fuzzy row matching. */
+function normalizeDesc(s: string | null | undefined): string {
+  return String(s ?? "")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/\u00A0/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function roundCurrency(v: number): number {
   return Math.round((v + Number.EPSILON) * 100) / 100;
 }
@@ -195,40 +209,110 @@ function buildRowItemMap(
   ws: ExcelJS.Worksheet,
   hm: HeaderMap,
   pricedItems: ApprovalItem[],
-): { map: Map<number, ApprovalItem>; unmatched: ApprovalItem[]; itemNoCol: number | null } {
+): { map: Map<number, ApprovalItem>; unmatched: ApprovalItem[]; itemNoCol: number | null; matchModes: Record<string, number> } {
   const map = new Map<number, ApprovalItem>();
+  const usedRows = new Set<number>();
   const unmatched: ApprovalItem[] = [];
+  const matchModes = { item_no: 0, desc_exact: 0, desc_contains: 0 };
   const detection = inferItemNoCol(ws, hm, pricedItems);
   const itemNoCol = detection.col;
 
-  const queues = new Map<string, number[]>();
-  if (itemNoCol !== null) {
-    const lastRow = ws.actualRowCount || ws.rowCount || 0;
-    for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
-      const row = ws.getRow(r);
-      if (hm.qtyCol !== null) {
-        const qtyText = cellText(row.getCell(hm.qtyCol));
-        const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
-        if (!isFinite(qtyNum) || qtyNum <= 0) continue;
-      }
+  // Build per-row indexes: item_no key, normalized description, full Excel text
+  const lastRow = ws.actualRowCount || ws.rowCount || 0;
+  const itemNoQueues = new Map<string, number[]>();
+  const rowDescNorm = new Map<number, string>();
+  const rowFullTextNorm = new Map<number, string>();
+
+  for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    if (hm.qtyCol !== null) {
+      const qtyText = cellText(row.getCell(hm.qtyCol));
+      const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
+      if (!isFinite(qtyNum) || qtyNum <= 0) continue;
+    }
+    if (itemNoCol !== null) {
       const key = normalizeItemNo(cellText(row.getCell(itemNoCol)));
-      if (!key) continue;
-      const q = queues.get(key) ?? [];
-      q.push(r);
-      queues.set(key, q);
+      if (key) {
+        const q = itemNoQueues.get(key) ?? [];
+        q.push(r);
+        itemNoQueues.set(key, q);
+      }
+    }
+    const descText = hm.descCol !== null ? cellText(row.getCell(hm.descCol)) : "";
+    rowDescNorm.set(r, normalizeDesc(descText));
+    // Full row text — concat all cells (handles cases where description spans columns)
+    let full = "";
+    row.eachCell({ includeEmpty: false }, c => { full += " " + cellText(c); });
+    rowFullTextNorm.set(r, normalizeDesc(full));
+  }
+
+  // PASS 1 — exact item_no match
+  const remaining: ApprovalItem[] = [];
+  for (const item of pricedItems) {
+    const key = normalizeItemNo(item.item_no);
+    if (key) {
+      const q = itemNoQueues.get(key);
+      const matchedRow = q?.shift();
+      if (matchedRow && !usedRows.has(matchedRow)) {
+        map.set(matchedRow, item);
+        usedRows.add(matchedRow);
+        matchModes.item_no++;
+        continue;
+      }
+    }
+    remaining.push(item);
+  }
+
+  // PASS 2 — description-based matching (when item_no in DB is actually a description)
+  // Strategy: normalize DB description AND DB item_no (some DBs store description in item_no)
+  // → search for exact match in rowDescNorm or rowFullTextNorm; then fall back to "contains".
+  const stillRemaining: ApprovalItem[] = [];
+  for (const item of remaining) {
+    const candidates: string[] = [];
+    if (item.description) candidates.push(normalizeDesc(item.description));
+    // item_no may itself be a description
+    const itemNoAsDesc = normalizeDesc(item.item_no);
+    if (itemNoAsDesc.length > 5) candidates.push(itemNoAsDesc);
+
+    let matchedRow: number | null = null;
+    let matchMode: "desc_exact" | "desc_contains" | null = null;
+
+    // Pass 2a — exact normalized equality on description column
+    for (const cand of candidates) {
+      if (!cand || cand.length < 4) continue;
+      for (const [r, dn] of rowDescNorm) {
+        if (usedRows.has(r)) continue;
+        if (dn && dn === cand) { matchedRow = r; matchMode = "desc_exact"; break; }
+      }
+      if (matchedRow) break;
+    }
+
+    // Pass 2b — substring containment (cand inside row text or row text inside cand)
+    if (!matchedRow) {
+      for (const cand of candidates) {
+        if (!cand || cand.length < 8) continue;
+        for (const [r, ft] of rowFullTextNorm) {
+          if (usedRows.has(r)) continue;
+          if (!ft) continue;
+          // cand substantially overlaps row text (>=80% of shorter side)
+          const a = cand, b = ft;
+          if (a.length <= b.length && b.includes(a)) { matchedRow = r; matchMode = "desc_contains"; break; }
+          if (b.length < a.length && a.includes(b) && b.length >= 12) { matchedRow = r; matchMode = "desc_contains"; break; }
+        }
+        if (matchedRow) break;
+      }
+    }
+
+    if (matchedRow && matchMode) {
+      map.set(matchedRow, item);
+      usedRows.add(matchedRow);
+      matchModes[matchMode]++;
+    } else {
+      stillRemaining.push(item);
     }
   }
 
-  for (const item of pricedItems) {
-    const key = normalizeItemNo(item.item_no);
-    if (!key) { unmatched.push(item); continue; }
-    const q = queues.get(key);
-    const matchedRow = q?.shift();
-    if (matchedRow) map.set(matchedRow, item);
-    else unmatched.push(item);
-  }
-
-  return { map, unmatched, itemNoCol };
+  return { map, unmatched: stillRemaining, itemNoCol, matchModes };
 }
 
 // ─── Main export ───────────────────────────────────────────────────────────
@@ -287,8 +371,8 @@ export async function exportApproval(
   const hm = bestHm as HeaderMap;
   const detectionUsed = bestScore >= 100000 ? "auto" : "fallback";
 
-  // 5. Build map
-  const { map: rowItemMap, unmatched, itemNoCol } = buildRowItemMap(ws, hm, pricedItems);
+  // 5. Build map (item_no exact → desc exact → desc contains)
+  const { map: rowItemMap, unmatched, itemNoCol, matchModes } = buildRowItemMap(ws, hm, pricedItems);
 
   // 6. Inject + DEBUG log
   let injectedSum = 0;
@@ -342,6 +426,7 @@ export async function exportApproval(
     sheet: keepName,
     headerMap: hm,
     itemNoCol,
+    matchModes,
     expectedPriced: pricedItems.length,
     injected: rowItemMap.size,
     missing_in_excel: unmatched.map(i => i.item_no),
