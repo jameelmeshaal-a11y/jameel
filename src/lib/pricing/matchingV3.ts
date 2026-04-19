@@ -133,15 +133,14 @@ export function extractThickness(text: string): number | null {
 export function extractFireRating(text: string): number {
   if (!text) return 0;
   const t = String(text).toLowerCase().replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632));
-  const hasFireKeyword = /(مقاوم.*حريق|fire[\s-]?rated?|fire[\s-]?resist|مقاومة\s*للحريق)/i.test(t);
+  const hasFireKeyword = /(مقاوم.{0,10}حريق|fire[\s-]?rated?|fire[\s-]?resist|مقاومة\s*للحريق)/i.test(t);
   if (!hasFireKeyword) return 0;
-  // Extract minutes
-  const mm = t.match(/(\d{2,3})\s*(?:دقيقة|دقائق|min|minute|m)\b/i);
+  // Extract minutes — Arabic word boundary doesn't work, use lookahead/start
+  const mm = t.match(/(\d{2,3})\s*(?:دقيقة|دقائق|دقيقه|min(?:ute)?s?|m(?=in))/i);
   if (mm) {
     const n = parseInt(mm[1], 10);
     if ([30, 45, 60, 90, 120, 180, 240].includes(n)) return n;
   }
-  // Has fire keyword but no minutes — treat as generic fire-rated (use sentinel 1)
   return 1;
 }
 
