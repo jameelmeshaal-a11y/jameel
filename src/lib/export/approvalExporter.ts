@@ -426,6 +426,7 @@ export async function exportApproval(
     sheet: keepName,
     headerMap: hm,
     itemNoCol,
+    matchModes,
     expectedPriced: pricedItems.length,
     injected: rowItemMap.size,
     missing_in_excel: unmatched.map(i => i.item_no),
