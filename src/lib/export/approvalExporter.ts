@@ -67,6 +67,20 @@ function normalizeItemNo(s: string | null | undefined): string {
     .toLowerCase();
 }
 
+/** Aggressive description normalization for fuzzy row matching. */
+function normalizeDesc(s: string | null | undefined): string {
+  return String(s ?? "")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/\u00A0/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function roundCurrency(v: number): number {
   return Math.round((v + Number.EPSILON) * 100) / 100;
 }
