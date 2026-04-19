@@ -565,6 +565,9 @@ function scoreCandidate(
     }
   }
 
+  // Apply spec-aware penalties (V4.2 — thickness mismatch)
+  score += thicknessPenalty;
+
   // Cap at 99
   score = Math.min(score, 99);
   score = Math.max(score, 0);
