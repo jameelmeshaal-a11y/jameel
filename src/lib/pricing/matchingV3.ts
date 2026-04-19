@@ -323,6 +323,53 @@ function scoreCandidate(
   }
 
   // ════════════════════════════════════════════════════════════════════
+  // STAGE B.1: SPEC GATES (V4.2) — thickness + fire-rating
+  // Prevents "wall 100mm", "wall 200mm", "wall 200mm fire-60", "wall 200mm fire-120"
+  // from all matching the same candidate (most common cause of identical pricing
+  // across distinct items).
+  // ════════════════════════════════════════════════════════════════════
+  const candFullSpec =
+    (candidate.standard_name_ar || "") + " " +
+    (candidate.standard_name_en || "") + " " +
+    (candidate.item_description || "") + " " +
+    (candidate.item_name_aliases || []).join(" ");
+
+  // Fire-rating — HARD BLOCK on mismatch
+  const boqFire = extractFireRating(description + " " + (descriptionEn || ""));
+  const candFire = extractFireRating(candFullSpec);
+  // If either side flags fire, both must agree (or both have specific minutes that match)
+  if (boqFire > 0 || candFire > 0) {
+    if (boqFire !== candFire) {
+      // Allow generic-flag (1) to match any specific rating only when the other is 0
+      // i.e. enforce: presence-of-fire must match
+      const boqHasFire = boqFire > 0;
+      const candHasFire = candFire > 0;
+      if (boqHasFire !== candHasFire) {
+        parts.push(`⛔ fire-gate: BoQ=${boqFire} vs Lib=${candFire}`);
+        return { score: 0, notes: parts.join(" | ") };
+      }
+      // Both have fire flag, but specific minutes differ → also block
+      if (boqFire > 1 && candFire > 1 && boqFire !== candFire) {
+        parts.push(`⛔ fire-min-gate: ${boqFire}min ≠ ${candFire}min`);
+        return { score: 0, notes: parts.join(" | ") };
+      }
+    }
+  }
+
+  // Thickness — HARD PENALTY (-40) on mismatch
+  // Prevents wall 100mm matching wall 200mm at same score
+  const boqThk = extractThickness(description + " " + (descriptionEn || ""));
+  const candThk = extractThickness(candFullSpec);
+  let thicknessPenalty = 0;
+  if (boqThk !== null && candThk !== null && boqThk !== candThk) {
+    thicknessPenalty = -40;
+    parts.push(`⚠ thickness-mismatch: ${boqThk}mm≠${candThk}mm (-40)`);
+  } else if (boqThk !== null && candThk !== null && boqThk === candThk) {
+    parts.push(`✓ thickness-match: ${boqThk}mm`);
+  }
+
+
+  // ════════════════════════════════════════════════════════════════════
   // STAGE C: extractCleanSegment + text similarity
   // ════════════════════════════════════════════════════════════════════
   const candCleanSegment = extractCleanSegment(
