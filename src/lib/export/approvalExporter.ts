@@ -8,7 +8,7 @@
  *   4. Detect header columns (Arabic-aware) — fallback to fixed COL (C/G/I, row 8)
  *   5. Build item_no → row map with normalization (NBSP, Arabic digits, spaces)
  *   6. Inject unit_rate + total_price; remove other sheets
- *   7. Validate exported total ≈ system total (±0.5%)
+ *   7. Validate exported total against matched system total
  *   8. Download to user
  *
  * Same signature as before — no caller changes needed.
@@ -29,18 +29,14 @@ interface ApprovalItem {
   override_type?: string | null;
 }
 
-// ─── Fixed-column fallback (Etemad standard layout) ────────────────────────
-// Used ONLY when auto-detection fails entirely.
 const COL_FALLBACK = {
-  ITEM_NO: 3,      // C
-  DESC: 4,         // D
-  QTY: 6,          // F
-  UNIT_PRICE: 7,   // G
-  TOTAL: 9,        // I
-  HEADER_ROW: 7,   // data starts at row 8
+  ITEM_NO: 3,
+  DESC: 4,
+  QTY: 6,
+  UNIT_PRICE: 7,
+  TOTAL: 9,
+  HEADER_ROW: 7,
 };
-
-// ─── Normalization helpers ─────────────────────────────────────────────────
 
 function normHeader(s: string): string {
   return String(s ?? "")
@@ -67,7 +63,6 @@ function normalizeItemNo(s: string | null | undefined): string {
     .toLowerCase();
 }
 
-/** Aggressive description normalization for fuzzy row matching. */
 function normalizeDesc(s: string | null | undefined): string {
   return String(s ?? "")
     .replace(/[\u064B-\u065F\u0670]/g, "")
@@ -90,18 +85,67 @@ function cellText(cell: ExcelJS.Cell): string {
   if (v == null) return "";
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v instanceof Date) return v.toISOString();
   if (typeof v === "object") {
     if ("richText" in v && Array.isArray((v as any).richText)) {
       return (v as any).richText.map((r: any) => r.text ?? "").join("");
     }
     if ("text" in v) return String((v as any).text ?? "");
-    if ("result" in v) return String((v as any).result ?? "");
+    if ("result" in v && (v as any).result != null) return String((v as any).result ?? "");
     if ("formula" in v) return String((v as any).formula ?? "");
   }
   return String(v);
 }
 
-// ─── Header keyword sets ───────────────────────────────────────────────────
+function isFormulaLike(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && (
+    "formula" in (value as Record<string, unknown>) ||
+    "sharedFormula" in (value as Record<string, unknown>) ||
+    "arrayFormula" in (value as Record<string, unknown>)
+  );
+}
+
+function coerceDisplayedCellValue(text: string): string | number | boolean | Date | null {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed === "TRUE") return true;
+  if (trimmed === "FALSE") return false;
+
+  const normalizedNumeric = digitsToAscii(trimmed)
+    .replace(/[٬,]/g, "")
+    .replace(/[−–—]/g, "-");
+  const asNumber = Number(normalizedNumeric);
+  if (Number.isFinite(asNumber)) return asNumber;
+
+  return trimmed;
+}
+
+function materializeWorksheetFormulas(ws: ExcelJS.Worksheet): { converted: number; unresolved: string[] } {
+  let converted = 0;
+  const unresolved: string[] = [];
+
+  ws.eachRow({ includeEmpty: false }, row => {
+    row.eachCell({ includeEmpty: false }, cell => {
+      const raw = cell.value as unknown;
+      if (!isFormulaLike(raw)) return;
+
+      const formulaValue = raw as Record<string, unknown>;
+      if (formulaValue.result !== undefined && formulaValue.result !== null) {
+        cell.value = formulaValue.result as ExcelJS.CellValue;
+        converted++;
+        return;
+      }
+
+      const displayed = cellText(cell);
+      const coerced = coerceDisplayedCellValue(displayed);
+      cell.value = coerced as ExcelJS.CellValue;
+      converted++;
+      if (coerced === null) unresolved.push(cell.address);
+    });
+  });
+
+  return { converted, unresolved };
+}
 
 const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code", "#", "no", "no.", "serial"];
 const DESC_KEYS = ["وصف البند", "الوصف", "البيان", "description", "اسم البند"];
@@ -143,7 +187,6 @@ function detectHeaderMap(ws: ExcelJS.Worksheet): HeaderMap {
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       const text = cellText(cell);
       if (!text) return;
-      // TOTAL before UNIT_RATE (more specific)
       if (totalCol === null && matchesAny(text, TOTAL_KEYS)) { totalCol = colNumber; return; }
       if (unitRateCol === null && matchesAny(text, UNIT_RATE_KEYS)) { unitRateCol = colNumber; return; }
       if (qtyCol === null && matchesAny(text, QTY_KEYS)) { qtyCol = colNumber; return; }
@@ -155,10 +198,10 @@ function detectHeaderMap(ws: ExcelJS.Worksheet): HeaderMap {
       return { headerRow: r, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
     }
   }
+
   return { headerRow: 0, itemNoCol: null, descCol: null, qtyCol: null, unitRateCol: null, totalCol: null };
 }
 
-/** Apply COL fallback when auto-detect produces nothing usable. */
 function applyFallback(hm: HeaderMap): HeaderMap {
   if (hm.descCol !== null && (hm.unitRateCol !== null || hm.totalCol !== null)) return hm;
   return {
@@ -171,8 +214,6 @@ function applyFallback(hm: HeaderMap): HeaderMap {
   };
 }
 
-// ─── Item-no column inference (in case header detect picked wrong column) ──
-
 function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalItem[]): { col: number | null; matches: number } {
   const pricedItemNos = new Set(items.map(i => normalizeItemNo(i.item_no)).filter(Boolean));
   if (pricedItemNos.size === 0) return { col: hm.itemNoCol, matches: 0 };
@@ -181,12 +222,12 @@ function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalIte
   const lastRow = ws.actualRowCount || ws.rowCount || 0;
   for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
     const row = ws.getRow(r);
-    // Quantity gate
     if (hm.qtyCol !== null) {
       const qtyText = cellText(row.getCell(hm.qtyCol));
       const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
       if (!isFinite(qtyNum) || qtyNum <= 0) continue;
     }
+
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       if (hm.descCol !== null && colNumber >= hm.descCol) return;
       const key = normalizeItemNo(cellText(cell));
@@ -198,12 +239,14 @@ function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalIte
   let bestCol = hm.itemNoCol;
   let bestMatches = bestCol ? scores.get(bestCol) ?? 0 : 0;
   for (const [col, m] of scores) {
-    if (m > bestMatches) { bestCol = col; bestMatches = m; }
+    if (m > bestMatches) {
+      bestCol = col;
+      bestMatches = m;
+    }
   }
+
   return { col: bestCol, matches: bestMatches };
 }
-
-// ─── Row → Item map ────────────────────────────────────────────────────────
 
 function buildRowItemMap(
   ws: ExcelJS.Worksheet,
@@ -212,12 +255,10 @@ function buildRowItemMap(
 ): { map: Map<number, ApprovalItem>; unmatched: ApprovalItem[]; itemNoCol: number | null; matchModes: Record<string, number> } {
   const map = new Map<number, ApprovalItem>();
   const usedRows = new Set<number>();
-  const unmatched: ApprovalItem[] = [];
   const matchModes = { item_no: 0, desc_exact: 0, desc_contains: 0 };
   const detection = inferItemNoCol(ws, hm, pricedItems);
   const itemNoCol = detection.col;
 
-  // Build per-row indexes: item_no key, normalized description, full Excel text
   const lastRow = ws.actualRowCount || ws.rowCount || 0;
   const itemNoQueues = new Map<string, number[]>();
   const rowDescNorm = new Map<number, string>();
@@ -230,6 +271,7 @@ function buildRowItemMap(
       const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
       if (!isFinite(qtyNum) || qtyNum <= 0) continue;
     }
+
     if (itemNoCol !== null) {
       const key = normalizeItemNo(cellText(row.getCell(itemNoCol)));
       if (key) {
@@ -238,15 +280,17 @@ function buildRowItemMap(
         itemNoQueues.set(key, q);
       }
     }
+
     const descText = hm.descCol !== null ? cellText(row.getCell(hm.descCol)) : "";
     rowDescNorm.set(r, normalizeDesc(descText));
-    // Full row text — concat all cells (handles cases where description spans columns)
+
     let full = "";
-    row.eachCell({ includeEmpty: false }, c => { full += " " + cellText(c); });
+    row.eachCell({ includeEmpty: false }, c => {
+      full += " " + cellText(c);
+    });
     rowFullTextNorm.set(r, normalizeDesc(full));
   }
 
-  // PASS 1 — exact item_no match
   const remaining: ApprovalItem[] = [];
   for (const item of pricedItems) {
     const key = normalizeItemNo(item.item_no);
@@ -263,40 +307,46 @@ function buildRowItemMap(
     remaining.push(item);
   }
 
-  // PASS 2 — description-based matching (when item_no in DB is actually a description)
-  // Strategy: normalize DB description AND DB item_no (some DBs store description in item_no)
-  // → search for exact match in rowDescNorm or rowFullTextNorm; then fall back to "contains".
-  const stillRemaining: ApprovalItem[] = [];
+  const unmatched: ApprovalItem[] = [];
   for (const item of remaining) {
     const candidates: string[] = [];
     if (item.description) candidates.push(normalizeDesc(item.description));
-    // item_no may itself be a description
     const itemNoAsDesc = normalizeDesc(item.item_no);
-    if (itemNoAsDesc.length > 5) candidates.push(itemNoAsDesc);
+    if (itemNoAsDesc.length > 3) candidates.push(itemNoAsDesc);
 
     let matchedRow: number | null = null;
     let matchMode: "desc_exact" | "desc_contains" | null = null;
 
-    // Pass 2a — exact normalized equality on description column
     for (const cand of candidates) {
       if (!cand || cand.length < 4) continue;
       for (const [r, dn] of rowDescNorm) {
         if (usedRows.has(r)) continue;
-        if (dn && dn === cand) { matchedRow = r; matchMode = "desc_exact"; break; }
+        if (dn && dn === cand) {
+          matchedRow = r;
+          matchMode = "desc_exact";
+          break;
+        }
       }
       if (matchedRow) break;
     }
 
-    // Pass 2b — substring containment (cand inside row text or row text inside cand)
     if (!matchedRow) {
       for (const cand of candidates) {
         if (!cand || cand.length < 4) continue;
         for (const [r, ft] of rowFullTextNorm) {
-          if (usedRows.has(r)) continue;
-          if (!ft) continue;
-          const a = cand, b = ft;
-          if (a.length <= b.length && b.includes(a) && a.length >= 4) { matchedRow = r; matchMode = "desc_contains"; break; }
-          if (b.length < a.length && a.includes(b) && b.length >= 4) { matchedRow = r; matchMode = "desc_contains"; break; }
+          if (usedRows.has(r) || !ft) continue;
+          const a = cand;
+          const b = ft;
+          if (a.length <= b.length && b.includes(a) && a.length >= 4) {
+            matchedRow = r;
+            matchMode = "desc_contains";
+            break;
+          }
+          if (b.length < a.length && a.includes(b) && b.length >= 4) {
+            matchedRow = r;
+            matchMode = "desc_contains";
+            break;
+          }
         }
         if (matchedRow) break;
       }
@@ -307,14 +357,12 @@ function buildRowItemMap(
       usedRows.add(matchedRow);
       matchModes[matchMode]++;
     } else {
-      stillRemaining.push(item);
+      unmatched.push(item);
     }
   }
 
-  return { map, unmatched: stillRemaining, itemNoCol, matchModes };
+  return { map, unmatched, itemNoCol, matchModes };
 }
-
-// ─── Main export ───────────────────────────────────────────────────────────
 
 export async function exportApproval(
   boqFileId: string,
@@ -322,19 +370,15 @@ export async function exportApproval(
   originalFilePath: string,
   originalFileName: string,
 ): Promise<void> {
-  // 1. Download
   const { data: fileData, error: dlErr } = await supabase.storage
     .from("boq-files")
     .download(originalFilePath);
   if (dlErr || !fileData) throw new Error("تعذر تحميل الملف الأصلي من التخزين");
 
   const buffer = await fileData.arrayBuffer();
-
-  // 2. Load with ExcelJS
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
 
-  // 3. Filter priced items
   const pricedItems = items.filter(i =>
     i.unit_rate != null &&
     i.unit_rate > 0 &&
@@ -343,20 +387,19 @@ export async function exportApproval(
     i.status !== "descriptive",
   );
 
-  // 4. Pick best worksheet (highest item_no coverage + has price columns)
   let bestWs: ExcelJS.Worksheet | null = null;
   let bestHm: HeaderMap | null = null;
   let bestScore = -1;
 
-  wb.eachSheet(ws => {
-    const hmRaw = detectHeaderMap(ws);
+  wb.eachSheet(sheet => {
+    const hmRaw = detectHeaderMap(sheet);
     const hm = applyFallback(hmRaw);
-    const det = inferItemNoCol(ws, hm, pricedItems);
+    const det = inferItemNoCol(sheet, hm, pricedItems);
     const hasPrice = hm.unitRateCol !== null || hm.totalCol !== null;
     const score = (hasPrice ? 100000 : 0) + det.matches;
     if (score > bestScore) {
       bestScore = score;
-      bestWs = ws;
+      bestWs = sheet;
       bestHm = hm;
     }
   });
@@ -370,11 +413,8 @@ export async function exportApproval(
   const hm = bestHm as HeaderMap;
   const detectionUsed = bestScore >= 100000 ? "auto" : "fallback";
 
-  // 5. Build map (item_no exact → desc exact → desc contains)
   const { map: rowItemMap, unmatched, itemNoCol, matchModes } = buildRowItemMap(ws, hm, pricedItems);
 
-  // 5b. PROBE — for any unmatched item, scan ENTIRE workbook for any trace
-  // (proves whether the missing item_no/desc exists anywhere in the original file)
   if (unmatched.length > 0) {
     const probe: Record<string, string[]> = {};
     for (const u of unmatched) {
@@ -385,7 +425,7 @@ export async function exportApproval(
       wb.eachSheet(sheet => {
         const last = sheet.actualRowCount || sheet.rowCount || 0;
         for (let r = 1; r <= last; r++) {
-          sheet.getRow(r).eachCell({ includeEmpty: false }, (c) => {
+          sheet.getRow(r).eachCell({ includeEmpty: false }, c => {
             const t = cellText(c);
             if (!t) return;
             if (target && normalizeItemNo(t) === target) {
@@ -403,7 +443,12 @@ export async function exportApproval(
     console.warn("[approvalExporter] PROBE missing items", probe);
   }
 
-  // 6. Inject + DEBUG log
+  const formulaPrep = materializeWorksheetFormulas(ws);
+  console.log("[approvalExporter] FORMULA_PREP", {
+    converted: formulaPrep.converted,
+    unresolved: formulaPrep.unresolved.slice(0, 20),
+  });
+
   let injectedSum = 0;
   const injectedItemNos: string[] = [];
   for (const [rowNum, item] of rowItemMap) {
@@ -411,59 +456,63 @@ export async function exportApproval(
     if (hm.unitRateCol !== null) {
       row.getCell(hm.unitRateCol).value = item.unit_rate;
     }
+
     const qty = (item.quantity ?? 0) as number;
-    const totalVal = (item.total_price != null && item.total_price > 0)
+    const totalVal = item.total_price != null && item.total_price > 0
       ? item.total_price
       : (item.unit_rate! * qty);
+
     if (hm.totalCol !== null) {
       row.getCell(hm.totalCol).value = totalVal;
     }
+
     row.commit();
     injectedSum += totalVal;
     injectedItemNos.push(String(item.item_no ?? "?"));
   }
   injectedSum = roundCurrency(injectedSum);
 
-  // DEBUG: log every injected item_no (per user request — verify 102 missing now covered)
   console.debug("[approvalExporter] INJECTED item_no list", {
     count: injectedItemNos.length,
     item_nos: injectedItemNos,
   });
 
-  // 7. Remove all other worksheets — keep only the chosen one
   const keepName = ws.name;
   const toRemove: string[] = [];
-  wb.eachSheet(sheet => { if (sheet.name !== keepName) toRemove.push(sheet.name); });
-  for (const n of toRemove) {
-    const s = wb.getWorksheet(n);
-    if (s) wb.removeWorksheet(s.id);
+  wb.eachSheet(sheet => {
+    if (sheet.name !== keepName) toRemove.push(sheet.name);
+  });
+  for (const name of toRemove) {
+    const sheet = wb.getWorksheet(name);
+    if (sheet) wb.removeWorksheet(sheet.id);
   }
 
-  // 8. Validate — variance computed on MATCHED items only (true accuracy of injection)
-  const systemTotal = roundCurrency(items.reduce((s, i) => {
-    const q = typeof i.quantity === "number" ? i.quantity : 0;
-    if (q > 0 && i.unit_rate != null && i.unit_rate > 0) {
-      return s + (i.total_price != null && i.total_price > 0 ? i.total_price : i.unit_rate * q);
+  const systemTotal = roundCurrency(items.reduce((sum, item) => {
+    const q = typeof item.quantity === "number" ? item.quantity : 0;
+    if (q > 0 && item.unit_rate != null && item.unit_rate > 0) {
+      return sum + (item.total_price != null && item.total_price > 0 ? item.total_price : item.unit_rate * q);
     }
-    return s;
+    return sum;
   }, 0));
+
   const matchedSystemTotal = roundCurrency(
-    Array.from(rowItemMap.values()).reduce((s, i) => {
-      const q = (i.quantity ?? 0) as number;
-      return s + (i.total_price != null && i.total_price > 0 ? i.total_price : (i.unit_rate ?? 0) * q);
+    Array.from(rowItemMap.values()).reduce((sum, item) => {
+      const q = (item.quantity ?? 0) as number;
+      return sum + (item.total_price != null && item.total_price > 0 ? item.total_price : (item.unit_rate ?? 0) * q);
     }, 0)
   );
-  const varianceAmount = roundCurrency(Math.abs(systemTotal - injectedSum));
-  const variancePct = systemTotal > 0 ? (varianceAmount / systemTotal) : 0;
-  const matchedVarianceAmount = roundCurrency(Math.abs(matchedSystemTotal - injectedSum));
-  const matchedVariancePct = matchedSystemTotal > 0 ? (matchedVarianceAmount / matchedSystemTotal) : 0;
 
-  // Soft + hard validation thresholds
-  const HARD_MISSING_LIMIT = 5;       // up to 5 unmatched items → warn-only
-  const HARD_VARIANCE_LIMIT = 0.05;   // >5% on matched items → hard fail
-  const SOFT_VARIANCE_WARN = 0.005;   // >0.5% → console warning
+  const varianceAmount = roundCurrency(Math.abs(systemTotal - injectedSum));
+  const variancePct = systemTotal > 0 ? varianceAmount / systemTotal : 0;
+  const matchedVarianceAmount = roundCurrency(Math.abs(matchedSystemTotal - injectedSum));
+  const matchedVariancePct = matchedSystemTotal > 0 ? matchedVarianceAmount / matchedSystemTotal : 0;
+
+  const HARD_MISSING_LIMIT = 5;
+  const HARD_VARIANCE_LIMIT = 0.05;
+  const SOFT_VARIANCE_WARN = 0.005;
 
   console.log("[approvalExporter] REPORT", {
+    boqFileId,
     detectionUsed,
     sheet: keepName,
     headerMap: hm,
@@ -481,7 +530,6 @@ export async function exportApproval(
     warning: matchedVariancePct > SOFT_VARIANCE_WARN ? "MATCHED VARIANCE > 0.5%" : null,
   });
 
-  // Hard fail only if too many missing OR matched-variance is implausibly high
   if (unmatched.length > HARD_MISSING_LIMIT || matchedVariancePct > HARD_VARIANCE_LIMIT) {
     throw new Error(
       `فشل تصدير الاعتماد: مطابقة ${rowItemMap.size}/${pricedItems.length} — انحراف على المربوط ${(matchedVariancePct * 100).toFixed(2)}%` +
@@ -496,8 +544,19 @@ export async function exportApproval(
     });
   }
 
-  // 9. Generate + download
-  const outBuffer = await wb.xlsx.writeBuffer();
+  let outBuffer: ArrayBuffer;
+  try {
+    outBuffer = await wb.xlsx.writeBuffer();
+  } catch (error) {
+    console.warn("[approvalExporter] writeBuffer failed — retrying after aggressive formula materialization", error);
+    const retryPrep = materializeWorksheetFormulas(ws);
+    console.warn("[approvalExporter] FORMULA_PREP_RETRY", {
+      converted: retryPrep.converted,
+      unresolved: retryPrep.unresolved.slice(0, 20),
+    });
+    outBuffer = await wb.xlsx.writeBuffer();
+  }
+
   const blob = new Blob([outBuffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
@@ -518,10 +577,11 @@ export async function exportApproval(
       title: "تم التصدير مع تنبيهات",
       description: `✅ ${rowItemMap.size}/${pricedItems.length} بند | غير مربوط: ${unmatched.map(i => i.item_no).join("، ")} | الإجمالي ${fmt(injectedSum)} ر.س`,
     });
-  } else {
-    toast({
-      title: "تم تصدير ملف الاعتماد بنجاح",
-      description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الورقة: ${keepName}`,
-    });
+    return;
   }
+
+  toast({
+    title: "تم تصدير ملف الاعتماد بنجاح",
+    description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الورقة: ${keepName}`,
+  });
 }
