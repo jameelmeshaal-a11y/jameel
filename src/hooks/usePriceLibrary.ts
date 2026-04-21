@@ -274,7 +274,7 @@ export function useUpsertBudgetDistribution() {
   });
 }
 
-// Bulk upsert for Excel import
+// Bulk upsert for Excel import — processes inserts in chunks of 500 to scale to 50k+
 export function useBulkUpsertPriceItems() {
   const qc = useQueryClient();
   return useMutation({
@@ -294,17 +294,21 @@ export function useBulkUpsertPriceItems() {
       const toUpdate = items.filter(i => i.isUpdate && i.id);
       const toInsert = items.filter(i => !i.isUpdate);
 
+      // Updates one by one (typically small set)
       for (const item of toUpdate) {
         const { id, isUpdate, ...rest } = item;
         await supabase.from("rate_library").update({ ...rest, target_rate: rest.base_rate }).eq("id", id!);
       }
 
-      if (toInsert.length > 0) {
-        const inserts = toInsert.map(({ isUpdate, id, ...rest }) => ({
-          ...rest,
-          target_rate: rest.base_rate,
-        }));
-        const { error } = await supabase.from("rate_library").insert(inserts);
+      // Inserts in chunks of 500
+      const CHUNK = 500;
+      const inserts = toInsert.map(({ isUpdate, id, ...rest }) => ({
+        ...rest,
+        target_rate: rest.base_rate,
+      }));
+      for (let i = 0; i < inserts.length; i += CHUNK) {
+        const slice = inserts.slice(i, i + CHUNK);
+        const { error } = await supabase.from("rate_library").insert(slice);
         if (error) throw error;
       }
 
@@ -312,6 +316,8 @@ export function useBulkUpsertPriceItems() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["price-library"] });
+      qc.invalidateQueries({ queryKey: ["price-library-stats"] });
+      qc.invalidateQueries({ queryKey: ["price-library-categories"] });
     },
   });
 }
