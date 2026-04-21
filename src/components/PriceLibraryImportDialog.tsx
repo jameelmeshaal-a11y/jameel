@@ -73,16 +73,25 @@ export default function PriceLibraryImportDialog({ open, onOpenChange }: Props) 
         };
       }).filter((r: any) => r.standard_name_ar);
 
-      // Server-side existence check in batches by item_code AND by standard_name_ar
+      // Server-side existence check in batches.
+      // CRITICAL: Arabic descriptions can be very long (1000s of chars). Using them in
+      // .in() builds the filter into the URL and easily exceeds the 8KB URI limit
+      // (HTTP 414 / "Failed to fetch"). We:
+      //  - batch item_code lookups (short strings) in groups of 200
+      //  - skip very-long names from name lookup (rely on item_code match instead)
+      //  - batch remaining short names in tiny groups (20) to keep URL safe
+      const MAX_NAME_LEN = 180;
       const codes = Array.from(new Set(parsedRaw.map(r => r.item_code).filter(Boolean)));
-      const namesAr = Array.from(new Set(parsedRaw.map(r => r.standard_name_ar).filter(Boolean)));
+      const namesAr = Array.from(new Set(
+        parsedRaw.map(r => r.standard_name_ar).filter(n => n && n.length <= MAX_NAME_LEN)
+      ));
 
       type Existing = { id: string; item_code: string | null; standard_name_ar: string; base_rate: number };
       const existingByCode = new Map<string, Existing>();
       const existingByName = new Map<string, Existing>();
 
-      const BATCH = 200;
-      for (const slice of chunk(codes, BATCH)) {
+      const CODE_BATCH = 200;
+      for (const slice of chunk(codes, CODE_BATCH)) {
         if (slice.length === 0) continue;
         const { data, error } = await supabase
           .from("rate_library")
@@ -93,16 +102,24 @@ export default function PriceLibraryImportDialog({ open, onOpenChange }: Props) 
           if (r.item_code) existingByCode.set(r.item_code, r);
         });
       }
-      for (const slice of chunk(namesAr, BATCH)) {
+
+      // Tiny batches for names (URL-length safe even for ~180-char Arabic strings)
+      const NAME_BATCH = 20;
+      for (const slice of chunk(namesAr, NAME_BATCH)) {
         if (slice.length === 0) continue;
-        const { data, error } = await supabase
-          .from("rate_library")
-          .select("id,item_code,standard_name_ar,base_rate")
-          .in("standard_name_ar", slice);
-        if (error) throw error;
-        (data || []).forEach((r: any) => {
-          if (r.standard_name_ar) existingByName.set(r.standard_name_ar, r);
-        });
+        try {
+          const { data, error } = await supabase
+            .from("rate_library")
+            .select("id,item_code,standard_name_ar,base_rate")
+            .in("standard_name_ar", slice);
+          if (error) throw error;
+          (data || []).forEach((r: any) => {
+            if (r.standard_name_ar) existingByName.set(r.standard_name_ar, r);
+          });
+        } catch (e) {
+          // Don't fail the whole import if one name batch fails — just treat those as new
+          console.warn("Name lookup batch failed, treating as new items:", e);
+        }
       }
 
       const parsed: ImportRow[] = parsedRaw.map((r) => {
