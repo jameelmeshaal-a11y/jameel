@@ -144,6 +144,77 @@ export function extractFireRating(text: string): number {
   return 1;
 }
 
+// ─── V4.3 SPEC GATES — code/diameter/size-tuple/range ───────────────────────
+
+const __toAscii = (s: string) =>
+  String(s ?? "").replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
+                  .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776));
+
+/** Extract item-model code tokens like DP-13, EDP-13, AS1, AS2, F11, F11E, Ws02, MD-05 */
+export function extractItemModelCodes(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  // Patterns: 1-4 letters + optional dash + 1-4 digits + optional letter suffix
+  const re = /\b([A-Za-z]{1,5})[-_ ]?(\d{1,4})([A-Za-z])?\b/g;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const letters = m[1].toUpperCase();
+    const digits = m[2];
+    const suffix = (m[3] || "").toUpperCase();
+    // Skip pure-unit hits (mm, cm, kg, etc.)
+    if (["MM","CM","KG","KW","HP","HZ","VA","KV","CV","MT","ML"].includes(letters)) continue;
+    out.add(`${letters}${digits}${suffix}`);
+  }
+  return [...out];
+}
+
+/** Extract pipe/duct diameter in mm. Returns sorted unique list. */
+export function extractDiameters(text: string): number[] {
+  if (!text) return [];
+  const t = __toAscii(text).toLowerCase();
+  const re = /(?:قطر|dia(?:meter)?|d|ø|⌀|nb|dn)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم)?/gi;
+  const out = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const n = parseInt(m[1], 10);
+    if (isFinite(n) && n >= 10 && n <= 2000) out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/** Extract size tuples like 600×1100, 1100x1200, 2100*900 (mm). */
+export function extractSizeTuples(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  const re = /(\d{2,5})\s*[x×*]\s*(\d{2,5})(?:\s*[x×*]\s*(\d{2,5}))?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const dims = [m[1], m[2], m[3]].filter(Boolean).map(n => parseInt(n, 10)).sort((a, b) => a - b);
+    out.add(dims.join("x"));
+  }
+  return [...out];
+}
+
+/** Extract numeric ranges like "81-110", "111-180" with optional unit. */
+export function extractRanges(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  const re = /(\d{1,5})\s*[-–]\s*(\d{1,5})\s*(l\/s|cfm|cmh|m3\/h|كجم|kg|kw|w|hp)?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const lo = parseInt(m[1], 10);
+    const hi = parseInt(m[2], 10);
+    if (!isFinite(lo) || !isFinite(hi) || lo >= hi) continue;
+    // Avoid year-like (1900-2100) and tiny ranges
+    if (lo < 1 || hi - lo < 2) continue;
+    out.add(`${lo}-${hi}${(m[3] || "").toLowerCase()}`);
+  }
+  return [...out];
+}
+
 // ─── extractCleanSegment ────────────────────────────────────────────────────
 
 /**
