@@ -24,22 +24,33 @@ function generateKeywords(name: string): string[] {
 }
 
 // Fetch all rate_library items with optional search/category filter
+// Uses internal pagination to bypass Supabase REST 1000-row hard limit.
 export function usePriceLibrary(search: string = "", category: string = "all") {
   return useQuery({
     queryKey: ["price-library", search, category],
     queryFn: async () => {
-      let q = supabase
-        .from("rate_library")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .range(0, 9999);
-      if (category !== "all") q = q.eq("category", category);
-      if (search) {
-        q = q.or(`standard_name_ar.ilike.%${search}%,standard_name_en.ilike.%${search}%,item_code.ilike.%${search}%`);
+      const PAGE_SIZE = 1000;
+      const MAX_ITEMS = 60000; // safety cap
+      const all: any[] = [];
+      let from = 0;
+      while (from < MAX_ITEMS) {
+        let q = supabase
+          .from("rate_library")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (category !== "all") q = q.eq("category", category);
+        if (search) {
+          q = q.or(`standard_name_ar.ilike.%${search}%,standard_name_en.ilike.%${search}%,item_code.ilike.%${search}%`);
+        }
+        const { data, error } = await q;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
       }
-      const { data, error } = await q;
-      if (error) throw error;
-      return data || [];
+      return all;
     },
   });
 }
