@@ -278,6 +278,33 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ── V4.3 SPEC GATES — applied before scoring ──
+      const candFullSpec = `${item.standard_name_ar || ""} ${item.standard_name_en || ""} ${(item.item_name_aliases || []).join(" ")} ${item.item_code || ""}`;
+      const boqFire = extractFireRating(item_name);
+      const candFire = extractFireRating(candFullSpec);
+      if ((boqFire > 0) !== (candFire > 0)) continue;
+      if (boqFire > 1 && candFire > 1 && boqFire !== candFire) continue;
+
+      const boqThk = extractThickness(item_name);
+      const candThk = extractThickness(candFullSpec);
+      if (boqThk !== null && candThk !== null && boqThk !== candThk) continue;
+
+      const boqCodes = extractItemModelCodes(item_name);
+      const candCodes = extractItemModelCodes(candFullSpec);
+      if (boqCodes.length > 0 && candCodes.length > 0 && !boqCodes.some(c => candCodes.includes(c))) continue;
+
+      const boqDia = extractDiameters(item_name);
+      const candDia = extractDiameters(candFullSpec);
+      if (boqDia.length > 0 && candDia.length > 0 && !boqDia.some(d => candDia.includes(d))) continue;
+
+      const boqTuples = extractSizeTuples(item_name);
+      const candTuples = extractSizeTuples(candFullSpec);
+      if (boqTuples.length > 0 && candTuples.length > 0 && !boqTuples.some(t => candTuples.includes(t))) continue;
+
+      const boqRanges = extractRanges(item_name);
+      const candRanges = extractRanges(candFullSpec);
+      if (boqRanges.length > 0 && candRanges.length > 0 && !boqRanges.some(r => candRanges.includes(r))) continue;
+
       // ── Stage 3 + 4: Description scoring on the gated pool ──
       let bestScore = 0;
 
