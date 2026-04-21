@@ -427,7 +427,6 @@ function scoreCandidate(
   }
 
   // Thickness — HARD PENALTY (-40) on mismatch
-  // Prevents wall 100mm matching wall 200mm at same score
   const boqThk = extractThickness(description + " " + (descriptionEn || ""));
   const candThk = extractThickness(candFullSpec);
   let thicknessPenalty = 0;
@@ -436,6 +435,40 @@ function scoreCandidate(
     parts.push(`⚠ thickness-mismatch: ${boqThk}mm≠${candThk}mm (-40)`);
   } else if (boqThk !== null && candThk !== null && boqThk === candThk) {
     parts.push(`✓ thickness-match: ${boqThk}mm`);
+  }
+
+  // ── STAGE B.2 (V4.3) — Item Model Code gate (DP-13 ≠ EDP-13, AS1 ≠ AS2) ──
+  const boqModelCodes = extractItemModelCodes(description + " " + (descriptionEn || ""));
+  if (boqModelCodes.length > 0) {
+    const candCodes = extractItemModelCodes(candFullSpec + " " + (candidate.item_code || ""));
+    if (candCodes.length > 0 && !boqModelCodes.some(c => candCodes.includes(c))) {
+      parts.push(`⛔ code-gate: BoQ[${boqModelCodes.join(",")}] ≠ Lib[${candCodes.join(",")}]`);
+      return { score: 0, notes: parts.join(" | ") };
+    }
+  }
+
+  // ── STAGE B.3 — Diameter gate (50/75/110 mm) ──
+  const boqDia = extractDiameters(description + " " + (descriptionEn || ""));
+  const candDia = extractDiameters(candFullSpec);
+  if (boqDia.length > 0 && candDia.length > 0 && !boqDia.some(d => candDia.includes(d))) {
+    parts.push(`⛔ diameter-gate: BoQ[${boqDia.join(",")}] ≠ Lib[${candDia.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
+  }
+
+  // ── STAGE B.4 — Size tuple gate (600×1100 ≠ 1100×1200) ──
+  const boqTuples = extractSizeTuples(description + " " + (descriptionEn || ""));
+  const candTuples = extractSizeTuples(candFullSpec);
+  if (boqTuples.length > 0 && candTuples.length > 0 && !boqTuples.some(t => candTuples.includes(t))) {
+    parts.push(`⛔ size-tuple-gate: BoQ[${boqTuples.join(",")}] ≠ Lib[${candTuples.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
+  }
+
+  // ── STAGE B.5 — Range/capacity gate (81-110 L/s ≠ 111-180 L/s) ──
+  const boqRanges = extractRanges(description + " " + (descriptionEn || ""));
+  const candRanges = extractRanges(candFullSpec);
+  if (boqRanges.length > 0 && candRanges.length > 0 && !boqRanges.some(r => candRanges.includes(r))) {
+    parts.push(`⛔ range-gate: BoQ[${boqRanges.join(",")}] ≠ Lib[${candRanges.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
   }
 
 
