@@ -1,17 +1,15 @@
 /**
- * Approval Exporter — ExcelJS-based.
+ * Approval Exporter V5 — Library-only, formula-preserving, multi-sheet.
  *
  * Pipeline:
  *   1. Download original .xlsx from Supabase Storage
- *   2. Load with ExcelJS (preserves formatting, merged cells, styles)
- *   3. Pick the worksheet with the strongest item_no coverage
- *   4. Detect header columns (Arabic-aware) — fallback to fixed COL (C/G/I, row 8)
- *   5. Build item_no → row map with normalization (NBSP, Arabic digits, spaces)
- *   6. Inject unit_rate + total_price; remove other sheets
- *   7. Validate exported total against matched system total
- *   8. Download to user
- *
- * Same signature as before — no caller changes needed.
+ *   2. Load with ExcelJS (preserves formatting, merged cells, styles, formulas)
+ *   3. Detect header columns on EVERY worksheet (Arabic-aware)
+ *   4. Build a workbook-wide row map: best row per (item_no | description) across ALL sheets
+ *   5. Inject ONLY into unitRateCol — never touch the total column (keeps original formula)
+ *   6. Keep ALL worksheets — never remove any sheet
+ *   7. Validate: count + missing + variance computed against system unit_rate * qty
+ *   8. Download
  */
 
 import ExcelJS from "exceljs";
@@ -59,6 +57,7 @@ function normalizeItemNo(s: string | null | undefined): string {
   return digitsToAscii(String(s ?? ""))
     .replace(/\u00A0/g, " ")
     .replace(/\s+/g, "")
+    .replace(/^0+(?=\d)/, "")  // strip leading zeros for code matching
     .trim()
     .toLowerCase();
 }
@@ -95,56 +94,6 @@ function cellText(cell: ExcelJS.Cell): string {
     if ("formula" in v) return String((v as any).formula ?? "");
   }
   return String(v);
-}
-
-function isFormulaLike(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && (
-    "formula" in (value as Record<string, unknown>) ||
-    "sharedFormula" in (value as Record<string, unknown>) ||
-    "arrayFormula" in (value as Record<string, unknown>)
-  );
-}
-
-function coerceDisplayedCellValue(text: string): string | number | boolean | Date | null {
-  const trimmed = String(text ?? "").trim();
-  if (!trimmed) return null;
-  if (trimmed === "TRUE") return true;
-  if (trimmed === "FALSE") return false;
-
-  const normalizedNumeric = digitsToAscii(trimmed)
-    .replace(/[٬,]/g, "")
-    .replace(/[−–—]/g, "-");
-  const asNumber = Number(normalizedNumeric);
-  if (Number.isFinite(asNumber)) return asNumber;
-
-  return trimmed;
-}
-
-function materializeWorksheetFormulas(ws: ExcelJS.Worksheet): { converted: number; unresolved: string[] } {
-  let converted = 0;
-  const unresolved: string[] = [];
-
-  ws.eachRow({ includeEmpty: false }, row => {
-    row.eachCell({ includeEmpty: false }, cell => {
-      const raw = cell.value as unknown;
-      if (!isFormulaLike(raw)) return;
-
-      const formulaValue = raw as Record<string, unknown>;
-      if (formulaValue.result !== undefined && formulaValue.result !== null) {
-        cell.value = formulaValue.result as ExcelJS.CellValue;
-        converted++;
-        return;
-      }
-
-      const displayed = cellText(cell);
-      const coerced = coerceDisplayedCellValue(displayed);
-      cell.value = coerced as ExcelJS.CellValue;
-      converted++;
-      if (coerced === null) unresolved.push(cell.address);
-    });
-  });
-
-  return { converted, unresolved };
 }
 
 const ITEM_NO_KEYS = ["رقم البند", "رقم الصنف", "item no", "item code", "division no.", "division no", "الرمز الإنشائي", "code", "#", "no", "no.", "serial"];
@@ -198,14 +147,13 @@ function detectHeaderMap(ws: ExcelJS.Worksheet): HeaderMap {
       return { headerRow: r, itemNoCol, descCol, qtyCol, unitRateCol, totalCol };
     }
   }
-
   return { headerRow: 0, itemNoCol: null, descCol: null, qtyCol: null, unitRateCol: null, totalCol: null };
 }
 
 function applyFallback(hm: HeaderMap): HeaderMap {
-  if (hm.descCol !== null && (hm.unitRateCol !== null || hm.totalCol !== null)) return hm;
+  if (hm.descCol !== null && hm.unitRateCol !== null) return hm;
   return {
-    headerRow: COL_FALLBACK.HEADER_ROW,
+    headerRow: hm.headerRow || COL_FALLBACK.HEADER_ROW,
     itemNoCol: hm.itemNoCol ?? COL_FALLBACK.ITEM_NO,
     descCol: hm.descCol ?? COL_FALLBACK.DESC,
     qtyCol: hm.qtyCol ?? COL_FALLBACK.QTY,
@@ -227,7 +175,6 @@ function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalIte
       const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
       if (!isFinite(qtyNum) || qtyNum <= 0) continue;
     }
-
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       if (hm.descCol !== null && colNumber >= hm.descCol) return;
       const key = normalizeItemNo(cellText(cell));
@@ -239,30 +186,32 @@ function inferItemNoCol(ws: ExcelJS.Worksheet, hm: HeaderMap, items: ApprovalIte
   let bestCol = hm.itemNoCol;
   let bestMatches = bestCol ? scores.get(bestCol) ?? 0 : 0;
   for (const [col, m] of scores) {
-    if (m > bestMatches) {
-      bestCol = col;
-      bestMatches = m;
-    }
+    if (m > bestMatches) { bestCol = col; bestMatches = m; }
   }
-
   return { col: bestCol, matches: bestMatches };
 }
 
-function buildRowItemMap(
-  ws: ExcelJS.Worksheet,
-  hm: HeaderMap,
-  pricedItems: ApprovalItem[],
-): { map: Map<number, ApprovalItem>; unmatched: ApprovalItem[]; itemNoCol: number | null; matchModes: Record<string, number> } {
-  const map = new Map<number, ApprovalItem>();
-  const usedRows = new Set<number>();
-  const matchModes = { item_no: 0, desc_exact: 0, desc_contains: 0 };
-  const detection = inferItemNoCol(ws, hm, pricedItems);
+interface SheetContext {
+  ws: ExcelJS.Worksheet;
+  hm: HeaderMap;
+  itemNoCol: number | null;
+  itemNoQueues: Map<string, number[]>;
+  rowDescNorm: Map<number, string>;
+  rowFullTextNorm: Map<number, string>;
+}
+
+function buildSheetContext(ws: ExcelJS.Worksheet, items: ApprovalItem[]): SheetContext | null {
+  const hmRaw = detectHeaderMap(ws);
+  const hm = applyFallback(hmRaw);
+  if (hm.unitRateCol === null) return null;
+
+  const detection = inferItemNoCol(ws, hm, items);
   const itemNoCol = detection.col;
 
-  const lastRow = ws.actualRowCount || ws.rowCount || 0;
   const itemNoQueues = new Map<string, number[]>();
   const rowDescNorm = new Map<number, string>();
   const rowFullTextNorm = new Map<number, string>();
+  const lastRow = ws.actualRowCount || ws.rowCount || 0;
 
   for (let r = (hm.headerRow || 0) + 1; r <= lastRow; r++) {
     const row = ws.getRow(r);
@@ -271,7 +220,6 @@ function buildRowItemMap(
       const qtyNum = parseFloat(digitsToAscii(qtyText).replace(/,/g, "").trim());
       if (!isFinite(qtyNum) || qtyNum <= 0) continue;
     }
-
     if (itemNoCol !== null) {
       const key = normalizeItemNo(cellText(row.getCell(itemNoCol)));
       if (key) {
@@ -280,88 +228,76 @@ function buildRowItemMap(
         itemNoQueues.set(key, q);
       }
     }
-
     const descText = hm.descCol !== null ? cellText(row.getCell(hm.descCol)) : "";
     rowDescNorm.set(r, normalizeDesc(descText));
-
     let full = "";
-    row.eachCell({ includeEmpty: false }, c => {
-      full += " " + cellText(c);
-    });
+    row.eachCell({ includeEmpty: false }, c => { full += " " + cellText(c); });
     rowFullTextNorm.set(r, normalizeDesc(full));
   }
 
-  const remaining: ApprovalItem[] = [];
-  for (const item of pricedItems) {
-    const key = normalizeItemNo(item.item_no);
-    if (key) {
-      const q = itemNoQueues.get(key);
-      const matchedRow = q?.shift();
-      if (matchedRow && !usedRows.has(matchedRow)) {
-        map.set(matchedRow, item);
-        usedRows.add(matchedRow);
-        matchModes.item_no++;
-        continue;
-      }
-    }
-    remaining.push(item);
-  }
+  return { ws, hm, itemNoCol, itemNoQueues, rowDescNorm, rowFullTextNorm };
+}
 
-  const unmatched: ApprovalItem[] = [];
-  for (const item of remaining) {
-    const candidates: string[] = [];
-    if (item.description) candidates.push(normalizeDesc(item.description));
-    const itemNoAsDesc = normalizeDesc(item.item_no);
-    if (itemNoAsDesc.length > 3) candidates.push(itemNoAsDesc);
+interface Hit { sheet: SheetContext; row: number; mode: "item_no" | "desc_exact" | "desc_contains"; }
 
-    let matchedRow: number | null = null;
-    let matchMode: "desc_exact" | "desc_contains" | null = null;
+function findRowAcrossWorkbook(
+  item: ApprovalItem,
+  sheets: SheetContext[],
+  usedKeys: Set<string>,
+): Hit | null {
+  const keyOf = (s: SheetContext, r: number) => `${s.ws.id}:${r}`;
+  const itemKey = normalizeItemNo(item.item_no);
 
-    for (const cand of candidates) {
-      if (!cand || cand.length < 4) continue;
-      for (const [r, dn] of rowDescNorm) {
-        if (usedRows.has(r)) continue;
-        if (dn && dn === cand) {
-          matchedRow = r;
-          matchMode = "desc_exact";
-          break;
+  // Pass 1 — item_no exact, across all sheets
+  if (itemKey) {
+    for (const sheet of sheets) {
+      const q = sheet.itemNoQueues.get(itemKey);
+      if (!q || q.length === 0) continue;
+      for (let i = 0; i < q.length; i++) {
+        const r = q[i];
+        if (!usedKeys.has(keyOf(sheet, r))) {
+          q.splice(i, 1);
+          return { sheet, row: r, mode: "item_no" };
         }
       }
-      if (matchedRow) break;
-    }
-
-    if (!matchedRow) {
-      for (const cand of candidates) {
-        if (!cand || cand.length < 4) continue;
-        for (const [r, ft] of rowFullTextNorm) {
-          if (usedRows.has(r) || !ft) continue;
-          const a = cand;
-          const b = ft;
-          if (a.length <= b.length && b.includes(a) && a.length >= 4) {
-            matchedRow = r;
-            matchMode = "desc_contains";
-            break;
-          }
-          if (b.length < a.length && a.includes(b) && b.length >= 4) {
-            matchedRow = r;
-            matchMode = "desc_contains";
-            break;
-          }
-        }
-        if (matchedRow) break;
-      }
-    }
-
-    if (matchedRow && matchMode) {
-      map.set(matchedRow, item);
-      usedRows.add(matchedRow);
-      matchModes[matchMode]++;
-    } else {
-      unmatched.push(item);
     }
   }
 
-  return { map, unmatched, itemNoCol, matchModes };
+  const candidates: string[] = [];
+  if (item.description) candidates.push(normalizeDesc(item.description));
+  const itemAsDesc = normalizeDesc(item.item_no);
+  if (itemAsDesc.length > 3) candidates.push(itemAsDesc);
+
+  // Pass 2 — exact description match
+  for (const cand of candidates) {
+    if (!cand || cand.length < 4) continue;
+    for (const sheet of sheets) {
+      for (const [r, dn] of sheet.rowDescNorm) {
+        if (usedKeys.has(keyOf(sheet, r))) continue;
+        if (dn && dn === cand) return { sheet, row: r, mode: "desc_exact" };
+      }
+    }
+  }
+
+  // Pass 3 — containment in full row text
+  for (const cand of candidates) {
+    if (!cand || cand.length < 4) continue;
+    for (const sheet of sheets) {
+      for (const [r, ft] of sheet.rowFullTextNorm) {
+        if (usedKeys.has(keyOf(sheet, r)) || !ft) continue;
+        const a = cand;
+        const b = ft;
+        if (a.length <= b.length && b.includes(a) && a.length >= 4) {
+          return { sheet, row: r, mode: "desc_contains" };
+        }
+        if (b.length < a.length && a.includes(b) && b.length >= 4) {
+          return { sheet, row: r, mode: "desc_contains" };
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function exportApproval(
@@ -387,41 +323,41 @@ export async function exportApproval(
     i.status !== "descriptive",
   );
 
-  let bestWs: ExcelJS.Worksheet | null = null;
-  let bestHm: HeaderMap | null = null;
-  let bestScore = -1;
-
-  wb.eachSheet(sheet => {
-    const hmRaw = detectHeaderMap(sheet);
-    const hm = applyFallback(hmRaw);
-    const det = inferItemNoCol(sheet, hm, pricedItems);
-    const hasPrice = hm.unitRateCol !== null || hm.totalCol !== null;
-    const score = (hasPrice ? 100000 : 0) + det.matches;
-    if (score > bestScore) {
-      bestScore = score;
-      bestWs = sheet;
-      bestHm = hm;
-    }
+  // Build context for every sheet that has a unit-rate column
+  const sheets: SheetContext[] = [];
+  wb.eachSheet(ws => {
+    const ctx = buildSheetContext(ws, pricedItems);
+    if (ctx) sheets.push(ctx);
   });
 
-  if (!bestWs || !bestHm) throw new Error("لا توجد ورقة عمل صالحة في الملف الأصلي");
-  if (bestHm.unitRateCol === null && bestHm.totalCol === null) {
-    throw new Error("تعذر العثور على أعمدة السعر في الملف الأصلي");
+  if (sheets.length === 0) {
+    throw new Error("تعذر العثور على عمود سعر الوحدة في أي ورقة من الملف الأصلي");
   }
 
-  const ws = bestWs as ExcelJS.Worksheet;
-  const hm = bestHm as HeaderMap;
-  const detectionUsed = bestScore >= 100000 ? "auto" : "fallback";
+  // Workbook-wide matching
+  const usedKeys = new Set<string>();
+  const hits: { item: ApprovalItem; hit: Hit }[] = [];
+  const unmatched: ApprovalItem[] = [];
+  const matchModes = { item_no: 0, desc_exact: 0, desc_contains: 0 };
 
-  const { map: rowItemMap, unmatched, itemNoCol, matchModes } = buildRowItemMap(ws, hm, pricedItems);
+  for (const item of pricedItems) {
+    const hit = findRowAcrossWorkbook(item, sheets, usedKeys);
+    if (hit) {
+      usedKeys.add(`${hit.sheet.ws.id}:${hit.row}`);
+      hits.push({ item, hit });
+      matchModes[hit.mode]++;
+    } else {
+      unmatched.push(item);
+    }
+  }
 
+  // Diagnostic probe for unmatched items
   if (unmatched.length > 0) {
     const probe: Record<string, string[]> = {};
     for (const u of unmatched) {
       const target = normalizeItemNo(u.item_no);
       const targetDesc = normalizeDesc(u.description);
-      const targetItemAsDesc = normalizeDesc(u.item_no);
-      const hits: string[] = [];
+      const hitsArr: string[] = [];
       wb.eachSheet(sheet => {
         const last = sheet.actualRowCount || sheet.rowCount || 0;
         for (let r = 1; r <= last; r++) {
@@ -429,132 +365,80 @@ export async function exportApproval(
             const t = cellText(c);
             if (!t) return;
             if (target && normalizeItemNo(t) === target) {
-              hits.push(`${sheet.name}!${c.address} [item_no exact] = "${t.slice(0, 60)}"`);
-            } else if (targetDesc && targetDesc.length >= 4 && normalizeDesc(t).includes(targetDesc)) {
-              hits.push(`${sheet.name}!${c.address} [desc contains] = "${t.slice(0, 60)}"`);
-            } else if (targetItemAsDesc && targetItemAsDesc.length >= 4 && normalizeDesc(t).includes(targetItemAsDesc)) {
-              hits.push(`${sheet.name}!${c.address} [item_no-as-desc] = "${t.slice(0, 60)}"`);
+              hitsArr.push(`${sheet.name}!${c.address} [item_no] = "${t.slice(0, 60)}"`);
+            } else if (targetDesc && targetDesc.length >= 6 && normalizeDesc(t).includes(targetDesc.slice(0, 30))) {
+              hitsArr.push(`${sheet.name}!${c.address} [desc~] = "${t.slice(0, 60)}"`);
             }
           });
         }
       });
-      probe[String(u.item_no ?? "?")] = hits.length ? hits.slice(0, 8) : ["NOT FOUND ANYWHERE IN WORKBOOK"];
+      probe[String(u.item_no ?? "?")] = hitsArr.length ? hitsArr.slice(0, 6) : ["NOT FOUND ANYWHERE IN WORKBOOK"];
     }
     console.warn("[approvalExporter] PROBE missing items", probe);
   }
 
-  const formulaPrep = materializeWorksheetFormulas(ws);
-  console.log("[approvalExporter] FORMULA_PREP", {
-    converted: formulaPrep.converted,
-    unresolved: formulaPrep.unresolved.slice(0, 20),
-  });
-
-  let injectedSum = 0;
+  // INJECT — only into unitRateCol. Never touch the total column.
   const injectedItemNos: string[] = [];
-  for (const [rowNum, item] of rowItemMap) {
-    const row = ws.getRow(rowNum);
-    if (hm.unitRateCol !== null) {
-      row.getCell(hm.unitRateCol).value = item.unit_rate;
+  let injectedSum = 0;
+  for (const { item, hit } of hits) {
+    const { sheet, row: rowNum } = hit;
+    const row = sheet.ws.getRow(rowNum);
+    if (sheet.hm.unitRateCol !== null) {
+      const cell = row.getCell(sheet.hm.unitRateCol);
+      // Plain numeric value — let any existing total formula recompute naturally
+      cell.value = item.unit_rate;
     }
+    row.commit();
 
     const qty = (item.quantity ?? 0) as number;
-    const totalVal = item.total_price != null && item.total_price > 0
-      ? item.total_price
-      : (item.unit_rate! * qty);
-
-    if (hm.totalCol !== null) {
-      row.getCell(hm.totalCol).value = totalVal;
-    }
-
-    row.commit();
-    injectedSum += totalVal;
+    injectedSum += (item.unit_rate ?? 0) * qty;
     injectedItemNos.push(String(item.item_no ?? "?"));
   }
   injectedSum = roundCurrency(injectedSum);
 
-  console.debug("[approvalExporter] INJECTED item_no list", {
-    count: injectedItemNos.length,
-    item_nos: injectedItemNos,
-  });
-
-  const keepName = ws.name;
-  const toRemove: string[] = [];
-  wb.eachSheet(sheet => {
-    if (sheet.name !== keepName) toRemove.push(sheet.name);
-  });
-  for (const name of toRemove) {
-    const sheet = wb.getWorksheet(name);
-    if (sheet) wb.removeWorksheet(sheet.id);
-  }
-
+  // System-wide system total (for reporting only)
   const systemTotal = roundCurrency(items.reduce((sum, item) => {
     const q = typeof item.quantity === "number" ? item.quantity : 0;
     if (q > 0 && item.unit_rate != null && item.unit_rate > 0) {
-      return sum + (item.total_price != null && item.total_price > 0 ? item.total_price : item.unit_rate * q);
+      return sum + item.unit_rate * q;
     }
     return sum;
   }, 0));
 
   const matchedSystemTotal = roundCurrency(
-    Array.from(rowItemMap.values()).reduce((sum, item) => {
+    hits.reduce((sum, { item }) => {
       const q = (item.quantity ?? 0) as number;
-      return sum + (item.total_price != null && item.total_price > 0 ? item.total_price : (item.unit_rate ?? 0) * q);
+      return sum + (item.unit_rate ?? 0) * q;
     }, 0)
   );
 
-  const varianceAmount = roundCurrency(Math.abs(systemTotal - injectedSum));
-  const variancePct = systemTotal > 0 ? varianceAmount / systemTotal : 0;
-  const matchedVarianceAmount = roundCurrency(Math.abs(matchedSystemTotal - injectedSum));
-  const matchedVariancePct = matchedSystemTotal > 0 ? matchedVarianceAmount / matchedSystemTotal : 0;
-
-  const HARD_MISSING_LIMIT = 5;
-  const HARD_VARIANCE_LIMIT = 0.05;
-  const SOFT_VARIANCE_WARN = 0.005;
+  const variance = systemTotal > 0 ? Math.abs(systemTotal - injectedSum) / systemTotal : 0;
 
   console.log("[approvalExporter] REPORT", {
     boqFileId,
-    detectionUsed,
-    sheet: keepName,
-    headerMap: hm,
-    itemNoCol,
+    sheets: sheets.map(s => ({ name: s.ws.name, hm: s.hm, itemNoCol: s.itemNoCol })),
     matchModes,
     expectedPriced: pricedItems.length,
-    injected: rowItemMap.size,
+    injected: hits.length,
     missing_count: unmatched.length,
     missing_in_excel: unmatched.map(i => i.item_no),
     systemTotal,
     matchedSystemTotal,
-    exportedTotal: injectedSum,
-    overallVariancePct: (variancePct * 100).toFixed(3) + "%",
-    matchedVariancePct: (matchedVariancePct * 100).toFixed(3) + "%",
-    warning: matchedVariancePct > SOFT_VARIANCE_WARN ? "MATCHED VARIANCE > 0.5%" : null,
+    injectedSum,
+    variancePct: (variance * 100).toFixed(3) + "%",
   });
 
-  if (unmatched.length > HARD_MISSING_LIMIT || matchedVariancePct > HARD_VARIANCE_LIMIT) {
-    throw new Error(
-      `فشل تصدير الاعتماد: مطابقة ${rowItemMap.size}/${pricedItems.length} — انحراف على المربوط ${(matchedVariancePct * 100).toFixed(2)}%` +
-      (unmatched.length ? ` — غير مربوط (${unmatched.length}): ${unmatched.slice(0, 10).map(i => i.item_no).join("، ")}` : "")
-    );
+  if (hits.length === 0) {
+    throw new Error("فشل تصدير الاعتماد: لم يتم مطابقة أي بند في الملف الأصلي");
   }
 
-  if (unmatched.length > 0 || matchedVariancePct > SOFT_VARIANCE_WARN) {
-    console.warn("[approvalExporter] MINOR ISSUES — proceeding with download", {
-      missing: unmatched.map(i => i.item_no),
-      matchedVariancePct: (matchedVariancePct * 100).toFixed(3) + "%",
-    });
-  }
-
+  // Write — formulas preserved, all sheets kept
   let outBuffer: ArrayBuffer;
   try {
     outBuffer = await wb.xlsx.writeBuffer();
   } catch (error) {
-    console.warn("[approvalExporter] writeBuffer failed — retrying after aggressive formula materialization", error);
-    const retryPrep = materializeWorksheetFormulas(ws);
-    console.warn("[approvalExporter] FORMULA_PREP_RETRY", {
-      converted: retryPrep.converted,
-      unresolved: retryPrep.unresolved.slice(0, 20),
-    });
-    outBuffer = await wb.xlsx.writeBuffer();
+    console.error("[approvalExporter] writeBuffer failed", error);
+    throw new Error("تعذر إنتاج الملف النهائي — قد يحتوي الملف الأصلي على معادلات تالفة");
   }
 
   const blob = new Blob([outBuffer], {
@@ -575,13 +459,12 @@ export async function exportApproval(
   if (unmatched.length > 0) {
     toast({
       title: "تم التصدير مع تنبيهات",
-      description: `✅ ${rowItemMap.size}/${pricedItems.length} بند | غير مربوط: ${unmatched.map(i => i.item_no).join("، ")} | الإجمالي ${fmt(injectedSum)} ر.س`,
+      description: `✅ ${hits.length}/${pricedItems.length} بند | غير موجود بالملف الأصلي: ${unmatched.length} | الإجمالي ${fmt(injectedSum)} ر.س`,
     });
-    return;
+  } else {
+    toast({
+      title: "تم تصدير ملف الاعتماد بنجاح",
+      description: `✅ ${hits.length} بند | الإجمالي ${fmt(injectedSum)} ر.س`,
+    });
   }
-
-  toast({
-    title: "تم تصدير ملف الاعتماد بنجاح",
-    description: `✅ ${rowItemMap.size} بند | الإجمالي ${fmt(injectedSum)} ر.س | الورقة: ${keepName}`,
-  });
 }

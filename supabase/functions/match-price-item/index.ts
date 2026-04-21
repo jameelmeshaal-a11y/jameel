@@ -68,6 +68,96 @@ function areCategoriesCompatible(catA: string, catB: string): boolean {
   return true;
 }
 
+// ─── V4.3 SPEC GATES (mirrors client-side matchingV3) ─────────────────────
+function toAscii(s: string): string {
+  return String(s ?? "").replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
+                        .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776));
+}
+
+function extractThickness(text: string): number | null {
+  if (!text) return null;
+  const t = toAscii(text);
+  const patterns = [
+    /(?:بسمك|سمك|سماكة|thickness|thick)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم|mil)?/i,
+    /(\d{2,4})\s*(?:مم|mm|ملم)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (isFinite(n) && n >= 20 && n <= 2000) return n;
+    }
+  }
+  return null;
+}
+
+function extractFireRating(text: string): number {
+  if (!text) return 0;
+  const t = toAscii(text).toLowerCase();
+  if (!/(مقاوم.{0,10}حريق|fire[\s-]?rated?|fire[\s-]?resist|مقاومة\s*للحريق)/i.test(t)) return 0;
+  const mm = t.match(/(\d{2,3})\s*(?:دقيقة|دقائق|دقيقه|min(?:ute)?s?|m(?=in))/i);
+  if (mm) {
+    const n = parseInt(mm[1], 10);
+    if ([30, 45, 60, 90, 120, 180, 240].includes(n)) return n;
+  }
+  return 1;
+}
+
+function extractItemModelCodes(text: string): string[] {
+  if (!text) return [];
+  const t = toAscii(text);
+  const re = /\b([A-Za-z]{1,5})[-_ ]?(\d{1,4})([A-Za-z])?\b/g;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const letters = m[1].toUpperCase();
+    if (["MM","CM","KG","KW","HP","HZ","VA","KV","CV","MT","ML"].includes(letters)) continue;
+    out.add(`${letters}${m[2]}${(m[3] || "").toUpperCase()}`);
+  }
+  return [...out];
+}
+
+function extractDiameters(text: string): number[] {
+  if (!text) return [];
+  const t = toAscii(text).toLowerCase();
+  const re = /(?:قطر|dia(?:meter)?|d|ø|⌀|nb|dn)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم)?/gi;
+  const out = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const n = parseInt(m[1], 10);
+    if (isFinite(n) && n >= 10 && n <= 2000) out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function extractSizeTuples(text: string): string[] {
+  if (!text) return [];
+  const t = toAscii(text);
+  const re = /(\d{2,5})\s*[x×*]\s*(\d{2,5})(?:\s*[x×*]\s*(\d{2,5}))?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const dims = [m[1], m[2], m[3]].filter(Boolean).map(n => parseInt(n, 10)).sort((a, b) => a - b);
+    out.add(dims.join("x"));
+  }
+  return [...out];
+}
+
+function extractRanges(text: string): string[] {
+  if (!text) return [];
+  const t = toAscii(text);
+  const re = /(\d{1,5})\s*[-–]\s*(\d{1,5})\s*(l\/s|cfm|cmh|m3\/h|كجم|kg|kw|w|hp)?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const lo = parseInt(m[1], 10);
+    const hi = parseInt(m[2], 10);
+    if (!isFinite(lo) || !isFinite(hi) || lo >= hi || lo < 1 || hi - lo < 2) continue;
+    out.add(`${lo}-${hi}${(m[3] || "").toLowerCase()}`);
+  }
+  return [...out];
+}
+
 // Simple category detection from Arabic text
 function detectCategoryFromText(text: string): string {
   const t = text.toLowerCase();
@@ -187,6 +277,33 @@ Deno.serve(async (req) => {
           continue;
         }
       }
+
+      // ── V4.3 SPEC GATES — applied before scoring ──
+      const candFullSpec = `${item.standard_name_ar || ""} ${item.standard_name_en || ""} ${(item.item_name_aliases || []).join(" ")} ${item.item_code || ""}`;
+      const boqFire = extractFireRating(item_name);
+      const candFire = extractFireRating(candFullSpec);
+      if ((boqFire > 0) !== (candFire > 0)) continue;
+      if (boqFire > 1 && candFire > 1 && boqFire !== candFire) continue;
+
+      const boqThk = extractThickness(item_name);
+      const candThk = extractThickness(candFullSpec);
+      if (boqThk !== null && candThk !== null && boqThk !== candThk) continue;
+
+      const boqCodes = extractItemModelCodes(item_name);
+      const candCodes = extractItemModelCodes(candFullSpec);
+      if (boqCodes.length > 0 && candCodes.length > 0 && !boqCodes.some(c => candCodes.includes(c))) continue;
+
+      const boqDia = extractDiameters(item_name);
+      const candDia = extractDiameters(candFullSpec);
+      if (boqDia.length > 0 && candDia.length > 0 && !boqDia.some(d => candDia.includes(d))) continue;
+
+      const boqTuples = extractSizeTuples(item_name);
+      const candTuples = extractSizeTuples(candFullSpec);
+      if (boqTuples.length > 0 && candTuples.length > 0 && !boqTuples.some(t => candTuples.includes(t))) continue;
+
+      const boqRanges = extractRanges(item_name);
+      const candRanges = extractRanges(candFullSpec);
+      if (boqRanges.length > 0 && candRanges.length > 0 && !boqRanges.some(r => candRanges.includes(r))) continue;
 
       // ── Stage 3 + 4: Description scoring on the gated pool ──
       let bestScore = 0;

@@ -144,6 +144,77 @@ export function extractFireRating(text: string): number {
   return 1;
 }
 
+// ─── V4.3 SPEC GATES — code/diameter/size-tuple/range ───────────────────────
+
+const __toAscii = (s: string) =>
+  String(s ?? "").replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632))
+                  .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776));
+
+/** Extract item-model code tokens like DP-13, EDP-13, AS1, AS2, F11, F11E, Ws02, MD-05 */
+export function extractItemModelCodes(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  // Patterns: 1-4 letters + optional dash + 1-4 digits + optional letter suffix
+  const re = /\b([A-Za-z]{1,5})[-_ ]?(\d{1,4})([A-Za-z])?\b/g;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const letters = m[1].toUpperCase();
+    const digits = m[2];
+    const suffix = (m[3] || "").toUpperCase();
+    // Skip pure-unit hits (mm, cm, kg, etc.)
+    if (["MM","CM","KG","KW","HP","HZ","VA","KV","CV","MT","ML"].includes(letters)) continue;
+    out.add(`${letters}${digits}${suffix}`);
+  }
+  return [...out];
+}
+
+/** Extract pipe/duct diameter in mm. Returns sorted unique list. */
+export function extractDiameters(text: string): number[] {
+  if (!text) return [];
+  const t = __toAscii(text).toLowerCase();
+  const re = /(?:قطر|dia(?:meter)?|d|ø|⌀|nb|dn)\s*[:\-]?\s*(\d{2,4})\s*(?:مم|mm|ملم)?/gi;
+  const out = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const n = parseInt(m[1], 10);
+    if (isFinite(n) && n >= 10 && n <= 2000) out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/** Extract size tuples like 600×1100, 1100x1200, 2100*900 (mm). */
+export function extractSizeTuples(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  const re = /(\d{2,5})\s*[x×*]\s*(\d{2,5})(?:\s*[x×*]\s*(\d{2,5}))?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const dims = [m[1], m[2], m[3]].filter(Boolean).map(n => parseInt(n, 10)).sort((a, b) => a - b);
+    out.add(dims.join("x"));
+  }
+  return [...out];
+}
+
+/** Extract numeric ranges like "81-110", "111-180" with optional unit. */
+export function extractRanges(text: string): string[] {
+  if (!text) return [];
+  const t = __toAscii(text);
+  const re = /(\d{1,5})\s*[-–]\s*(\d{1,5})\s*(l\/s|cfm|cmh|m3\/h|كجم|kg|kw|w|hp)?/gi;
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    const lo = parseInt(m[1], 10);
+    const hi = parseInt(m[2], 10);
+    if (!isFinite(lo) || !isFinite(hi) || lo >= hi) continue;
+    // Avoid year-like (1900-2100) and tiny ranges
+    if (lo < 1 || hi - lo < 2) continue;
+    out.add(`${lo}-${hi}${(m[3] || "").toLowerCase()}`);
+  }
+  return [...out];
+}
+
 // ─── extractCleanSegment ────────────────────────────────────────────────────
 
 /**
@@ -356,7 +427,6 @@ function scoreCandidate(
   }
 
   // Thickness — HARD PENALTY (-40) on mismatch
-  // Prevents wall 100mm matching wall 200mm at same score
   const boqThk = extractThickness(description + " " + (descriptionEn || ""));
   const candThk = extractThickness(candFullSpec);
   let thicknessPenalty = 0;
@@ -365,6 +435,40 @@ function scoreCandidate(
     parts.push(`⚠ thickness-mismatch: ${boqThk}mm≠${candThk}mm (-40)`);
   } else if (boqThk !== null && candThk !== null && boqThk === candThk) {
     parts.push(`✓ thickness-match: ${boqThk}mm`);
+  }
+
+  // ── STAGE B.2 (V4.3) — Item Model Code gate (DP-13 ≠ EDP-13, AS1 ≠ AS2) ──
+  const boqModelCodes = extractItemModelCodes(description + " " + (descriptionEn || ""));
+  if (boqModelCodes.length > 0) {
+    const candCodes = extractItemModelCodes(candFullSpec + " " + (candidate.item_code || ""));
+    if (candCodes.length > 0 && !boqModelCodes.some(c => candCodes.includes(c))) {
+      parts.push(`⛔ code-gate: BoQ[${boqModelCodes.join(",")}] ≠ Lib[${candCodes.join(",")}]`);
+      return { score: 0, notes: parts.join(" | ") };
+    }
+  }
+
+  // ── STAGE B.3 — Diameter gate (50/75/110 mm) ──
+  const boqDia = extractDiameters(description + " " + (descriptionEn || ""));
+  const candDia = extractDiameters(candFullSpec);
+  if (boqDia.length > 0 && candDia.length > 0 && !boqDia.some(d => candDia.includes(d))) {
+    parts.push(`⛔ diameter-gate: BoQ[${boqDia.join(",")}] ≠ Lib[${candDia.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
+  }
+
+  // ── STAGE B.4 — Size tuple gate (600×1100 ≠ 1100×1200) ──
+  const boqTuples = extractSizeTuples(description + " " + (descriptionEn || ""));
+  const candTuples = extractSizeTuples(candFullSpec);
+  if (boqTuples.length > 0 && candTuples.length > 0 && !boqTuples.some(t => candTuples.includes(t))) {
+    parts.push(`⛔ size-tuple-gate: BoQ[${boqTuples.join(",")}] ≠ Lib[${candTuples.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
+  }
+
+  // ── STAGE B.5 — Range/capacity gate (81-110 L/s ≠ 111-180 L/s) ──
+  const boqRanges = extractRanges(description + " " + (descriptionEn || ""));
+  const candRanges = extractRanges(candFullSpec);
+  if (boqRanges.length > 0 && candRanges.length > 0 && !boqRanges.some(r => candRanges.includes(r))) {
+    parts.push(`⛔ range-gate: BoQ[${boqRanges.join(",")}] ≠ Lib[${candRanges.join(",")}]`);
+    return { score: 0, notes: parts.join(" | ") };
   }
 
 

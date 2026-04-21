@@ -270,7 +270,7 @@ export default function BoQTable({ boqFileId, projectId, cities, ownerMaterials 
         return;
       }
       await exportApproval(boqFileId, items as any, boqFile.file_path, boqFile.name);
-      toast.success("تم تصدير ملف الاعتماد بنجاح ✅");
+      // success toast is emitted from inside exportApproval
     } catch (err: any) {
       toast.error(err.message || "فشل تصدير الاعتماد");
     }
