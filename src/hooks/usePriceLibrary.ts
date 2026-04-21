@@ -28,7 +28,11 @@ export function usePriceLibrary(search: string = "", category: string = "all") {
   return useQuery({
     queryKey: ["price-library", search, category],
     queryFn: async () => {
-      let q = supabase.from("rate_library").select("*").order("created_at", { ascending: false });
+      let q = supabase
+        .from("rate_library")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(0, 9999);
       if (category !== "all") q = q.eq("category", category);
       if (search) {
         q = q.or(`standard_name_ar.ilike.%${search}%,standard_name_en.ilike.%${search}%,item_code.ilike.%${search}%`);
