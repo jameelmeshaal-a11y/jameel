@@ -748,32 +748,38 @@ export async function resetBoQPricing(boqFileId: string): Promise<number> {
 
   if (regularItems.length > 0) {
     const regularIds = regularItems.map(i => i.id);
-    const { error: updateErr } = await supabase
-      .from("boq_items")
-      .update({
-        unit_rate: null,
-        total_price: null,
-        materials: null,
-        labor: null,
-        equipment: null,
-        logistics: null,
-        risk: null,
-        profit: null,
-        confidence: null,
-        source: null,
-        linked_rate_id: null,
-        location_factor: null,
-        notes: null,
-        status: "pending",
-        override_type: null,
-        override_reason: null,
-        override_by: null,
-        override_at: null,
-        manual_overrides: null,
-      })
-      .in("id", regularIds);
+    const resetPayload = {
+      unit_rate: null,
+      total_price: null,
+      materials: null,
+      labor: null,
+      equipment: null,
+      logistics: null,
+      risk: null,
+      profit: null,
+      confidence: null,
+      source: null,
+      linked_rate_id: null,
+      location_factor: null,
+      notes: null,
+      status: "pending",
+      override_type: null,
+      override_reason: null,
+      override_by: null,
+      override_at: null,
+      manual_overrides: null,
+    };
 
-    if (updateErr) throw new Error(`Failed to reset pricing: ${updateErr.message}`);
+    // Chunk to avoid PostgREST timeout / URI overflow on large BoQs (thousands of rows)
+    const CHUNK = 300;
+    for (let i = 0; i < regularIds.length; i += CHUNK) {
+      const slice = regularIds.slice(i, i + CHUNK);
+      const { error: updateErr } = await supabase
+        .from("boq_items")
+        .update(resetPayload)
+        .in("id", slice);
+      if (updateErr) throw new Error(`Failed to reset pricing (chunk ${i / CHUNK + 1}): ${updateErr.message}`);
+    }
   }
 
   console.log(`🔄 Reset: ${regularItems.length} بند تم إعادة تعيينه، ${manualItems.length} تعديل يدوي/معتمد محمي 🔒`);
